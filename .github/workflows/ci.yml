@@ -8,56 +8,130 @@ on:
 permissions:
   contents: read
 
+# One in-flight run per ref; newer pushes cancel superseded runs so the
+# Actions view shows one clear result per commit.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Each check is its OWN job so the Actions page reads as a checklist and a
+# failure points at exactly one red box (not "the first of 11 steps that broke").
+# Deterministic, Node-version-independent checks run once on 22.x LTS; only the
+# things whose behavior can vary by runtime (tests, ESM export loading) use the
+# 22.x/24.x matrix. Jobs that consume the compiled SDK depend on `build` and pull
+# its `dist` from an artifact, so a broken build SKIPS them instead of turning
+# every downstream job red.
+
 jobs:
-  verify:
-    name: Node ${{ matrix.node-version }}
+  lint:
+    name: Lint (ESLint)
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  format:
+    name: Format (Prettier --check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+
+  secret-scan:
+    name: Secret scan (working tree)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm run check:secrets
+
+  live-readonly-guard:
+    name: Live-suite read-only guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm run check:live-readonly
+
+  build:
+    name: Build (tsc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Share the compiled output with the jobs below (tar keeps exact paths).
+      - name: Bundle dist for downstream jobs
+        run: tar -cf dist-bundle.tar packages/sdk/dist packages/mcp-server/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-bundle
+          path: dist-bundle.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  typecheck:
+    name: Typecheck (scripts + workspaces)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-bundle
+      - run: tar -xf dist-bundle.tar # mcp-server typechecks against the SDK's built .d.ts
+      - run: npm run typecheck
+
+  test:
+    name: Tests (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    needs: build
     strategy:
-      fail-fast: false
+      fail-fast: false # run 24.x even if 22.x fails, so you see both
       matrix:
-        # Currently maintained Node.js LTS lines
         node-version: [22.x, 24.x]
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
-
-      - name: Install (locked)
-        run: npm ci
-
-      - name: Secret scan
-        run: npm run check:secrets
-
-      - name: Live-suite read-only guard
-        run: npm run check:live-readonly
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Format check
-        run: npm run format:check
-
-      - name: Build packages
-        run: npm run build
-
-      - name: Typecheck (all workspaces)
-        run: npm run typecheck
-
-      - name: Unit & integration tests (no credentials required)
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-bundle
+      - run: tar -xf dist-bundle.tar # mcp-server tests import the SDK's built dist at runtime
+      - name: Unit & integration tests (no credentials; live tests disabled)
         run: npm run test:coverage
         env:
-          # Live tests must never run in CI.
-          NEWEGG_LIVE_TESTS: "false"
-
-      - name: Validate package exports
-        run: npm run verify:exports
-
-      - name: npm pack dry run
-        run: npm run pack:dry
-
+          NEWEGG_LIVE_TESTS: "false" # live tests must never run in CI
       - name: Upload coverage
         if: matrix.node-version == '22.x'
         uses: actions/upload-artifact@v4
@@ -65,3 +139,55 @@ jobs:
           name: coverage
           path: coverage/
           if-no-files-found: ignore
+
+  exports:
+    name: Verify exports (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22.x, 24.x] # ESM entry points must load on both runtimes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-bundle
+      - run: tar -xf dist-bundle.tar
+      - run: npm run verify:exports
+
+  pack:
+    name: npm pack (dry run)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-bundle
+      - run: tar -xf dist-bundle.tar
+      - run: npm run pack:dry
+
+  # Single required status for branch protection: green only if every job above did.
+  ci-passed:
+    name: CI passed
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint, format, secret-scan, live-readonly-guard, build, typecheck, test, exports, pack]
+    steps:
+      - name: Fail if any job did not succeed
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "One or more CI jobs failed or were cancelled."
+          exit 1
+      - run: echo "All CI jobs passed."
