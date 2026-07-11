@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Currently maintained Node.js LTS lines
+        node-version: [22.x, 24.x]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install (locked)
+        run: npm ci
+
+      - name: Secret scan
+        run: npm run check:secrets
+
+      - name: Live-suite read-only guard
+        run: npm run check:live-readonly
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Typecheck (all workspaces)
+        run: npm run typecheck
+
+      - name: Unit & integration tests (no credentials required)
+        run: npm run test:coverage
+        env:
+          # Live tests must never run in CI.
+          NEWEGG_LIVE_TESTS: "false"
+
+      - name: Validate package exports
+        run: npm run verify:exports
+
+      - name: npm pack dry run
+        run: npm run pack:dry
+
+      - name: Upload coverage
+        if: matrix.node-version == '22.x'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore

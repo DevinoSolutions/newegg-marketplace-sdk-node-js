@@ -1,0 +1,29 @@
+# Credentials & local env — never commit
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Coverage & test artifacts
+coverage/
+.vitest/
+
+# Docs build output
+docs/api/
+
+# Logs & OS noise
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json

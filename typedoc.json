@@ -1,0 +1,9 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPointStrategy": "packages",
+  "entryPoints": ["packages/sdk", "packages/mcp-server"],
+  "out": "docs/api",
+  "includeVersion": true,
+  "excludePrivate": true,
+  "excludeInternal": true
+}

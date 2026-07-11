@@ -1,0 +1,43 @@
+{
+  "name": "newegg-marketplace-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Monorepo for the Newegg Marketplace SDK and MCP server",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @devino/newegg-marketplace-sdk && npm run build -w @devino/newegg-marketplace-mcp",
+    "typecheck": "tsc -p tsconfig.scripts.json && npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:live": "vitest run --config packages/sdk/vitest.live.config.ts",
+    "docs:api": "typedoc",
+    "verify:exports": "tsx scripts/verify-exports.ts",
+    "check:secrets": "tsx scripts/check-secrets.ts",
+    "check:live-readonly": "tsx scripts/check-live-readonly.ts",
+    "pack:dry": "npm pack --dry-run -w @devino/newegg-marketplace-sdk -w @devino/newegg-marketplace-mcp"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^10.6.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.5",
+    "tsx": "^4.23.0",
+    "typedoc": "^0.28.20",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.63.0",
+    "vitest": "^4.1.10"
+  }
+}
