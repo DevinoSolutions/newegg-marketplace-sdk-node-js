@@ -1,0 +1,15 @@
+{
+  "name": "example-sdk-basic",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "@devino/newegg-marketplace-sdk": "^0.1.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "tsx src/main.ts"
+  }
+}
