@@ -8,5 +8,3 @@ export const Operation = {
   FeedResult: "feed.result",
   ServiceStatus: "service.status",
 } as const;
-
-export type OperationName = (typeof Operation)[keyof typeof Operation];

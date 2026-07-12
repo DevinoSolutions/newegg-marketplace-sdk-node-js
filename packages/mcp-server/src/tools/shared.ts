@@ -39,7 +39,7 @@ export interface ToolContext {
 // ---------------------------------------------------------------------------
 /** Structurally compatible with the MCP SDK's `ToolAnnotations`; defined locally to keep the
  * tool layer free of MCP imports. */
-export interface ToolAnnotations {
+interface ToolAnnotations {
   title?: string;
   readOnlyHint?: boolean;
   destructiveHint?: boolean;

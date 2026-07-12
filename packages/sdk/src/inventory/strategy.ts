@@ -10,10 +10,7 @@ import { INVENTORY_FEED_MAX_RECORDS } from "../feeds/constants.js";
  * Dedup key: marketplace + identifier type/value (case-sensitive) + warehouse (or "").
  * Uses a JSON tuple so values containing the separator can never collide.
  */
-export function dedupKey(
-  marketplace: NeweggMarketplace,
-  update: NormalizedInventoryUpdate,
-): string {
+function dedupKey(marketplace: NeweggMarketplace, update: NormalizedInventoryUpdate): string {
   const id = update.identifier;
   return JSON.stringify([marketplace, id.type, id.value, update.warehouseLocation ?? ""]);
 }

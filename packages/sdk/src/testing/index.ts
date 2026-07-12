@@ -15,7 +15,7 @@ export interface RecordedCall {
 }
 
 /** The reply a route produces for a matched request. */
-export interface MockReply {
+interface MockReply {
   status: number;
   body?: unknown;
   headers?: Record<string, string>;

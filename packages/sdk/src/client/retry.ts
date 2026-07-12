@@ -1,13 +1,6 @@
 import type { RetryOptions } from "../types.js";
 import { type NeweggError, NeweggRateLimitError } from "../errors/index.js";
 
-/** HTTP statuses that are retryable for direct (non-feed-submission) operations. */
-const RETRYABLE_STATUSES = new Set([408, 429, 502, 503, 504]);
-
-export function isRetryableStatus(status: number): boolean {
-  return RETRYABLE_STATUSES.has(status);
-}
-
 /** Full-jitter exponential backoff: `random(0, min(maxDelay, base * 2^attempt))`. */
 export function fullJitterDelay(attempt: number, retry: Required<RetryOptions>): number {
   const ceiling = Math.min(retry.maxDelayMs, retry.baseDelayMs * 2 ** attempt);

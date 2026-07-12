@@ -40,7 +40,7 @@ export function extractBearerToken(authorization: string | undefined): string | 
 }
 
 /** Returns the hostname portion (without port) of a `Host` header value, lower-cased. */
-export function hostnameOf(hostHeader: string): string {
+function hostnameOf(hostHeader: string): string {
   const h = hostHeader.trim();
   if (h.startsWith("[")) {
     // IPv6 literal: keep everything up to and including the closing bracket.

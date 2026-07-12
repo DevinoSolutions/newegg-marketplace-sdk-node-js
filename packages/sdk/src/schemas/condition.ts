@@ -5,7 +5,7 @@ import type { ItemCondition } from "../types.js";
  * the condition table did not render in extraction; this matches the codes used across
  * Newegg's Item Management APIs. Isolated here so a doc correction is a one-file change.
  */
-export const CONDITION_TO_CODE: Record<ItemCondition, number> = {
+const CONDITION_TO_CODE: Record<ItemCondition, number> = {
   new: 1,
   refurbished: 2,
   usedLikeNew: 3,
@@ -22,9 +22,6 @@ const CODE_TO_CONDITION: Record<number, ItemCondition> = {
   5: "usedGood",
   6: "usedAcceptable",
 };
-
-/** All valid condition names, in code order. */
-export const ITEM_CONDITIONS: ItemCondition[] = Object.keys(CONDITION_TO_CODE) as ItemCondition[];
 
 export function conditionToCode(condition: ItemCondition): number {
   return CONDITION_TO_CODE[condition];

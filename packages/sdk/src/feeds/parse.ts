@@ -19,14 +19,14 @@ const FEED_STATUSES: readonly FeedRequestStatus[] = [
 ];
 
 /** Coerces an arbitrary status value into a known {@link FeedRequestStatus}. */
-export function toFeedStatus(raw: unknown): FeedRequestStatus {
+function toFeedStatus(raw: unknown): FeedRequestStatus {
   const str = asString(raw)?.trim().toUpperCase();
   const match = FEED_STATUSES.find((status) => status === str);
   return match ?? "UNKNOWN";
 }
 
 /** Extracts the `ResponseList` entries, tolerating array-of-objects or `{ ResponseInfo: [...] }`. */
-export function extractResponseList(json: unknown): unknown[] {
+function extractResponseList(json: unknown): unknown[] {
   const body = getField(json, "ResponseBody");
   const list = getField(body, "ResponseList");
   if (Array.isArray(list)) return list;

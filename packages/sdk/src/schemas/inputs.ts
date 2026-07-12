@@ -6,7 +6,7 @@ import { z } from "zod";
  * be an uppercase ISO 3166-1 alpha-3 code; `condition` is only meaningful on UPC identifiers.
  */
 
-export const itemConditionSchema = z.enum([
+const itemConditionSchema = z.enum([
   "new",
   "refurbished",
   "usedLikeNew",
@@ -15,7 +15,7 @@ export const itemConditionSchema = z.enum([
   "usedAcceptable",
 ]);
 
-export const itemIdentifierSchema = z.discriminatedUnion("type", [
+const itemIdentifierSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("sellerPartNumber"),
     value: z
@@ -34,13 +34,13 @@ export const itemIdentifierSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
-export const quantitySchema = z
+const quantitySchema = z
   .number()
   .int("quantity must be an integer")
   .min(0, "quantity must be >= 0")
   .max(Number.MAX_SAFE_INTEGER, "quantity must be a safe integer");
 
-export const warehouseLocationSchema = z
+const warehouseLocationSchema = z
   .string()
   .regex(/^[A-Z]{3}$/, "warehouseLocation must be an uppercase ISO 3166-1 alpha-3 code");
 

@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { FeedJobSummary, ItemOutcome } from "@devino/newegg-marketplace-sdk";
 import { marketplaceSchema, rateLimitOutputSchema } from "./shared.js";
 
-export const itemOutcomeStatusSchema = z.enum([
+const itemOutcomeStatusSchema = z.enum([
   "planned",
   "submitted",
   "succeeded",
@@ -25,7 +25,7 @@ export const feedRequestStatusSchema = z.enum([
   "UNKNOWN",
 ]);
 
-export const operationItemSchema = z.object({
+const operationItemSchema = z.object({
   inputIndex: z.number().int(),
   sellerPartNumber: z.string().optional(),
   warehouseLocation: z.string().optional(),
@@ -35,7 +35,7 @@ export const operationItemSchema = z.object({
   message: z.string().optional(),
 });
 
-export const feedJobSchema = z.object({
+const feedJobSchema = z.object({
   requestId: z.string(),
   status: feedRequestStatusSchema,
   itemCount: z.number().int(),

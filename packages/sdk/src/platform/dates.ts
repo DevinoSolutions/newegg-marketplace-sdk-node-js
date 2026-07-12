@@ -119,7 +119,7 @@ export function parsePacificTimestamp(raw: string | undefined | null): Date | un
 }
 
 /** ISO 8601 string for a `Date`. */
-export function toIso(date: Date): string {
+function toIso(date: Date): string {
   return date.toISOString();
 }
 

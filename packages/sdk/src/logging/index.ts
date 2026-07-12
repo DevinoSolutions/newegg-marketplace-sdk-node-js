@@ -20,5 +20,3 @@ export const LogEvent = {
   PartialFailure: "partial_failure",
   IndeterminateSubmission: "indeterminate_submission",
 } as const;
-
-export type LogEventName = (typeof LogEvent)[keyof typeof LogEvent];

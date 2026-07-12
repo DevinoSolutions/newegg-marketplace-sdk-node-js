@@ -58,15 +58,6 @@ export function getPath(value: unknown, path: readonly string[]): unknown {
   return current;
 }
 
-/** Returns the first defined field among the given keys (case-sensitive). */
-export function firstField(value: unknown, keys: readonly string[]): unknown {
-  for (const key of keys) {
-    const found = getField(value, key);
-    if (found !== undefined) return found;
-  }
-  return undefined;
-}
-
 /** Coerces every string value of a record into a `Record<string, string>` (skips objects/arrays). */
 export function asStringRecord(value: unknown): Record<string, string> {
   const out: Record<string, string> = {};

@@ -9,8 +9,6 @@ import { resolveConfig } from "./config.js";
 import { NeweggHttpClient } from "./http.js";
 import { Operation } from "./operations.js";
 
-export type { ResolvedConfig } from "./config.js";
-
 /**
  * Creates a Newegg Marketplace client. Validates configuration eagerly (throws
  * {@link NeweggConfigurationError} on invalid input) and performs no network access or

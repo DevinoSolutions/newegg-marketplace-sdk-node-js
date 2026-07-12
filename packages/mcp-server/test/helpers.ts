@@ -142,7 +142,7 @@ export async function callTool(
 // ---------------------------------------------------------------------------
 // CA wire route builders (paths/response shapes proven by the SDK's own tests)
 // ---------------------------------------------------------------------------
-export const CA_PATHS = {
+const CA_PATHS = {
   inventoryList: /contentmgmt\/item\/inventorylist/,
   inventoryAndPrice: /contentmgmt\/item\/inventoryandprice/,
   feedSubmit: "datafeedmgmt/feeds/submitfeed",
@@ -184,7 +184,7 @@ export function inventoryAndPriceRoute(): MockRoute {
   };
 }
 
-export function feedSubmitBody(requestId: string, status = "SUBMITTED"): unknown {
+function feedSubmitBody(requestId: string, status = "SUBMITTED"): unknown {
   return {
     IsSuccess: true,
     OperationType: "SubmitFeedResponse",
@@ -210,7 +210,7 @@ export function feedSubmitRoute(requestId = "REQ12345"): MockRoute {
   };
 }
 
-export function feedStatusBody(requestId: string, status: string): unknown {
+function feedStatusBody(requestId: string, status: string): unknown {
   return {
     ResponseBody: {
       ResponseList: [

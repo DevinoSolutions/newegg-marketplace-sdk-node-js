@@ -24,7 +24,7 @@ export class TransportError extends Error {
 const PRE_SEND_CODES = new Set(["ENOTFOUND", "ECONNREFUSED", "EAI_AGAIN"]);
 
 /** Extracts an error's `cause.code` (e.g. ECONNREFUSED) when present. */
-export function errorCauseCode(err: unknown): string | undefined {
+function errorCauseCode(err: unknown): string | undefined {
   if (isRecord(err) && "cause" in err) {
     const cause = err.cause;
     if (isRecord(cause) && typeof cause.code === "string") return cause.code;
