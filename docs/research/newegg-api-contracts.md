@@ -419,3 +419,208 @@ Read-only probes with the credentials provided in `.env` (marketplace `CA`):
 both returned **HTTP 401 `Gateway: Seller Auth failed.`** — same result on US and B2B
 prefixes. Endpoints and header format match the official docs; the credentials themselves
 were not accepted on any platform at test time. No mutating call was attempted.
+
+## 10. Order Management (reads)
+
+> Extracted 2026-07-12 from the official Newegg Developer Portal order-management pages
+> (sources cited per subsection). Only **read** operations are documented; the SDK's order
+> surface is read-only (no ship / cancel / refund). The portal also exposes _Get Additional
+> Order Information_ and mutating order calls — deliberately **not** contracted here yet.
+
+Order datetimes follow the §2 rule (Pacific Time, no offset — e.g. `3/18/2023 1:04:16`).
+Money fields are decimals in the order's `CurrencyCode` (USD unless stated) and, like every
+number on this API, may arrive as a JSON number _or_ string. Any single-element list may be
+an object instead of an array (§2) — every list below is subject to that quirk.
+
+### 10.1 Get Order Information
+
+Source: `https://developer.newegg.com/newegg_marketplace_api/order_management/get_order_information/` (2026-07-12).
+
+```
+PUT https://api.newegg.com/marketplace/ordermgmt/order/orderinfo?sellerid={SellerID}&version={version}
+PUT https://api.newegg.com/marketplace/b2b/ordermgmt/order/orderinfo?sellerid={SellerID}&version={version}
+PUT https://api.newegg.com/marketplace/can/ordermgmt/order/orderinfo?sellerid={SellerID}&version={version}
+```
+
+A **read via PUT** (classify by this doc, not the HTTP verb — cf. §2). Auth required; XML/JSON
+in and out. Rate limit **1000 requests/hour** per seller. Documented `version` values:
+`304, 305, 306, 307, 309, 310, 311, 312, 313, 314, 315` (**note: no 308**); newer versions add
+fields (flagged below).
+
+Request — `RequestCriteria` selects orders; every criterion is optional (omit to match all).
+Types mirror the official sample (paging/enum values sent as strings, all accepted):
+
+```json
+{
+  "OperationType": "GetOrderInfoRequest",
+  "RequestBody": {
+    "PageIndex": "1",
+    "PageSize": "100",
+    "RequestCriteria": {
+      "OrderNumberList": { "OrderNumber": ["159243598", "41473642"] },
+      "SellerOrderNumberList": { "SellerOrderNumber": ["SO159243598"] },
+      "Status": "1",
+      "Type": "0",
+      "OrderDateFrom": "2011-01-01 09:30:47",
+      "OrderDateTo": "2011-12-17 09:30:47",
+      "OrderDownloaded": 0,
+      "CountryCode": "USA",
+      "PremierOrder": "1"
+    }
+  }
+}
+```
+
+- `PageSize` max **100** (default 100); `PageIndex` default 1.
+- `OrderNumberList.OrderNumber[]` — an **array wrapper**, not a scalar; when present, other
+  criteria are ignored (direct lookup by order number). `SellerOrderNumberList` is the
+  analogous wrapper for seller order numbers (SBN).
+- Enum criteria: `Status` 0 Unshipped · 1 PartiallyShipped · 2 Shipped · 3 Invoiced · 4 Voided
+  · 5 Payment Pending (v312+; blank = all). `Type` 0 All · 1 SBN (shipped by Newegg) · 2 SBS
+  (shipped by seller) · 3 Multi-Channel · 4 NWS. `OrderDownloaded` 0 include downloaded
+  (default) · 1 exclude already-downloaded. `PremierOrder` 0 All · 1 Premier only · 2 No
+  Premier. `VoidSoon` (optional) 24 | 48 — orders auto-voiding within N hours.
+- `OrderDateFrom`/`OrderDateTo`: Pacific-Time strings (§2).
+
+Response — envelope + `ResponseBody.PageInfo` + `ResponseBody.OrderInfoList`; each order nests
+`ItemInfoList` and `PackageInfoList`. XML wraps lists as `<OrderInfoList><OrderInfo>…`; JSON
+uses bare arrays. Like §8, the JSON body may or may not carry the outer `NeweggAPIResponse`
+wrapper — tolerate both.
+
+```json
+{
+  "IsSuccess": true,
+  "OperationType": "GetOrderInfoResponse",
+  "SellerID": "A2EU",
+  "ResponseDate": "01/05/2022 14:16:28",
+  "ResponseBody": {
+    "PageInfo": { "TotalCount": 1, "TotalPageCount": 1, "PageIndex": 1, "PageSize": 100 },
+    "OrderInfoList": [
+      {
+        "SellerID": "A2EU",
+        "OrderNumber": 511952652,
+        "SellerOrderNumber": "2153930",
+        "InvoiceNumber": 0,
+        "OrderDownloaded": false,
+        "OrderDate": "03/18/2023 1:04:16",
+        "AutoVoidTime": "04/01/2023 1:12:39",
+        "OrderStatus": 4,
+        "OrderStatusDescription": "Voided",
+        "CustomerName": "…",
+        "CustomerPhoneNumber": "…",
+        "CustomerEmailAddress": "cusa.***@marketplace.newegg.com",
+        "OnTimeShipDueDate": "11/14/2021",
+        "DeliverDueDate": "11/22/2021",
+        "ShipToAddress1": "…",
+        "ShipToAddress2": "…",
+        "ShipToCityName": "…",
+        "ShipToStateCode": "CA",
+        "ShipToZipCode": "91748-1119",
+        "ShipToCountryCode": "UNITED STATES",
+        "ShipService": "Standard Shipping (5-7 business days)",
+        "SignatureRequired": true,
+        "ShipToFirstName": "…",
+        "ShipToLastName": "…",
+        "ShipToCompany": "…",
+        "CurrencyCode": "USD",
+        "OrderItemAmount": 1.0,
+        "ShippingAmount": 0,
+        "DiscountAmount": 0,
+        "RefundAmount": 0,
+        "OrderTotalAmount": 1.0,
+        "OrderQty": 2,
+        "IsAutoVoid": false,
+        "SalesChannel": 0,
+        "FulfillmentOption": 0,
+        "ItemInfoList": [
+          {
+            "SellerPartNumber": "…",
+            "NeweggItemNumber": "9SIA2EUGAT9779",
+            "MfrPartNumber": "…",
+            "UPCCode": "",
+            "Description": "…",
+            "OrderedQty": 2,
+            "ShippedQty": 0,
+            "UnitPrice": 0.5,
+            "ExtendUnitPrice": 1.0,
+            "ExtendShippingCharge": 0,
+            "Status": 1,
+            "StatusDescription": "Unshipped",
+            "BuyerRequestedCancel": false
+          }
+        ],
+        "PackageInfoList": [
+          {
+            "ShipCarrier": "…",
+            "ShipService": "…",
+            "TrackingNumber": "…",
+            "ShipDate": "…",
+            "SellerPartNumber": "…",
+            "MfrPartNumber": "…",
+            "ShippedQty": 1,
+            "Memo": ""
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+- Envelope: `IsSuccess`, `SellerID`, `OperationType` = `GetOrderInfoResponse`; paging under
+  `ResponseBody.PageInfo` (`TotalCount`, `TotalPageCount`, `PageIndex`, `PageSize`).
+- `OrderNumber` observed as a JSON number here and a string in §10.2 — parse tolerantly.
+- `OrderStatus` (response): same 0–5 codes as request `Status`; `OrderStatusDescription` is
+  the human label. Item-level `Status`: **1 Unshipped · 2 Shipped · 3 Cancelled** — a
+  _different_ scale from `OrderStatus`, do not conflate.
+- `SalesChannel`: 0 Newegg · 1 Multi-channel · 2 Replacement · 3 NWS. `FulfillmentOption`:
+  0 ship by seller · 1 ship by Newegg (SBN).
+- `CustomerEmailAddress` is a masked Newegg relay (`…@marketplace.newegg.com`), never the
+  buyer's real address.
+- Money fields (`OrderItemAmount`, `ShippingAmount`, `DiscountAmount`, `RefundAmount`,
+  `SalesTax`, `VATTotal`, `DutyTotal`, `RecyclingFeeAmount`, `OrderTotalAmount`, and item
+  `UnitPrice`/`ExtendUnitPrice`/`ExtendShippingCharge`/…) are decimals in `CurrencyCode`;
+  observed both as numbers (`1.0`) and strings (`"0.00"`).
+- Version-gated fields: `OnTimeShipDueDate`/`DeliverDueDate` (v311), `CurrencyCode` (v313),
+  `SignatureRequired` (v314), `AutoVoidTime`/`IsAutoVoid` (v313/v315). Each is optional.
+
+**ASSUMPTION (default version):** the SDK pins `version=315` (highest documented, and the top
+of the page's version table) for order reads so every mapped field is available; older
+versions merely omit newer fields. Isolated behind the order adapter, overridable.
+
+### 10.2 Get Order Status
+
+Source: `https://developer.newegg.com/newegg_marketplace_api/order_management/get_order_status/` (2026-07-12).
+
+```
+GET https://api.newegg.com/marketplace/ordermgmt/orderstatus/orders/{ordernumber}?sellerid={SellerID}&version=304
+GET https://api.newegg.com/marketplace/b2b/ordermgmt/orderstatus/orders/{ordernumber}?sellerid={SellerID}&version=304
+GET https://api.newegg.com/marketplace/can/ordermgmt/orderstatus/orders/{ordernumber}?sellerid={SellerID}&version=304
+```
+
+A lightweight single-order status check. **GET**, no request body; `{ordernumber}` is a path
+segment. Auth required; XML/JSON out. Only `version=304`. Rate limit **500 requests/hour**.
+
+Response — a **flat object** (no envelope; XML root `QueryOrderStatusInfo`):
+
+```json
+{
+  "OrderNumber": "159243598",
+  "OrderStatusCode": 1,
+  "OrderStatusName": "PartiallyShipped",
+  "SellerID": "A006",
+  "OrderDownloaded": true,
+  "SalesChannel": 0,
+  "FulfillmentOption": 0
+}
+```
+
+- `OrderStatusCode`/`OrderStatusName`: 0 Unshipped · 1 PartiallyShipped · 2 Shipped ·
+  3 Invoiced · 4 Voided · 5 PaymentPending — same codes as §10.1 `OrderStatus`; the name is
+  the camel-case `OrderStatusName` value.
+- `OrderDownloaded`: `"True"`/`"False"` (string boolean).
+- `SalesChannel`, `FulfillmentOption`: as in §10.1.
+- Errors: `SO002` (order number must be an integer 1–2147483647), `SO003` (no data found, or
+  the order does not belong to this seller). Both XML `<Errors>` and JSON-array shapes (§1).
+  The SDK's "try" variant maps `SO003` to a not-found (`undefined`) result, mirroring the
+  inventory `CT026` handling (§5); every other error throws.
