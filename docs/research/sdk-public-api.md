@@ -49,6 +49,7 @@ export interface NeweggClient {
   readonly inventory: InventoryApi;
   readonly feeds: FeedsApi;
   readonly service: ServiceApi;
+  readonly orders: OrdersApi; // read-only order lookups (list / get / status); never mutates
   // Read-only, fail-fast credential preflight (single service-status GET). Throws
   // NeweggAuthenticationError (401) / NeweggAuthorizationError (403) immediately on
   // bad or unauthorized credentials; resolves on success. Never mutates.
@@ -309,6 +310,149 @@ export interface ServiceApi {
 }
 
 // ----------------------------------------------------------------------------
+// orders (read-only) — newegg-api-contracts.md §10
+// ----------------------------------------------------------------------------
+// Wire codes normalize to these unions; an unrecognized code becomes "unknown" (never throws).
+export type OrderStatus =
+  | "unshipped"
+  | "partiallyShipped"
+  | "shipped"
+  | "invoiced"
+  | "voided"
+  | "paymentPending"
+  | "unknown";
+export type OrderItemStatus = "unshipped" | "shipped" | "cancelled" | "unknown"; // item scale (1/2/3)
+export type OrderSalesChannel = "newegg" | "multiChannel" | "replacement" | "nws" | "unknown";
+export type OrderFulfillment = "seller" | "newegg"; // FulfillmentOption 0/1
+export type OrderTypeFilter = "all" | "sbn" | "sbs" | "multiChannel" | "nws"; // Type filter
+export type PremierOrderFilter = "all" | "premierOnly" | "noPremier";
+
+export interface ListOrdersInput {
+  orderNumbers?: Array<string | number>; // direct lookup; Newegg ignores other criteria when set
+  sellerOrderNumbers?: string[];
+  status?: OrderStatus;
+  type?: OrderTypeFilter; // default "all" on the wire
+  includeDownloaded?: boolean; // false => exclude already-downloaded (OrderDownloaded=1)
+  premierOrder?: PremierOrderFilter;
+  dateFrom?: Date | string; // Date => rendered Pacific; string sent verbatim
+  dateTo?: Date | string;
+  countryCode?: string; // ISO 3-digit
+  page?: number; // PageIndex, default 1
+  pageSize?: number; // PageSize, max 100, default 100
+}
+
+export interface ShipToAddress {
+  firstName?: string;
+  lastName?: string;
+  company?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  stateCode?: string;
+  zipCode?: string;
+  countryCode?: string;
+}
+export interface OrderCustomer {
+  name?: string;
+  phoneNumber?: string;
+  emailAddress?: string; // masked Newegg relay (…@marketplace.newegg.com), never the real email
+  shipTo?: ShipToAddress;
+}
+export interface OrderAmounts {
+  // each a decimal in Order.currencyCode
+  itemAmount?: number;
+  shippingAmount?: number;
+  discountAmount?: number;
+  refundAmount?: number;
+  salesTax?: number;
+  vatTotal?: number;
+  dutyTotal?: number;
+  recyclingFee?: number;
+  total?: number; // OrderTotalAmount
+}
+export interface OrderItem {
+  sellerPartNumber?: string;
+  neweggItemNumber?: string;
+  mfrPartNumber?: string;
+  upc?: string;
+  description?: string;
+  orderedQty?: number;
+  shippedQty?: number;
+  unitPrice?: number;
+  extendedUnitPrice?: number; // ExtendUnitPrice
+  extendedShippingCharge?: number;
+  status: OrderItemStatus;
+  statusDescription?: string;
+  buyerRequestedCancel?: boolean;
+}
+export interface OrderPackage {
+  shipCarrier?: string;
+  shipService?: string;
+  trackingNumber?: string;
+  shipDate?: { raw: string; iso?: string };
+  sellerPartNumber?: string;
+  mfrPartNumber?: string;
+  shippedQty?: number;
+  memo?: string;
+}
+export interface Order {
+  orderNumber: string; // always a string (wire is number-or-string)
+  sellerOrderNumber?: string;
+  invoiceNumber?: string;
+  status: OrderStatus;
+  statusDescription?: string;
+  downloaded?: boolean;
+  orderDate?: { raw: string; iso?: string };
+  autoVoidTime?: { raw: string; iso?: string };
+  isAutoVoid?: boolean;
+  salesChannel?: OrderSalesChannel;
+  fulfillment?: OrderFulfillment;
+  currencyCode?: string;
+  customer?: OrderCustomer;
+  shipService?: string;
+  signatureRequired?: boolean;
+  onTimeShipDueDate?: { raw: string; iso?: string };
+  deliverDueDate?: { raw: string; iso?: string };
+  amounts: OrderAmounts;
+  quantity?: number; // OrderQty
+  items: OrderItem[];
+  packages: OrderPackage[];
+}
+export interface OrdersPage {
+  marketplace: NeweggMarketplace;
+  orders: Order[];
+  page: number; // echoed PageIndex
+  pageSize: number;
+  totalCount: number;
+  totalPageCount: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export interface OrderStatusSnapshot {
+  marketplace: NeweggMarketplace;
+  orderNumber: string;
+  status: OrderStatus;
+  statusName?: string; // Newegg's camel-case OrderStatusName
+  downloaded?: boolean;
+  salesChannel?: OrderSalesChannel;
+  fulfillment?: OrderFulfillment;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export interface OrdersApi {
+  list(input?: ListOrdersInput, options?: RequestOptions): Promise<OrdersPage>; // Get Order Information
+  get(orderNumber: string | number, options?: RequestOptions): Promise<Order>; // throws if not found
+  tryGet(orderNumber: string | number, options?: RequestOptions): Promise<Order | undefined>;
+  getStatus(orderNumber: string | number, options?: RequestOptions): Promise<OrderStatusSnapshot>; // throws SO003
+  tryGetStatus(
+    orderNumber: string | number,
+    options?: RequestOptions,
+  ): Promise<OrderStatusSnapshot | undefined>; // SO003 => undefined
+}
+
+// ----------------------------------------------------------------------------
 // rate limiting
 // ----------------------------------------------------------------------------
 export interface RateLimitInfo {
@@ -470,6 +614,12 @@ export interface RecordedCall {
 8. **No network / credentials at import time.** Config validated in `createNeweggClient`
    (throws `NeweggConfigurationError`).
 9. **ESM**, Node ≥ 22, relative imports carry `.js` extensions, no `any` in src.
+10. **Orders (read-only)**: `orders.list`/`get`/`tryGet`/`getStatus`/`tryGetStatus` never
+    mutate. `list` and `get` share Get Order Information (version 315, 1000 req/hr); `getStatus`
+    uses Get Order Status (version 304, 500 req/hr). Enum wire codes normalize to string unions,
+    unrecognized → `"unknown"` (never throws). `get` throws `NeweggApiError` when no order
+    matches (`tryGet` → `undefined`); `getStatus` throws on `SO003` (`tryGetStatus` → `undefined`).
+    `pageSize` outside 1–100 or `page` < 1 throws `NeweggValidationError` (never silently clamped).
 
 ```
 

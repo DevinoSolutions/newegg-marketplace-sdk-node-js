@@ -58,6 +58,8 @@ export const paths = {
   feedStatus: "datafeedmgmt/feeds/status",
   feedResult: "datafeedmgmt/feeds/result/",
   serviceStatus: "servicestatus",
+  orderInfo: /ordermgmt\/order\/orderinfo\?/,
+  orderStatus: /ordermgmt\/orderstatus\/orders\//,
 } as const;
 
 /** §5.1 US single-item read sample (numbers as strings). */

@@ -123,6 +123,16 @@ function toIso(date: Date): string {
   return date.toISOString();
 }
 
+/**
+ * Renders a `Date` as a Newegg Pacific wall-clock string `YYYY-MM-DD HH:mm:ss` (the format
+ * order-search date criteria expect). Round-trips through {@link parsePacificTimestamp}.
+ */
+export function formatPacificWallClock(date: Date): string {
+  const parts = formatterFor(PACIFIC_TIME_ZONE).formatToParts(date);
+  const pick = (type: string): string => parts.find((part) => part.type === type)?.value ?? "";
+  return `${pick("year")}-${pick("month")}-${pick("day")} ${pick("hour")}:${pick("minute")}:${pick("second")}`;
+}
+
 /** Wraps a raw Newegg timestamp into the `{ raw, iso? }` shape surfaced on the public API. */
 export function toTimestamp(
   raw: string | undefined | null,

@@ -4,6 +4,7 @@ import { rateLimitKey } from "../rate-limit/index.js";
 import { FEED_RECORDS_PER_HOUR, FEED_SUBMISSIONS_PER_MINUTE } from "../feeds/constants.js";
 import { FeedsApiImpl } from "../feeds/api.js";
 import { InventoryApiImpl } from "../inventory/api.js";
+import { OrdersApiImpl } from "../orders/api.js";
 import { ServiceApiImpl } from "../service/api.js";
 import { resolveConfig } from "./config.js";
 import { NeweggHttpClient } from "./http.js";
@@ -29,12 +30,14 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
   const feeds = new FeedsApiImpl(http);
   const inventory = new InventoryApiImpl(http, feeds);
   const service = new ServiceApiImpl(http);
+  const orders = new OrdersApiImpl(http);
 
   return {
     marketplace: resolved.marketplace,
     inventory,
     feeds,
     service,
+    orders,
     async verifyCredentials(options) {
       // Read-only preflight: a single service-status GET. Bad/unauthorized credentials throw
       // here (NeweggAuthenticationError on 401, NeweggAuthorizationError on 403) so callers

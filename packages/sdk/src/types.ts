@@ -57,6 +57,8 @@ export interface NeweggClient {
   readonly inventory: InventoryApi;
   readonly feeds: FeedsApi;
   readonly service: ServiceApi;
+  /** Read-only order lookups (list / get / status). Never mutates. */
+  readonly orders: OrdersApi;
   /**
    * Read-only, fail-fast credential preflight. Issues a single service-status GET and
    * throws immediately when the credentials are wrong or unauthorized
@@ -363,6 +365,206 @@ export interface ServiceStatus {
 export interface ServiceApi {
   /** Defaults to the "contentmgmt" domain. */
   getStatus(domain?: NeweggServiceDomain, options?: RequestOptions): Promise<ServiceStatus>;
+}
+
+// ----------------------------------------------------------------------------
+// orders (read-only)
+// ----------------------------------------------------------------------------
+
+/**
+ * Normalized order status. Newegg wire codes 0–5 map to these; an unrecognized code becomes
+ * `"unknown"` (forward-compatible — Newegg may add codes) rather than throwing. See
+ * `newegg-api-contracts.md` §10.
+ */
+export type OrderStatus =
+  | "unshipped"
+  | "partiallyShipped"
+  | "shipped"
+  | "invoiced"
+  | "voided"
+  | "paymentPending"
+  | "unknown";
+
+/** Line-item status — a DIFFERENT scale from {@link OrderStatus} (wire codes 1/2/3). */
+export type OrderItemStatus = "unshipped" | "shipped" | "cancelled" | "unknown";
+
+/** Order sales channel (wire codes 0–3). */
+export type OrderSalesChannel = "newegg" | "multiChannel" | "replacement" | "nws" | "unknown";
+
+/** Who ships the order — `FulfillmentOption` 0 (seller) / 1 (Newegg / SBN). */
+export type OrderFulfillment = "seller" | "newegg";
+
+/** `Type` request filter: 0 All / 1 SBN / 2 SBS / 3 Multi-Channel / 4 NWS. */
+export type OrderTypeFilter = "all" | "sbn" | "sbs" | "multiChannel" | "nws";
+
+/** `PremierOrder` request filter: 0 All / 1 Premier only / 2 No Premier. */
+export type PremierOrderFilter = "all" | "premierOnly" | "noPremier";
+
+/** Criteria for {@link OrdersApi.list}. Every field is optional; omit all to match all orders. */
+export interface ListOrdersInput {
+  /** Direct lookup: when set, Newegg ignores every other criterion (`OrderNumberList`). */
+  orderNumbers?: Array<string | number>;
+  /** Seller order numbers / SBN references (`SellerOrderNumberList`). */
+  sellerOrderNumbers?: string[];
+  /** Filter by a single order status (`Status`). */
+  status?: OrderStatus;
+  /** Filter by fulfillment/channel type (`Type`). Default `"all"` on the wire. */
+  type?: OrderTypeFilter;
+  /** `false` excludes already-downloaded orders (`OrderDownloaded=1`). Default includes all. */
+  includeDownloaded?: boolean;
+  /** Premier-order filter (`PremierOrder`). */
+  premierOrder?: PremierOrderFilter;
+  /** Lower bound on order date. `Date` is rendered as Pacific Time; a string is sent verbatim. */
+  dateFrom?: Date | string;
+  /** Upper bound on order date (see {@link ListOrdersInput.dateFrom}). */
+  dateTo?: Date | string;
+  /** ISO 3-digit country code (`CountryCode`). */
+  countryCode?: string;
+  /** 1-based page (`PageIndex`, default 1). */
+  page?: number;
+  /** Page size (`PageSize`, max 100, default 100). */
+  pageSize?: number;
+}
+
+export interface ShipToAddress {
+  firstName?: string;
+  lastName?: string;
+  company?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  stateCode?: string;
+  zipCode?: string;
+  countryCode?: string;
+}
+
+export interface OrderCustomer {
+  name?: string;
+  phoneNumber?: string;
+  /** Masked Newegg relay address (`…@marketplace.newegg.com`), never the buyer's real email. */
+  emailAddress?: string;
+  shipTo?: ShipToAddress;
+}
+
+/** Money breakdown; each value is a decimal in the order's {@link Order.currencyCode}. */
+export interface OrderAmounts {
+  itemAmount?: number;
+  shippingAmount?: number;
+  discountAmount?: number;
+  refundAmount?: number;
+  salesTax?: number;
+  vatTotal?: number;
+  dutyTotal?: number;
+  recyclingFee?: number;
+  /** `OrderTotalAmount`. */
+  total?: number;
+}
+
+export interface OrderItem {
+  sellerPartNumber?: string;
+  neweggItemNumber?: string;
+  mfrPartNumber?: string;
+  upc?: string;
+  description?: string;
+  orderedQty?: number;
+  shippedQty?: number;
+  unitPrice?: number;
+  /** `ExtendUnitPrice` — unit price × ordered quantity. */
+  extendedUnitPrice?: number;
+  extendedShippingCharge?: number;
+  status: OrderItemStatus;
+  statusDescription?: string;
+  buyerRequestedCancel?: boolean;
+}
+
+export interface OrderPackage {
+  shipCarrier?: string;
+  shipService?: string;
+  trackingNumber?: string;
+  shipDate?: { raw: string; iso?: string };
+  sellerPartNumber?: string;
+  mfrPartNumber?: string;
+  shippedQty?: number;
+  memo?: string;
+}
+
+/** A fully normalized order from Get Order Information (`newegg-api-contracts.md` §10.1). */
+export interface Order {
+  /** Always a string here (the wire sends it as a number or string). */
+  orderNumber: string;
+  sellerOrderNumber?: string;
+  invoiceNumber?: string;
+  status: OrderStatus;
+  statusDescription?: string;
+  /** `OrderDownloaded`. */
+  downloaded?: boolean;
+  orderDate?: { raw: string; iso?: string };
+  autoVoidTime?: { raw: string; iso?: string };
+  isAutoVoid?: boolean;
+  salesChannel?: OrderSalesChannel;
+  fulfillment?: OrderFulfillment;
+  currencyCode?: string;
+  customer?: OrderCustomer;
+  shipService?: string;
+  signatureRequired?: boolean;
+  onTimeShipDueDate?: { raw: string; iso?: string };
+  deliverDueDate?: { raw: string; iso?: string };
+  amounts: OrderAmounts;
+  /** `OrderQty`. */
+  quantity?: number;
+  items: OrderItem[];
+  packages: OrderPackage[];
+}
+
+/** One page of {@link OrdersApi.list} results; paginate via {@link OrdersPage.totalPageCount}. */
+export interface OrdersPage {
+  marketplace: NeweggMarketplace;
+  orders: Order[];
+  /** Echoed 1-based `PageIndex`. */
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPageCount: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+/** Lightweight status from Get Order Status (`newegg-api-contracts.md` §10.2). */
+export interface OrderStatusSnapshot {
+  marketplace: NeweggMarketplace;
+  orderNumber: string;
+  status: OrderStatus;
+  /** Newegg's camel-case `OrderStatusName` label (e.g. `"PartiallyShipped"`). */
+  statusName?: string;
+  downloaded?: boolean;
+  salesChannel?: OrderSalesChannel;
+  fulfillment?: OrderFulfillment;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+export interface OrdersApi {
+  /** Search orders by criteria (single page). Omit `input` to match all orders. */
+  list(input?: ListOrdersInput, options?: RequestOptions): Promise<OrdersPage>;
+  /**
+   * Fetch one order's full detail by order number (Get Order Information with a single
+   * `OrderNumber`). Throws {@link NeweggError} when no such order exists for this seller.
+   */
+  get(orderNumber: string | number, options?: RequestOptions): Promise<Order>;
+  /** Like {@link OrdersApi.get} but resolves to `undefined` when the order is not found. */
+  tryGet(orderNumber: string | number, options?: RequestOptions): Promise<Order | undefined>;
+  /**
+   * Lightweight status-only lookup (Get Order Status endpoint). Throws when the order is
+   * unknown or not this seller's (`SO003`).
+   */
+  getStatus(orderNumber: string | number, options?: RequestOptions): Promise<OrderStatusSnapshot>;
+  /** Like {@link OrdersApi.getStatus} but resolves to `undefined` on `SO003` (not found). */
+  tryGetStatus(
+    orderNumber: string | number,
+    options?: RequestOptions,
+  ): Promise<OrderStatusSnapshot | undefined>;
 }
 
 // ----------------------------------------------------------------------------
