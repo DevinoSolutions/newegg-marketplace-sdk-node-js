@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseCliArgs } from "../src/cli.js";
-import { loadMcpConfigFromEnv } from "../src/index.js";
+import { loadMcpConfigFromEnv, McpConfigError } from "../src/index.js";
 import { callTool, makeEnv, SENTINELS, serviceStatusRoute, startHarness } from "./helpers.js";
 
 describe("parseCliArgs", () => {
@@ -86,6 +86,63 @@ describe("loadMcpConfigFromEnv", () => {
     expect(serialized).not.toContain(SENTINELS.sellerId);
     expect(config.credentials.apiKey).toBe(SENTINELS.apiKey);
     expect(config.credentials.sellerId).toBe(SENTINELS.sellerId);
+  });
+
+  it("aggregates every missing/invalid variable into a single message", () => {
+    let message = "";
+    try {
+      loadMcpConfigFromEnv(
+        makeEnv({
+          NEWEGG_SELLER_ID: undefined,
+          NEWEGG_API_KEY: undefined,
+          NEWEGG_SECRET_KEY: undefined,
+          NEWEGG_MARKETPLACE: "moon",
+          NEWEGG_MCP_HTTP_PORT: "70000",
+        }),
+      );
+      throw new Error("expected loadMcpConfigFromEnv to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(McpConfigError);
+      message = error instanceof Error ? error.message : String(error);
+    }
+    // One pass reports ALL problems at once — an operator fixes everything in one restart.
+    for (const name of [
+      "NEWEGG_SELLER_ID",
+      "NEWEGG_API_KEY",
+      "NEWEGG_SECRET_KEY",
+      "NEWEGG_MARKETPLACE",
+      "NEWEGG_MCP_HTTP_PORT",
+    ]) {
+      expect(message).toContain(name);
+    }
+  });
+
+  it("rejects an unknown marketplace value by name", () => {
+    try {
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MARKETPLACE: "moon" }));
+      throw new Error("expected throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(McpConfigError);
+      expect((error as Error).message).toContain("NEWEGG_MARKETPLACE");
+    }
+  });
+
+  it("rejects a port outside 1..65535 without echoing the value", () => {
+    try {
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_HTTP_PORT: "70000" }));
+      throw new Error("expected throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(McpConfigError);
+      const message = (error as Error).message;
+      expect(message).toContain("NEWEGG_MCP_HTTP_PORT");
+      expect(message).not.toContain("70000"); // messages name the variable, never echo its value
+    }
+  });
+
+  it("rejects a non-integer numeric limit", () => {
+    expect(() =>
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_ITEMS_PER_OPERATION: "abc" })),
+    ).toThrow(/NEWEGG_MCP_MAX_ITEMS_PER_OPERATION/);
   });
 });
 
