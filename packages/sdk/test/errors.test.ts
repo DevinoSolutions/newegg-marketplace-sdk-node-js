@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   IndeterminateFeedSubmissionError,
   NeweggApiError,
@@ -12,6 +12,10 @@ import { parseUpstreamError } from "../src/errors/parse-upstream.js";
 function map(status: number, body: string) {
   return parseUpstreamError(status, body, new Headers(), { correlationId: "cid" });
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("parseUpstreamError", () => {
   it("parses a single JSON object error", () => {
@@ -65,22 +69,22 @@ describe("parseUpstreamError", () => {
   });
 
   it("maps DF012 to a rate-limit error with a parsed retryAfterMs", () => {
-    const future = new Date(Date.now() + 120_000);
-    const y = future.getFullYear();
-    const mo = String(future.getMonth() + 1).padStart(2, "0");
-    const d = String(future.getDate()).padStart(2, "0");
-    const hh = String(future.getHours()).padStart(2, "0");
-    const mi = String(future.getMinutes()).padStart(2, "0");
-    const ss = String(future.getSeconds()).padStart(2, "0");
-    // Express the "after" time in the local zone as a rough sanity check that parsing occurs.
+    // Freeze "now" so the Pacific-wall-clock → UTC math is deterministic on any machine/timezone.
+    // 2026-07-12T00:00:00Z == 2026-07-11 17:00:00 PDT (UTC-7), so the reset below is exactly +2min.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-12T00:00:00Z"));
     const body = JSON.stringify([
       {
         Code: "DF012",
-        Message: `exceeded hourly allowance. Please submit your feed again after ${y}-${mo}-${d} ${hh}:${mi}:${ss}.`,
+        Message:
+          "exceeded hourly allowance. Please submit your feed again after 2026-07-11 17:02:00.",
       },
     ]);
     const error = map(429, body);
     expect(error).toBeInstanceOf(NeweggRateLimitError);
+    // Assert the actual parsed delay, not merely that some rate-limit error was produced: the
+    // "submit again after <Pacific time>" hint must be interpreted as PDT and honored as 120s.
+    expect((error as NeweggRateLimitError).retryAfterMs).toBe(120_000);
   });
 
   it("maps an unknown 5xx body to a retryable API error", () => {
