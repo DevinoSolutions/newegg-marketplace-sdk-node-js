@@ -10,3 +10,4 @@ export { inventoryApplyTool } from "./inventory-apply.js";
 export { feedStatusTool, feedStatusInputSchema } from "./feed-status.js";
 export { feedResultTool } from "./feed-result.js";
 export { serviceStatusTool } from "./service-status.js";
+export { ordersListTool, ordersGetTool, ordersGetStatusTool } from "./orders.js";

@@ -9,6 +9,9 @@ export const TOOL_NAMES = {
   feedStatus: "newegg_feed_status",
   feedResult: "newegg_feed_result",
   serviceStatus: "newegg_service_status",
+  ordersList: "newegg_orders_list",
+  ordersGet: "newegg_orders_get",
+  ordersGetStatus: "newegg_orders_get_status",
 } as const;
 
 export type ToolName = (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES];

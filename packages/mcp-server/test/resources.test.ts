@@ -44,8 +44,9 @@ describe("resources", () => {
       expect(json.writesEnabled).toBe(false);
       expect(json.marketplace).toBe("ca");
       const tools = json.mcpTools as string[];
-      expect(tools).toHaveLength(5);
+      expect(tools).toHaveLength(8);
       expect(tools).toContain("newegg_inventory_get");
+      expect(tools).toContain("newegg_orders_list");
       expect(tools).not.toContain("newegg_inventory_apply_update");
     } finally {
       await harness.close();

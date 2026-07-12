@@ -24,6 +24,14 @@ Tools (underscore names, per MCP naming rules):
 | `newegg_feed_status`              | read               | Feed status by request ID.                                                                                                                    |
 | `newegg_feed_result`              | read               | Feed processing report by request ID.                                                                                                         |
 | `newegg_service_status`           | read               | Newegg service-domain availability.                                                                                                           |
+| `newegg_orders_list`              | read               | Paged order search (Get Order Information). Returns order, line-item, package, and customer ship-to detail.                                   |
+| `newegg_orders_get`               | read               | One order's full detail by order number.                                                                                                      |
+| `newegg_orders_get_status`        | read               | Lightweight order status by order number.                                                                                                     |
+
+> **Buyer data.** The order read tools return the seller's own order data, which includes
+> customer ship-to name/address/phone and Newegg's masked relay email. This is the data a
+> seller needs to fulfill orders; it is never a credential, but operators wiring these tools
+> into a shared assistant should treat that output as buyer PII.
 
 Resources:
 

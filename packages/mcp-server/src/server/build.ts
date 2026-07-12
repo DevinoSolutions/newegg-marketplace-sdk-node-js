@@ -24,6 +24,9 @@ import {
   feedStatusTool,
   inventoryApplyTool,
   inventoryGetTool,
+  ordersGetStatusTool,
+  ordersGetTool,
+  ordersListTool,
   serviceStatusTool,
   type Logger,
   type ToolContext,
@@ -98,6 +101,8 @@ export function enabledToolNames(config: McpServerConfig): string[] {
     names.push(TOOL_NAMES.inventoryApplyUpdate);
   }
   names.push(TOOL_NAMES.feedStatus, TOOL_NAMES.feedResult, TOOL_NAMES.serviceStatus);
+  // Order reads are always available (never write-gated).
+  names.push(TOOL_NAMES.ordersList, TOOL_NAMES.ordersGet, TOOL_NAMES.ordersGetStatus);
   return names;
 }
 
@@ -221,6 +226,9 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   registerToolDefinition(server, feedStatusTool, ctx);
   registerToolDefinition(server, feedResultTool, ctx);
   registerToolDefinition(server, serviceStatusTool, ctx);
+  registerToolDefinition(server, ordersListTool, ctx);
+  registerToolDefinition(server, ordersGetTool, ctx);
+  registerToolDefinition(server, ordersGetStatusTool, ctx);
 
   registerResources(server, ctx, enabledToolNames(config));
   return server;
