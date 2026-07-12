@@ -30,7 +30,7 @@ export function parseOrThrow<T>(schema: z.ZodType<T>, value: unknown, message: s
   return result.data;
 }
 
-export interface UpdateValidationContext {
+interface UpdateValidationContext {
   marketplace: NeweggMarketplace;
   maxQuantity?: number;
 }

@@ -1,7 +1,7 @@
 import { isRecord } from "../util.js";
 
 /** Whether a failed request could have reached Newegg. */
-export type SendPhase = "pre-send" | "ambiguous";
+type SendPhase = "pre-send" | "ambiguous";
 
 /**
  * Internal error for fetch-level failures (never surfaced to callers directly). `phase`

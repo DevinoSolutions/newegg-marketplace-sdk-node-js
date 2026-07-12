@@ -149,7 +149,7 @@ export const identifierInputSchema = z
   })
   .describe("A single item identifier.");
 
-export type IdentifierInput = z.infer<typeof identifierInputSchema>;
+type IdentifierInput = z.infer<typeof identifierInputSchema>;
 
 /** Identifier shape as echoed back in outputs (e.g. missingIdentifiers). */
 export const identifierOutputSchema = z.object({

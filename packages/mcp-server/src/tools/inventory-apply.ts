@@ -19,7 +19,7 @@ import {
 import { inventoryOperationResultSchema, mapFeedJob, mapItemOutcome } from "./operation-result.js";
 import { TOOL_NAMES } from "./names.js";
 
-export const applyInputSchema = z
+const applyInputSchema = z
   .strictObject({
     previewId: z
       .string()

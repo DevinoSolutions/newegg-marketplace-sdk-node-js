@@ -25,7 +25,7 @@ const domainSchema = z.enum([
   "shippingservice",
 ]);
 
-export const serviceStatusInputSchema = z
+const serviceStatusInputSchema = z
   .strictObject({
     domain: domainSchema.optional().describe("Service domain to query; defaults to contentmgmt."),
   })

@@ -35,7 +35,7 @@ function extractResponseList(json: unknown): unknown[] {
   return asArray(list);
 }
 
-export interface FeedSubmitParsed {
+interface FeedSubmitParsed {
   isSuccess: boolean;
   requestId?: string;
   status: FeedRequestStatus;
@@ -53,7 +53,7 @@ export function parseFeedSubmitResponse(json: unknown): FeedSubmitParsed {
   };
 }
 
-export interface FeedStatusParsed {
+interface FeedStatusParsed {
   status: FeedRequestStatus;
   requestType?: string;
   requestDate?: string;
@@ -93,7 +93,7 @@ function parseResultRecord(raw: unknown): FeedResultRecord {
   };
 }
 
-export interface ProcessingReportParsed {
+interface ProcessingReportParsed {
   summary: { processed: number; succeeded: number; failed: number };
   records: FeedResultRecord[];
 }

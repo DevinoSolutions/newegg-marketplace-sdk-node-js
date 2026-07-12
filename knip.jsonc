@@ -1,0 +1,20 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  // Dead-code gate. Each workspace declares its PUBLIC entry points explicitly so genuine
+  // public API (re-exported from the barrels, verified by scripts/verify-exports.ts and
+  // docs/research/sdk-public-api.md) is always reachable and never reported as unused.
+  //
+  // Test files — including the shared harness in `test/helpers.ts` — are entry points so
+  // test-only scaffolding and harness API types (e.g. Harness, HarnessOptions) are counted
+  // as used rather than false-flagged. Non-test source is still fully policed for dead code.
+  "workspaces": {
+    "packages/sdk": {
+      "entry": ["src/index.ts", "src/testing/index.ts", "test/**/*.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"],
+    },
+    "packages/mcp-server": {
+      "entry": ["src/index.ts", "src/cli.ts", "test/**/*.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"],
+    },
+  },
+}

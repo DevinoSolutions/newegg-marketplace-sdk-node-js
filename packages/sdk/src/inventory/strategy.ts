@@ -15,7 +15,7 @@ function dedupKey(marketplace: NeweggMarketplace, update: NormalizedInventoryUpd
   return JSON.stringify([marketplace, id.type, id.value, update.warehouseLocation ?? ""]);
 }
 
-export interface DedupResult {
+interface DedupResult {
   deduped: NormalizedInventoryUpdate[];
   report: Array<{ keptInputIndex: number; droppedInputIndexes: number[] }>;
   deduplicatedItemCount: number;
@@ -62,7 +62,7 @@ function isSellerPartNumber(update: NormalizedInventoryUpdate): boolean {
   return update.identifier.type === "sellerPartNumber";
 }
 
-export interface StrategyDecision {
+interface StrategyDecision {
   resolved: "direct" | "feed" | "mixed";
   direct: NormalizedInventoryUpdate[];
   feed: NormalizedInventoryUpdate[];

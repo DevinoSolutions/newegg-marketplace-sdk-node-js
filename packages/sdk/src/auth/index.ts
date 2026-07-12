@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
  * or the raw seller id, so there is nothing to redact. Enforced by `test/auth.test.ts`.
  */
 
-export interface AuthHeaderInput {
+interface AuthHeaderInput {
   apiKey: string;
   secretKey: string;
   userAgent: string;

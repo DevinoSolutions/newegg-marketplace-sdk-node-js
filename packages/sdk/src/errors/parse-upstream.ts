@@ -10,7 +10,7 @@ import {
 } from "./index.js";
 
 /** A single upstream error, normalized across Newegg's JSON/XML/plain-text shapes. */
-export interface UpstreamErrorEntry {
+interface UpstreamErrorEntry {
   code?: string;
   message?: string;
 }
@@ -102,7 +102,7 @@ function parseDf012RetryAfterMs(message: string | undefined, now: number): numbe
   return ms > 0 ? ms : 0;
 }
 
-export interface UpstreamErrorContext {
+interface UpstreamErrorContext {
   correlationId?: string;
   rateLimit?: RateLimitInfo;
   /** Cap applied to reset-derived retry delays (defaults to 5 minutes). */

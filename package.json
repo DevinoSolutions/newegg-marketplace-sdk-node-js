@@ -26,6 +26,7 @@
     "verify:exports": "tsx scripts/verify-exports.ts",
     "check:secrets": "tsx scripts/check-secrets.ts",
     "check:live-readonly": "tsx scripts/check-live-readonly.ts",
+    "check:deadcode": "knip",
     "pack:dry": "npm pack --dry-run -w @devino/newegg-marketplace-sdk -w @devino/newegg-marketplace-mcp"
   },
   "devDependencies": {
@@ -33,6 +34,7 @@
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
+    "knip": "5.88.1",
     "prettier": "^3.9.5",
     "tsx": "^4.23.0",
     "typedoc": "^0.28.20",

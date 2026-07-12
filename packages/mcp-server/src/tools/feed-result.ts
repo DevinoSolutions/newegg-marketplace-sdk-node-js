@@ -22,7 +22,7 @@ const requestIdSchema = z
   .regex(/^[A-Za-z0-9]+$/, "requestId must be alphanumeric.")
   .describe("The feed request id whose result to fetch.");
 
-export const feedResultInputSchema = z
+const feedResultInputSchema = z
   .strictObject({ requestId: requestIdSchema })
   .describe("The feed request id to fetch results for.");
 
