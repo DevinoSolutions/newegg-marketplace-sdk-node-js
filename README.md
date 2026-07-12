@@ -52,8 +52,10 @@ newegg-marketplace-sdk-node-js/
 ├─ docs/
 │  ├─ adr/          architecture decision records (0001–0005)
 │  └─ research/     verified Newegg wire contracts + the binding SDK API contract
-├─ scripts/         check-secrets.mjs, verify-exports.mjs
-└─ .github/workflows/ci.yml
+├─ scripts/         TypeScript checks run via tsx (check-secrets, check-live-readonly,
+│                   verify-exports), typechecked by tsconfig.scripts.json
+└─ .github/workflows/ci.yml   one job per check (lint, format, secrets, live-readonly,
+                              dead-code, build, typecheck, tests, exports, docs, pack)
 ```
 
 Deep-dive docs:
@@ -409,6 +411,9 @@ failures; feed submissions never blindly retry after an ambiguous send (they rai
   test additionally requires `NEWEGG_LIVE_TESTS_I_UNDERSTAND_THIS_TOUCHES_A_REAL_ACCOUNT`
   set to exactly `yes`. Run them with `npm run test:live`, and **use a dedicated test
   listing, not a production SKU.**
+- **The live suite is guarded READ-ONLY.** `npm run check:live-readonly` (its own CI job)
+  scans `packages/sdk/test/live/` and fails if a mutating call is ever added there, so the
+  opt-in live suite is structurally prevented from writing to a real account.
 
 ---
 
@@ -416,19 +421,32 @@ failures; feed submissions never blindly retry after an ambiguous send (they rai
 
 Root scripts (npm workspaces):
 
-| Script                                    | Purpose                                                          |
-| ----------------------------------------- | ---------------------------------------------------------------- |
-| `npm run build`                           | Build both packages (SDK, then MCP).                             |
-| `npm run typecheck`                       | `tsc --noEmit` across all workspaces.                            |
-| `npm run lint` / `npm run lint:fix`       | ESLint.                                                          |
-| `npm run format` / `npm run format:check` | Prettier write / check.                                          |
-| `npm test`                                | Unit + integration tests (no credentials).                       |
-| `npm run test:coverage`                   | Tests with V8 coverage.                                          |
-| `npm run test:live`                       | Opt-in live smoke suite (see [Testing](#testing)).               |
-| `npm run docs:api`                        | Generate API docs with TypeDoc.                                  |
-| `npm run verify:exports`                  | Verify built packages expose their expected exports.             |
-| `npm run check:secrets`                   | Fail if credentials are committed or a local `.env` leaks.       |
-| `npm run pack:dry`                        | `npm pack --dry-run` for both packages; review tarball contents. |
+| Script                                    | Purpose                                                                                                                                  |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run build`                           | Build both packages (SDK, then MCP).                                                                                                     |
+| `npm run typecheck`                       | `tsc --noEmit` across all workspaces.                                                                                                    |
+| `npm run lint` / `npm run lint:fix`       | ESLint.                                                                                                                                  |
+| `npm run format` / `npm run format:check` | Prettier write / check.                                                                                                                  |
+| `npm test`                                | Unit + integration tests (no credentials).                                                                                               |
+| `npm run test:coverage`                   | Tests with V8 coverage.                                                                                                                  |
+| `npm run test:live`                       | Opt-in live smoke suite (see [Testing](#testing)).                                                                                       |
+| `npm run docs:api`                        | Generate API docs with TypeDoc (`treatWarningsAsErrors`).                                                                                |
+| `npm run verify:exports`                  | Verify built packages expose their expected exports (needs a build); also fails if an `examples/*` workspace lacks a `typecheck` script. |
+| `npm run check:secrets`                   | Scan the **working tree** and fail if any credential/secret is present.                                                                  |
+| `npm run check:live-readonly`             | Fail if the live suite gains a mutating call — keeps it READ-ONLY.                                                                       |
+| `npm run check:deadcode`                  | knip: fail on unused files, exports, or dependencies.                                                                                    |
+| `npm run pack:dry`                        | `npm pack --dry-run` for both packages; review tarball contents.                                                                         |
+
+Each check is its own CI job (`.github/workflows/ci.yml`), so a failure points at exactly one
+red box. The `scripts/` are TypeScript, typechecked via `tsconfig.scripts.json` and run with
+`tsx` (no separate build step). Before claiming work done, run the full gate locally — every
+command must exit `0`:
+
+```bash
+npm run format:check && npm run typecheck && npm run lint && npm run build \
+  && npm test && npm run verify:exports && npm run check:secrets \
+  && npm run check:live-readonly && npm run check:deadcode && npm run docs:api
+```
 
 ---
 
