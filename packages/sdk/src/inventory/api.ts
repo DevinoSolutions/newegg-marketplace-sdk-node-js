@@ -41,6 +41,11 @@ import {
   validateInventoryUpdates,
 } from "./validate.js";
 
+// Newegg error codes that mean "no such item" on an inventory read (observed live: CT026 for
+// an unknown SellerPartNumber). `tryGetItem` converts ONLY these to `undefined`; every other
+// error still throws. Extend this set only when another not-found code is confirmed.
+const UNKNOWN_ITEM_ERROR_CODES = new Set(["CT026"]);
+
 function equalsIgnoreCase(a: string | undefined, b: string): boolean {
   return a !== undefined && a.toLowerCase() === b.toLowerCase();
 }
@@ -137,6 +142,24 @@ export class InventoryApiImpl implements InventoryApi {
     );
   }
 
+  async tryGetItem(
+    input: GetItemInput,
+    options: RequestOptions = {},
+  ): Promise<InventoryItemSnapshot | undefined> {
+    try {
+      return await this.getItem(input, options);
+    } catch (err) {
+      if (
+        err instanceof NeweggApiError &&
+        err.neweggErrorCode !== undefined &&
+        UNKNOWN_ITEM_ERROR_CODES.has(err.neweggErrorCode)
+      ) {
+        return undefined;
+      }
+      throw err;
+    }
+  }
+
   async getMany(
     input: GetManyInput,
     options: RequestOptions = {},
@@ -148,6 +171,8 @@ export class InventoryApiImpl implements InventoryApi {
       return {
         marketplace,
         items: [],
+        bySellerPartNumber: new Map<string, InventoryItemSnapshot>(),
+        byItemNumber: new Map<string, InventoryItemSnapshot>(),
         missingIdentifiers: [],
         totalCount: 0,
         correlationId,
@@ -197,9 +222,20 @@ export class InventoryApiImpl implements InventoryApi {
       (identifier) => !parsedItems.some((item) => itemMatchesIdentifier(item, identifier)),
     );
 
+    // Newegg returns batch items in its own order; give callers key-based lookups so they
+    // never have to rely on `items` position or re-index by hand.
+    const bySellerPartNumber = new Map<string, InventoryItemSnapshot>();
+    const byItemNumber = new Map<string, InventoryItemSnapshot>();
+    for (const snap of items) {
+      if (snap.sellerPartNumber !== undefined) bySellerPartNumber.set(snap.sellerPartNumber, snap);
+      if (snap.itemNumber !== undefined) byItemNumber.set(snap.itemNumber, snap);
+    }
+
     return {
       marketplace,
       items,
+      bySellerPartNumber,
+      byItemNumber,
       missingIdentifiers,
       totalCount: items.length,
       correlationId,

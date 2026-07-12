@@ -114,6 +114,8 @@ export interface InventoryItemSnapshot {
 export interface InventoryBatchSnapshot {
   marketplace: NeweggMarketplace;
   items: InventoryItemSnapshot[];
+  bySellerPartNumber: ReadonlyMap<string, InventoryItemSnapshot>; // Newegg returns items unordered — resolve by key
+  byItemNumber: ReadonlyMap<string, InventoryItemSnapshot>;
   missingIdentifiers: ItemIdentifier[];  // requested but not returned by Newegg
   totalCount: number;
   correlationId: string;
@@ -187,6 +189,7 @@ export interface InventoryUpdateResult {
 
 export interface InventoryApi {
   getItem(input: GetItemInput, options?: RequestOptions): Promise<InventoryItemSnapshot>;
+  tryGetItem(input: GetItemInput, options?: RequestOptions): Promise<InventoryItemSnapshot | undefined>; // undefined on CT026 (unknown item); other errors throw
   getMany(input: GetManyInput, options?: RequestOptions): Promise<InventoryBatchSnapshot>;
   previewUpdate(updates: InventoryUpdate | InventoryUpdate[], options?: PreviewOptions): Promise<InventoryUpdatePreview>;
   updateItem(update: InventoryUpdate, options?: UpdateOptions): Promise<InventoryUpdateResult>;

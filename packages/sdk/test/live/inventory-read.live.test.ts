@@ -86,4 +86,29 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
       expect(error).toBeInstanceOf(NeweggError);
     }
   });
+
+  it("normalized totals match the raw Newegg payload (invariant, read-only)", async (ctx) => {
+    const id = identifiers[0];
+    if (!id) {
+      ctx.skip();
+      return;
+    }
+    const client = makeLiveClient();
+    const snapshot = await client.inventory.getItem(
+      { identifier: id, warehouses: warehouses() },
+      { includeRaw: true },
+    );
+    const raw = snapshot.raw as Record<string, unknown> | undefined;
+    const rawQty = raw?.["AvailableQuantity"];
+    if (rawQty === undefined) {
+      ctx.skip(); // US nested (InventoryAllocation) shape — the invariant there is per-warehouse
+      return;
+    }
+    // The SDK must not invent or drop units: its total equals the quantity Newegg actually sent.
+    expect(Number(rawQty)).toBe(snapshot.totalAvailableQuantity);
+    const rawActive = raw?.["Active"];
+    if (rawActive !== undefined && snapshot.active !== undefined) {
+      expect(snapshot.active).toBe(rawActive === "1" || rawActive === 1 || rawActive === true);
+    }
+  });
 });

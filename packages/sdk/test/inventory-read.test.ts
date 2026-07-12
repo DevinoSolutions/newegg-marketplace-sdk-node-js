@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NeweggApiError } from "../src/index.js";
+import { NeweggApiError, NeweggError } from "../src/index.js";
 import type { ItemIdentifier } from "../src/index.js";
 import { ITEM_SINGLE_ITEM, makeClient, paths, US_SINGLE_ITEM } from "./helpers.js";
 
@@ -125,5 +125,68 @@ describe("inventory reads", () => {
     }
     expect(error).toBeInstanceOf(NeweggApiError);
     expect((error as Error).name).toBe("NeweggApiError");
+  });
+
+  it("keys batch results by seller part number (R2 — Newegg order is not input order)", async () => {
+    const { client } = makeClient("us", [
+      { method: "POST", pathPattern: paths.usInventoryList, reply: (req) => usBatchReply(req, 2) },
+    ]);
+    const batch = await client.inventory.getMany({
+      identifiers: [
+        { type: "sellerPartNumber", value: "SKU-0" },
+        { type: "sellerPartNumber", value: "SKU-1" },
+        { type: "sellerPartNumber", value: "SKU-2" },
+      ],
+    });
+    expect(batch.bySellerPartNumber.get("SKU-0")?.sellerPartNumber).toBe("SKU-0");
+    expect(batch.bySellerPartNumber.get("SKU-1")?.sellerPartNumber).toBe("SKU-1");
+    expect(batch.bySellerPartNumber.has("SKU-2")).toBe(false);
+    // The keyed view is consistent with `items` regardless of Newegg's return order.
+    expect(batch.bySellerPartNumber.size).toBe(batch.items.length);
+    for (const item of batch.items) {
+      expect(item.sellerPartNumber).toBeDefined();
+      if (item.sellerPartNumber) {
+        expect(batch.bySellerPartNumber.get(item.sellerPartNumber)).toBe(item);
+      }
+    }
+    expect(batch.missingIdentifiers).toEqual([{ type: "sellerPartNumber", value: "SKU-2" }]);
+  });
+
+  it("tryGetItem returns undefined when Newegg reports the item unknown (R3 — CT026)", async () => {
+    const { client } = makeClient("us", [
+      {
+        method: "PUT",
+        pathPattern: paths.usInventory,
+        reply: () => ({
+          status: 400,
+          body: { Code: "CT026", Message: "Invalid SellerPartNumber" },
+        }),
+      },
+    ]);
+    const result = await client.inventory.tryGetItem({
+      identifier: { type: "sellerPartNumber", value: "does-not-exist" },
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("tryGetItem rethrows other errors — only CT026 becomes undefined (R3)", async () => {
+    const { client } = makeClient("us", [
+      {
+        method: "PUT",
+        pathPattern: paths.usInventory,
+        reply: () => ({
+          status: 400,
+          body: { Code: "CT002", Message: "Invalid SellerPartNumber" },
+        }),
+      },
+    ]);
+    let error: unknown;
+    try {
+      await client.inventory.tryGetItem({ identifier: { type: "sellerPartNumber", value: "x" } });
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(NeweggError);
+    expect((error as { neweggErrorCode?: string }).neweggErrorCode).toBe("CT002");
   });
 });

@@ -128,7 +128,12 @@ export interface GetManyInput {
 }
 
 export interface WarehouseInventory {
-  /** ISO alpha-3 country (US) or Newegg warehouse/SBS code (B2B/CAN breakdown). */
+  /**
+   * ISO alpha-3 country (US) or Newegg warehouse/SBS code (B2B/CAN breakdown). B2B/CAN flat
+   * inventory responses carry no per-warehouse breakdown, so the SDK reports a single bucket
+   * with the synthetic location `"default"` — that string is an SDK convention, not a Newegg
+   * warehouse code.
+   */
   location: string;
   quantity: number;
   fulfillment: "seller" | "newegg";
@@ -150,6 +155,14 @@ export interface InventoryItemSnapshot {
 export interface InventoryBatchSnapshot {
   marketplace: NeweggMarketplace;
   items: InventoryItemSnapshot[];
+  /**
+   * Look up a returned item by its exact seller part number. Newegg returns batch items in
+   * its own order, not the requested order, so resolve results by key rather than by `items`
+   * position. A requested identifier absent here appears in {@link missingIdentifiers}.
+   */
+  bySellerPartNumber: ReadonlyMap<string, InventoryItemSnapshot>;
+  /** Look up a returned item by its Newegg item number (as Newegg returned it). */
+  byItemNumber: ReadonlyMap<string, InventoryItemSnapshot>;
   /** Requested but not returned by Newegg. */
   missingIdentifiers: ItemIdentifier[];
   totalCount: number;
@@ -233,6 +246,16 @@ export interface InventoryUpdateResult {
 
 export interface InventoryApi {
   getItem(input: GetItemInput, options?: RequestOptions): Promise<InventoryItemSnapshot>;
+  /**
+   * Like {@link getItem} but resolves to `undefined` instead of throwing when Newegg reports
+   * the item is unknown (error code `CT026`). Every other failure — authentication,
+   * authorization, rate limit, malformed body, any other API error — still throws. Mirrors how
+   * {@link getMany} reports unknown identifiers via `missingIdentifiers`.
+   */
+  tryGetItem(
+    input: GetItemInput,
+    options?: RequestOptions,
+  ): Promise<InventoryItemSnapshot | undefined>;
   getMany(input: GetManyInput, options?: RequestOptions): Promise<InventoryBatchSnapshot>;
   previewUpdate(
     updates: InventoryUpdate | InventoryUpdate[],
