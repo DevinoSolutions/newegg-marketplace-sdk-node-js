@@ -24,6 +24,14 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /submitInventoryFeed/, why: "feed submission (write)" },
   { re: /submitfeed/i, why: "feed submission endpoint (write)" },
   { re: /["'`]POST["'`]/, why: "raw POST request (all live traffic must be reads)" },
+  // Order writes (Phase 2 — guarded AHEAD of implementation so a live write test can never slip
+  // in). These read endpoints are deliberately NOT matched: orders.list / orders.get /
+  // orders.getStatus. Extend this group when the order-mutation methods actually land.
+  { re: /\.shipOrder\s*\(/, why: "order ship (write)" },
+  { re: /\.cancelOrder\s*\(/, why: "order cancel (write)" },
+  { re: /\.confirmOrder\s*\(/, why: "order confirmation (write)" },
+  { re: /["'`]Action["'`]\s*:/, why: "raw order-action write body (Action = ship/cancel/confirm)" },
+  { re: /cancel_?status/i, why: "cancel-order endpoint (write)" },
 ];
 
 let files: string[] = [];
