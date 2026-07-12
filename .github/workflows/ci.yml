@@ -86,9 +86,12 @@ jobs:
   docs:
     name: API docs (typedoc)
     runs-on: ubuntu-latest
-    # typedoc compiles the TS sources itself (no dist needed), so this stays a fast,
-    # deterministic source-only check. treatWarningsAsErrors makes doc-breaking API drift
-    # (a broken @link, an undocumented referenced type) fail here instead of rotting silently.
+    needs: build
+    # typedoc resolves each package's entry points from its package.json `exports`, which point
+    # at the built `dist/` (and mcp-server's sources import the SDK by package name, resolving to
+    # the SDK's dist too). So this job needs the compiled output — like verify-exports/pack, it
+    # pulls the build artifact rather than rebuilding. treatWarningsAsErrors makes doc-breaking
+    # API drift (a broken @link, an undocumented referenced type) fail here instead of rotting.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -96,6 +99,10 @@ jobs:
           node-version: 22.x
           cache: npm
       - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-bundle
+      - run: tar -xf dist-bundle.tar
       - run: npm run docs:api
 
   build:
