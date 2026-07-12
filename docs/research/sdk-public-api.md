@@ -13,8 +13,14 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient;
 
 export type NeweggMarketplace = "us" | "b2b" | "ca";
 export type NeweggServiceDomain =
-  | "contentmgmt" | "ordermgmt" | "datafeedmgmt" | "servicemgmt"
-  | "reportmgmt" | "sellermgmt" | "sbnmgmt" | "shippingservice";
+  | "contentmgmt"
+  | "ordermgmt"
+  | "datafeedmgmt"
+  | "servicemgmt"
+  | "reportmgmt"
+  | "sellermgmt"
+  | "sbnmgmt"
+  | "shippingservice";
 
 export interface NeweggClientConfig {
   sellerId: string;
@@ -23,8 +29,8 @@ export interface NeweggClientConfig {
   marketplace: NeweggMarketplace;
   /** Trusted-config-only override (tests, proxies). Never exposed via MCP. */
   baseUrl?: string;
-  timeoutMs?: number;           // default 30_000
-  userAgent?: string;           // default "newegg-marketplace-sdk/<version> node/<version>"
+  timeoutMs?: number; // default 30_000
+  userAgent?: string; // default "newegg-marketplace-sdk/<version> node/<version>"
   retry?: RetryOptions;
   logger?: NeweggLogger;
   fetch?: typeof globalThis.fetch;
@@ -64,15 +70,15 @@ export interface CredentialCheck {
 export interface RequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
-  correlationId?: string;   // auto-generated UUID when omitted
-  includeRaw?: boolean;     // attach sanitized raw response payload to results (never via MCP)
+  correlationId?: string; // auto-generated UUID when omitted
+  includeRaw?: boolean; // attach sanitized raw response payload to results (never via MCP)
 }
 
 // ----------------------------------------------------------------------------
 // identifiers & updates (normalized domain types)
 // ----------------------------------------------------------------------------
 export type ItemCondition =
-  | "new" | "refurbished" | "usedLikeNew" | "usedVeryGood" | "usedGood" | "usedAcceptable";
+  "new" | "refurbished" | "usedLikeNew" | "usedVeryGood" | "usedGood" | "usedAcceptable";
 
 export type ItemIdentifier =
   | { type: "sellerPartNumber"; value: string }
@@ -81,17 +87,23 @@ export type ItemIdentifier =
 
 export interface InventoryUpdate {
   identifier: ItemIdentifier;
-  quantity: number;                    // non-negative safe integer; 0 is valid and meaningful
-  warehouseLocation?: string;          // ISO 3166-1 alpha-3, uppercase; required for US ops
+  quantity: number; // non-negative safe integer; 0 is valid and meaningful
+  warehouseLocation?: string; // ISO 3166-1 alpha-3, uppercase; required for US ops
   fulfillmentOption?: "Seller";
-  metadata?: Record<string, string>;   // caller bookkeeping, never sent to Newegg
+  metadata?: Record<string, string>; // caller bookkeeping, never sent to Newegg
 }
 
 // ----------------------------------------------------------------------------
 // inventory reads
 // ----------------------------------------------------------------------------
-export interface GetItemInput { identifier: ItemIdentifier; warehouses?: string[] /* US only */ }
-export interface GetManyInput { identifiers: ItemIdentifier[]; warehouses?: string[] /* US only */ }
+export interface GetItemInput {
+  identifier: ItemIdentifier;
+  warehouses?: string[]; /* US only */
+}
+export interface GetManyInput {
+  identifiers: ItemIdentifier[];
+  warehouses?: string[]; /* US only */
+}
 
 export interface WarehouseInventory {
   /** ISO alpha-3 country (US) or Newegg warehouse/SBS code (B2B/CAN breakdown). */
@@ -104,19 +116,19 @@ export interface InventoryItemSnapshot {
   itemNumber?: string;
   sellerPartNumber?: string;
   condition?: ItemCondition;
-  active?: boolean;                 // B2B/CAN only
+  active?: boolean; // B2B/CAN only
   totalAvailableQuantity: number;
   warehouses: WarehouseInventory[];
   correlationId: string;
   rateLimit?: RateLimitInfo;
-  raw?: unknown;                    // only when includeRaw
+  raw?: unknown; // only when includeRaw
 }
 export interface InventoryBatchSnapshot {
   marketplace: NeweggMarketplace;
   items: InventoryItemSnapshot[];
   bySellerPartNumber: ReadonlyMap<string, InventoryItemSnapshot>; // Newegg returns items unordered — resolve by key
   byItemNumber: ReadonlyMap<string, InventoryItemSnapshot>;
-  missingIdentifiers: ItemIdentifier[];  // requested but not returned by Newegg
+  missingIdentifiers: ItemIdentifier[]; // requested but not returned by Newegg
   totalCount: number;
   correlationId: string;
   rateLimit?: RateLimitInfo;
@@ -130,33 +142,33 @@ export type InventoryUpdateStrategy = "direct" | "feed" | "auto";
 
 export interface UpdateOptions extends RequestOptions {}
 export interface UpdateManyOptions extends RequestOptions {
-  strategy?: InventoryUpdateStrategy;   // default "auto"
-  waitForFeedCompletion?: boolean;      // default false
-  wait?: WaitForResultOptions;          // polling knobs when waiting
-  concurrency?: number;                 // direct-update concurrency, default 4
+  strategy?: InventoryUpdateStrategy; // default "auto"
+  waitForFeedCompletion?: boolean; // default false
+  wait?: WaitForResultOptions; // polling knobs when waiting
+  concurrency?: number; // direct-update concurrency, default 4
 }
 export interface PreviewOptions extends RequestOptions {
   strategy?: InventoryUpdateStrategy;
-  includeCurrentInventory?: boolean;    // performs reads; still zero writes
+  includeCurrentInventory?: boolean; // performs reads; still zero writes
 }
 
 export interface NormalizedInventoryUpdate extends InventoryUpdate {
-  inputIndex: number;                   // index in the caller's original array
+  inputIndex: number; // index in the caller's original array
 }
 export interface InventoryUpdatePreview {
   marketplace: NeweggMarketplace;
   strategy: "direct" | "feed" | "mixed";
-  normalizedUpdates: NormalizedInventoryUpdate[];  // post-validation, post-dedup (last-write-wins)
+  normalizedUpdates: NormalizedInventoryUpdate[]; // post-validation, post-dedup (last-write-wins)
   deduplicated: Array<{ keptInputIndex: number; droppedInputIndexes: number[] }>;
-  plannedFeedCount: number;             // 0 when direct
+  plannedFeedCount: number; // 0 when direct
   zeroQuantityCount: number;
   warnings: string[];
-  currentInventory?: InventoryItemSnapshot[];      // when includeCurrentInventory
+  currentInventory?: InventoryItemSnapshot[]; // when includeCurrentInventory
   correlationId: string;
 }
 
 export type ItemOutcomeStatus =
-  | "planned" | "submitted" | "succeeded" | "warning" | "failed" | "unknown";
+  "planned" | "submitted" | "succeeded" | "warning" | "failed" | "unknown";
 export interface ItemOutcome {
   inputIndex: number;
   sellerPartNumber?: string;
@@ -189,11 +201,20 @@ export interface InventoryUpdateResult {
 
 export interface InventoryApi {
   getItem(input: GetItemInput, options?: RequestOptions): Promise<InventoryItemSnapshot>;
-  tryGetItem(input: GetItemInput, options?: RequestOptions): Promise<InventoryItemSnapshot | undefined>; // undefined on CT026 (unknown item); other errors throw
+  tryGetItem(
+    input: GetItemInput,
+    options?: RequestOptions,
+  ): Promise<InventoryItemSnapshot | undefined>; // undefined on CT026 (unknown item); other errors throw
   getMany(input: GetManyInput, options?: RequestOptions): Promise<InventoryBatchSnapshot>;
-  previewUpdate(updates: InventoryUpdate | InventoryUpdate[], options?: PreviewOptions): Promise<InventoryUpdatePreview>;
+  previewUpdate(
+    updates: InventoryUpdate | InventoryUpdate[],
+    options?: PreviewOptions,
+  ): Promise<InventoryUpdatePreview>;
   updateItem(update: InventoryUpdate, options?: UpdateOptions): Promise<InventoryUpdateResult>;
-  updateMany(updates: InventoryUpdate[], options?: UpdateManyOptions): Promise<InventoryUpdateResult>;
+  updateMany(
+    updates: InventoryUpdate[],
+    options?: UpdateManyOptions,
+  ): Promise<InventoryUpdateResult>;
 }
 
 // ----------------------------------------------------------------------------
@@ -206,7 +227,7 @@ export interface SubmitInventoryFeedInput {
 }
 export interface FeedJob {
   requestId: string;
-  requestType: string;               // INVENTORY_DATA | INVENTORY_AND_PRICE_DATA
+  requestType: string; // INVENTORY_DATA | INVENTORY_AND_PRICE_DATA
   marketplace: NeweggMarketplace;
   status: FeedRequestStatus;
   itemCount: number;
@@ -245,16 +266,16 @@ export interface FeedResult {
   requestId: string;
   status: Extract<FeedRequestStatus, "FINISHED">;
   summary: { processed: number; succeeded: number; failed: number };
-  records: FeedResultRecord[];      // detailed records (Newegg details failures/warnings)
+  records: FeedResultRecord[]; // detailed records (Newegg details failures/warnings)
   correlationId: string;
   rateLimit?: RateLimitInfo;
   raw?: unknown;
 }
 
 export interface WaitForResultOptions extends RequestOptions {
-  pollingIntervalMs?: number;       // default 5_000
-  maxPollingIntervalMs?: number;    // default 60_000 (bounded exponential)
-  timeoutMs?: number;               // default 900_000; polling never runs unbounded
+  pollingIntervalMs?: number; // default 5_000
+  maxPollingIntervalMs?: number; // default 60_000 (bounded exponential)
+  timeoutMs?: number; // default 900_000; polling never runs unbounded
 }
 export type FeedWaitOutcome =
   | { outcome: "finished"; result: FeedResult }
@@ -262,7 +283,10 @@ export type FeedWaitOutcome =
   | { outcome: "timeout"; requestId: string; lastStatus: FeedRequestStatus; elapsedMs: number };
 
 export interface FeedsApi {
-  submitInventoryFeed(input: SubmitInventoryFeedInput, options?: RequestOptions): Promise<FeedSubmission>;
+  submitInventoryFeed(
+    input: SubmitInventoryFeedInput,
+    options?: RequestOptions,
+  ): Promise<FeedSubmission>;
   getStatus(requestId: string, options?: RequestOptions): Promise<FeedStatusReport>;
   getResult(requestId: string, options?: RequestOptions): Promise<FeedResult>;
   waitForResult(requestId: string, options?: WaitForResultOptions): Promise<FeedWaitOutcome>;
@@ -304,15 +328,17 @@ export interface RateLimitStore {
   /** Local budget configuration (set once per operation kind by the SDK). */
   configure(key: string, budget: { maxPerMinute?: number; maxRecordsPerHour?: number }): void;
 }
-export class InMemoryRateLimitStore implements RateLimitStore { /* provided */ }
+export class InMemoryRateLimitStore implements RateLimitStore {
+  /* provided */
+}
 
 // ----------------------------------------------------------------------------
 // retry / idempotency
 // ----------------------------------------------------------------------------
 export interface RetryOptions {
-  maxAttempts?: number;   // default 3 (initial + 2 retries)
-  baseDelayMs?: number;   // default 250, full-jitter exponential
-  maxDelayMs?: number;    // default 10_000
+  maxAttempts?: number; // default 3 (initial + 2 retries)
+  baseDelayMs?: number; // default 250, full-jitter exponential
+  maxDelayMs?: number; // default 10_000
 }
 export interface StoredOperation {
   state: "submitting" | "submitted" | "failed";
@@ -324,7 +350,9 @@ export interface OperationStore {
   get(key: string): Promise<StoredOperation | undefined>;
   put(key: string, op: StoredOperation): Promise<void>;
 }
-export class InMemoryOperationStore implements OperationStore { /* provided */ }
+export class InMemoryOperationStore implements OperationStore {
+  /* provided */
+}
 
 // ----------------------------------------------------------------------------
 // logging
@@ -345,24 +373,38 @@ export interface NeweggLogger {
 // errors (all extend NeweggError; every one carries the fields below)
 // ----------------------------------------------------------------------------
 export type NeweggErrorCode =
-  | "configuration" | "validation" | "authentication" | "authorization"
-  | "rate_limit" | "api" | "feed_submission" | "feed_submission_indeterminate"
-  | "feed_processing" | "feed_cancelled" | "timeout" | "unsupported_operation";
+  | "configuration"
+  | "validation"
+  | "authentication"
+  | "authorization"
+  | "rate_limit"
+  | "api"
+  | "feed_submission"
+  | "feed_submission_indeterminate"
+  | "feed_processing"
+  | "feed_cancelled"
+  | "timeout"
+  | "unsupported_operation";
 
 export class NeweggError extends Error {
   readonly code: NeweggErrorCode;
   readonly httpStatus?: number;
-  readonly neweggErrorCode?: string;   // e.g. CT002, DF012, InvalidToken
-  readonly neweggRequestId?: string;   // feed request id when relevant
+  readonly neweggErrorCode?: string; // e.g. CT002, DF012, InvalidToken
+  readonly neweggRequestId?: string; // feed request id when relevant
   readonly correlationId?: string;
   readonly retryable: boolean;
-  readonly details?: unknown;          // sanitized, JSON-safe
+  readonly details?: unknown; // sanitized, JSON-safe
 }
 export class NeweggConfigurationError extends NeweggError {}
-export class NeweggValidationError extends NeweggError { readonly issues: Array<{ path: string; message: string; inputIndex?: number }>; }
+export class NeweggValidationError extends NeweggError {
+  readonly issues: Array<{ path: string; message: string; inputIndex?: number }>;
+}
 export class NeweggAuthenticationError extends NeweggError {}
 export class NeweggAuthorizationError extends NeweggError {}
-export class NeweggRateLimitError extends NeweggError { readonly rateLimit?: RateLimitInfo; readonly retryAfterMs?: number; }
+export class NeweggRateLimitError extends NeweggError {
+  readonly rateLimit?: RateLimitInfo;
+  readonly retryAfterMs?: number;
+}
 export class NeweggApiError extends NeweggError {}
 export class NeweggFeedSubmissionError extends NeweggError {}
 export class IndeterminateFeedSubmissionError extends NeweggError {
@@ -379,13 +421,27 @@ export class UnsupportedMarketplaceOperationError extends NeweggError {}
 // ----------------------------------------------------------------------------
 // testing utilities (exported from "@devino/newegg-marketplace-sdk/testing")
 // ----------------------------------------------------------------------------
-export function createMockFetch(routes: MockRoute[]): { fetch: typeof globalThis.fetch; calls: RecordedCall[] };
+export function createMockFetch(routes: MockRoute[]): {
+  fetch: typeof globalThis.fetch;
+  calls: RecordedCall[];
+};
+export interface MockReply {
+  status: number;
+  body?: unknown;
+  headers?: Record<string, string>;
+}
 export interface MockRoute {
   method: string;
   pathPattern: RegExp | string;
-  reply: (req: RecordedCall) => { status: number; body?: unknown; headers?: Record<string, string> } | Promise<...>;
+  reply: (req: RecordedCall) => MockReply | Promise<MockReply>;
 }
-export interface RecordedCall { method: string; url: URL; headers: Headers; bodyText?: string; bodyJson?: unknown }
+export interface RecordedCall {
+  method: string;
+  url: URL;
+  headers: Headers;
+  bodyText?: string;
+  bodyJson?: unknown;
+}
 ```
 
 ## Behavioural requirements bound to this surface

@@ -83,6 +83,21 @@ jobs:
       - run: npm ci
       - run: npm run check:deadcode
 
+  docs:
+    name: API docs (typedoc)
+    runs-on: ubuntu-latest
+    # typedoc compiles the TS sources itself (no dist needed), so this stays a fast,
+    # deterministic source-only check. treatWarningsAsErrors makes doc-breaking API drift
+    # (a broken @link, an undocumented referenced type) fail here instead of rotting silently.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm run docs:api
+
   build:
     name: Build (tsc)
     runs-on: ubuntu-latest
@@ -202,6 +217,7 @@ jobs:
         secret-scan,
         live-readonly-guard,
         deadcode,
+        docs,
         build,
         typecheck,
         test,

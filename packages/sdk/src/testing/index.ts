@@ -14,8 +14,9 @@ export interface RecordedCall {
   bodyJson?: unknown;
 }
 
-/** The reply a route produces for a matched request. */
-interface MockReply {
+/** The reply a route produces for a matched request. Part of the public `./testing` surface
+ * because {@link MockRoute.reply} returns it — consumers writing typed reply builders import it. */
+export interface MockReply {
   status: number;
   body?: unknown;
   headers?: Record<string, string>;
