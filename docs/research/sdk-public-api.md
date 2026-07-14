@@ -49,7 +49,7 @@ export interface NeweggClient {
   readonly inventory: InventoryApi;
   readonly feeds: FeedsApi;
   readonly service: ServiceApi;
-  readonly orders: OrdersApi; // read-only order lookups (list / get / status); never mutates
+  readonly orders: OrdersApi; // order reads (list / get / status) + writes (ship / cancel / confirm / remove)
   // Read-only, fail-fast credential preflight (single service-status GET). Throws
   // NeweggAuthenticationError (401) / NeweggAuthorizationError (403) immediately on
   // bad or unauthorized credentials; resolves on success. Never mutates.
@@ -441,6 +441,86 @@ export interface OrderStatusSnapshot {
   rateLimit?: RateLimitInfo;
   raw?: unknown;
 }
+export interface ShipPackageItem {
+  sellerPartNumber: string;
+  shippedQty: number; // > 0
+  neweggItemNumber?: string;
+}
+export interface ShipPackage {
+  trackingNumber: string;
+  shipCarrier: string; // Newegg Integrated Carrier List value
+  shipService: string;
+  items: ShipPackageItem[];
+}
+export interface ShipOrderInput {
+  orderNumber: string | number;
+  packages: ShipPackage[];
+}
+export interface ShipPackageResult {
+  trackingNumber?: string;
+  shipDate?: { raw: string; iso?: string };
+  processStatus: boolean; // authoritative per-package outcome (envelope IsSuccess is NOT)
+  processResult?: string;
+  items: Array<{ sellerPartNumber?: string; neweggItemNumber?: string; shippedQty?: number }>;
+}
+export interface ShipOrderResult {
+  marketplace: NeweggMarketplace;
+  orderNumber: string;
+  status: OrderStatus; // normalized from "Shipped" / "PartiallyShipped"
+  statusLabel?: string;
+  totalPackageCount: number;
+  successCount: number;
+  failCount: number; // > 0 => partial failure; inspect packages[].processStatus
+  packages: ShipPackageResult[];
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export type CancelReason = "outOfStock" | "customerRequested" | "priceError" | "unableToFulfill"; // 24/72/73/74
+export interface CancelOrderInput {
+  orderNumber: string | number;
+  reason: CancelReason;
+}
+export type CancelOrderOutcome = "void" | "processing" | "unknown"; // processing = SBN, poll separately
+export interface CancelOrderResult {
+  marketplace: NeweggMarketplace;
+  orderNumber: string;
+  outcome: CancelOrderOutcome;
+  outcomeLabel?: string;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export interface ConfirmOrdersInput {
+  orderNumbers: Array<string | number>;
+  issueUser?: string;
+}
+export interface ConfirmOrdersResult {
+  marketplace: NeweggMarketplace;
+  orderNumbers: string[]; // echoed downloaded list
+  requestDate?: { raw: string; iso?: string };
+  responseDate?: { raw: string; iso?: string };
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export interface RemoveOrderItemsInput {
+  orderNumber: string | number;
+  sellerPartNumbers: string[]; // unique
+  memo?: string;
+  issueUser?: string;
+}
+export interface RemoveOrderItemsResult {
+  marketplace: NeweggMarketplace;
+  orderNumber: string;
+  removedSellerPartNumbers: string[];
+  memo?: string; // error description when the op failed
+  requestDate?: { raw: string; iso?: string };
+  responseDate?: { raw: string; iso?: string };
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
 export interface OrdersApi {
   list(input?: ListOrdersInput, options?: RequestOptions): Promise<OrdersPage>; // Get Order Information
   get(orderNumber: string | number, options?: RequestOptions): Promise<Order>; // throws if not found
@@ -450,6 +530,17 @@ export interface OrdersApi {
     orderNumber: string | number,
     options?: RequestOptions,
   ): Promise<OrderStatusSnapshot | undefined>; // SO003 => undefined
+  // writes — NON-idempotent; an ambiguous transport failure throws IndeterminateOrderWriteError (no retry)
+  ship(input: ShipOrderInput, options?: RequestOptions): Promise<ShipOrderResult>; // Action 2
+  cancel(input: CancelOrderInput, options?: RequestOptions): Promise<CancelOrderResult>; // Action 1
+  confirmDownload(
+    input: ConfirmOrdersInput,
+    options?: RequestOptions,
+  ): Promise<ConfirmOrdersResult>;
+  removeItems(
+    input: RemoveOrderItemsInput,
+    options?: RequestOptions,
+  ): Promise<RemoveOrderItemsResult>; // KillItem
 }
 
 // ----------------------------------------------------------------------------
@@ -557,6 +648,13 @@ export class IndeterminateFeedSubmissionError extends NeweggError {
   readonly submittedAtIso: string;
   readonly guidance: string; // "check recent feed status before resubmitting…"
 }
+export class IndeterminateOrderWriteError extends NeweggError {
+  readonly marketplace: NeweggMarketplace;
+  readonly operation: string; // e.g. "orders.ship"
+  readonly submittedAtIso: string;
+  readonly orderNumber?: string;
+  readonly guidance: string; // "check order status (orders.getStatus) before retrying…"
+}
 export class NeweggFeedProcessingError extends NeweggError {}
 export class NeweggFeedCancelledError extends NeweggError {}
 export class NeweggTimeoutError extends NeweggError {}
@@ -614,12 +712,19 @@ export interface RecordedCall {
 8. **No network / credentials at import time.** Config validated in `createNeweggClient`
    (throws `NeweggConfigurationError`).
 9. **ESM**, Node ≥ 22, relative imports carry `.js` extensions, no `any` in src.
-10. **Orders (read-only)**: `orders.list`/`get`/`tryGet`/`getStatus`/`tryGetStatus` never
-    mutate. `list` and `get` share Get Order Information (version 315, 1000 req/hr); `getStatus`
-    uses Get Order Status (version 304, 500 req/hr). Enum wire codes normalize to string unions,
+10. **Orders (reads)**: `orders.list`/`get`/`tryGet`/`getStatus`/`tryGetStatus` never mutate.
+    `list` and `get` share Get Order Information (version 315, 1000 req/hr); `getStatus` uses Get
+    Order Status (version 304, 500 req/hr). Enum wire codes normalize to string unions,
     unrecognized → `"unknown"` (never throws). `get` throws `NeweggApiError` when no order
     matches (`tryGet` → `undefined`); `getStatus` throws on `SO003` (`tryGetStatus` → `undefined`).
     `pageSize` outside 1–100 or `page` < 1 throws `NeweggValidationError` (never silently clamped).
+11. **Order writes (non-idempotent)**: `orders.ship` (Action 2) / `cancel` (Action 1) /
+    `confirmDownload` / `removeItems` (KillItem) mutate and follow ADR 0004 — a provably-unsent
+    transport error retries, but an ambiguous failure (timeout/reset after dispatch, or 408/5xx)
+    throws `IndeterminateOrderWriteError` and is never auto-resent (check order status first).
+    `ship` treats the envelope `IsSuccess` as unreliable — the real outcome is `failCount` plus
+    per-package `processStatus`. Bad input (non-integer order number, empty packages/items,
+    duplicate seller part numbers) throws `NeweggValidationError` before any HTTP call.
 
 ```
 

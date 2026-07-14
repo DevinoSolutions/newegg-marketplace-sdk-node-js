@@ -11,4 +11,10 @@ export const Operation = {
   OrderList: "orders.list",
   // Get Order Status is a separate endpoint with its own 500/hr budget.
   OrderStatus: "orders.status",
+  // Order writes. Ship/Cancel PUT the shared orderstatus/orders/{n} endpoint (Action selects the
+  // mutation); Confirm POSTs …/orders/confirmation; RemoveItem PUTs ordermgmt/killitem/… (§11).
+  OrderShip: "orders.ship",
+  OrderCancel: "orders.cancel",
+  OrderConfirm: "orders.confirm",
+  OrderRemoveItem: "orders.removeItems",
 } as const;

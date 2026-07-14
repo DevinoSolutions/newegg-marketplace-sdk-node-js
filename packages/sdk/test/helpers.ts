@@ -60,6 +60,8 @@ export const paths = {
   serviceStatus: "servicestatus",
   orderInfo: /ordermgmt\/order\/orderinfo\?/,
   orderStatus: /ordermgmt\/orderstatus\/orders\//,
+  orderConfirmation: /ordermgmt\/orderstatus\/orders\/confirmation/,
+  killItem: /ordermgmt\/killitem\/orders\//,
 } as const;
 
 /** §5.1 US single-item read sample (numbers as strings). */

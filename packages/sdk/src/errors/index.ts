@@ -12,6 +12,7 @@ export type NeweggErrorCode =
   | "feed_submission_indeterminate"
   | "feed_processing"
   | "feed_cancelled"
+  | "order_write_indeterminate"
   | "timeout"
   | "unsupported_operation";
 
@@ -170,6 +171,52 @@ export class IndeterminateFeedSubmissionError extends NeweggError {
       payloadHash: this.payloadHash,
       marketplace: this.marketplace,
       submittedAtIso: this.submittedAtIso,
+      guidance: this.guidance,
+    };
+  }
+}
+
+export interface IndeterminateOrderWriteErrorInit extends NeweggErrorInit {
+  marketplace: NeweggMarketplace;
+  /** The order-write operation that was in flight, e.g. `"orders.ship"`. */
+  operation: string;
+  submittedAtIso: string;
+  orderNumber?: string;
+  guidance?: string;
+}
+
+/**
+ * Thrown when an order mutation (ship / cancel / confirm / remove-item) may have reached Newegg
+ * but its outcome is unknown — an ambiguous transport failure (timeout/reset after dispatch) or a
+ * 408/5xx returned after the body was sent. Order writes are NOT idempotent, so the SDK never
+ * auto-retries past this point: resubmitting could double-ship or double-cancel. Check the order's
+ * current state (`orders.getStatus` / `orders.get`) before retrying. `retryable` is always `false`.
+ */
+export class IndeterminateOrderWriteError extends NeweggError {
+  readonly marketplace: NeweggMarketplace;
+  readonly operation: string;
+  readonly submittedAtIso: string;
+  readonly orderNumber?: string;
+  readonly guidance: string;
+  constructor(message: string, init: IndeterminateOrderWriteErrorInit) {
+    super("order_write_indeterminate", message, { ...init, retryable: false });
+    this.name = "IndeterminateOrderWriteError";
+    this.marketplace = init.marketplace;
+    this.operation = init.operation;
+    this.submittedAtIso = init.submittedAtIso;
+    this.orderNumber = init.orderNumber;
+    this.guidance =
+      init.guidance ??
+      "The order write may or may not have reached Newegg. Check the order status " +
+        "(orders.getStatus) before retrying to avoid a double ship/cancel.";
+  }
+  override toJSON(): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      marketplace: this.marketplace,
+      operation: this.operation,
+      submittedAtIso: this.submittedAtIso,
+      orderNumber: this.orderNumber,
       guidance: this.guidance,
     };
   }

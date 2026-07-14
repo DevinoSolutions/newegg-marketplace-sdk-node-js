@@ -5,6 +5,8 @@
  * normalized string unions in both directions.
  */
 import type {
+  CancelOrderOutcome,
+  CancelReason,
   OrderFulfillment,
   OrderItemStatus,
   OrderSalesChannel,
@@ -132,5 +134,74 @@ export function premierOrderFilterToCode(filter: PremierOrderFilter): number {
       return 1;
     case "noPremier":
       return 2;
+  }
+}
+
+// ── Order writes (§11) ──────────────────────────────────────────────────────────────────────
+
+/** Version pin for Ship Order and Cancel Order (the only documented version). */
+export const ORDER_WRITE_VERSION = "304";
+
+/** `Action` code for Ship Order on the shared order-status PUT endpoint (§11.1). */
+export const ORDER_ACTION_SHIP = "2";
+
+/** `Action` code for Cancel Order on the shared order-status PUT endpoint (§11.2). */
+export const ORDER_ACTION_CANCEL = "1";
+
+/** Fixed `OperationType` for Order Confirmation / mark-downloaded (§11.3). */
+export const ORDER_CONFIRMATION_OPERATION = "OrderConfirmationRequest";
+
+/** Fixed `OperationType` for Remove Item / KillItem (§11.4). */
+export const KILL_ITEM_OPERATION = "KillItemRequest";
+
+/** Cancel reason (normalized) → Newegg reason code (§11.2). */
+export function cancelReasonToCode(reason: CancelReason): string {
+  switch (reason) {
+    case "outOfStock":
+      return "24";
+    case "customerRequested":
+      return "72";
+    case "priceError":
+      return "73";
+    case "unableToFulfill":
+      return "74";
+  }
+}
+
+/**
+ * Ship/Cancel responses report status as a STRING label (`"Shipped"`, `"PartiallyShipped"`,
+ * `"Void"`, …), not the numeric code reads use (§11). Map it to the normalized union;
+ * unrecognized → `"unknown"` (never throw).
+ */
+export function orderStatusFromLabel(label: string | undefined): OrderStatus {
+  switch (label?.trim().toLowerCase()) {
+    case "unshipped":
+      return "unshipped";
+    case "partiallyshipped":
+      return "partiallyShipped";
+    case "shipped":
+      return "shipped";
+    case "invoiced":
+      return "invoiced";
+    case "void":
+    case "voided":
+      return "voided";
+    case "paymentpending":
+      return "paymentPending";
+    default:
+      return "unknown";
+  }
+}
+
+/** Cancel-order outcome label (`"Void"` = done, `"Processing"` = SBN pending) → normalized union. */
+export function cancelOutcomeFromLabel(label: string | undefined): CancelOrderOutcome {
+  switch (label?.trim().toLowerCase()) {
+    case "void":
+    case "voided":
+      return "void";
+    case "processing":
+      return "processing";
+    default:
+      return "unknown";
   }
 }

@@ -545,6 +545,125 @@ export interface OrderStatusSnapshot {
   raw?: unknown;
 }
 
+/** One item within a shipment package for {@link OrdersApi.ship}. */
+export interface ShipPackageItem {
+  sellerPartNumber: string;
+  /** Units of this item shipped in this package (> 0). */
+  shippedQty: number;
+  neweggItemNumber?: string;
+}
+
+/** One package in a shipment; every ordered unit of an item must be covered across packages. */
+export interface ShipPackage {
+  trackingNumber: string;
+  /** A value from Newegg's Integrated Carrier List. */
+  shipCarrier: string;
+  shipService: string;
+  items: ShipPackageItem[];
+}
+
+/** Input to {@link OrdersApi.ship} (Ship Order, `Action` = 2; contracts §11.1). */
+export interface ShipOrderInput {
+  orderNumber: string | number;
+  packages: ShipPackage[];
+}
+
+/** Per-package outcome in a {@link ShipOrderResult}. */
+export interface ShipPackageResult {
+  trackingNumber?: string;
+  shipDate?: { raw: string; iso?: string };
+  /** Newegg's per-package success flag — the AUTHORITATIVE outcome (envelope `IsSuccess` is not). */
+  processStatus: boolean;
+  processResult?: string;
+  items: Array<{ sellerPartNumber?: string; neweggItemNumber?: string; shippedQty?: number }>;
+}
+
+/** Result of {@link OrdersApi.ship}. */
+export interface ShipOrderResult {
+  marketplace: NeweggMarketplace;
+  orderNumber: string;
+  /** New order status normalized from Newegg's string label (`Shipped` / `PartiallyShipped`). */
+  status: OrderStatus;
+  /** Raw status label as returned (e.g. `"PartiallyShipped"`). */
+  statusLabel?: string;
+  totalPackageCount: number;
+  successCount: number;
+  failCount: number;
+  packages: ShipPackageResult[];
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+/** Cancel reason for {@link OrdersApi.cancel} (→ codes 24 / 72 / 73 / 74; §11.2). */
+export type CancelReason = "outOfStock" | "customerRequested" | "priceError" | "unableToFulfill";
+
+/** Input to {@link OrdersApi.cancel} (Cancel Order, `Action` = 1). */
+export interface CancelOrderInput {
+  orderNumber: string | number;
+  reason: CancelReason;
+}
+
+/** Cancel outcome: `void` = cancelled; `processing` = SBN cancellation accepted, result pending. */
+export type CancelOrderOutcome = "void" | "processing" | "unknown";
+
+/** Result of {@link OrdersApi.cancel}. */
+export interface CancelOrderResult {
+  marketplace: NeweggMarketplace;
+  orderNumber: string;
+  outcome: CancelOrderOutcome;
+  /** Raw outcome label as returned (e.g. `"Void"`). */
+  outcomeLabel?: string;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+/** Input to {@link OrdersApi.confirmDownload} (Order Confirmation / mark-downloaded; §11.3). */
+export interface ConfirmOrdersInput {
+  orderNumbers: Array<string | number>;
+  /** Optional eligible seller-account email (`IssueUser`). */
+  issueUser?: string;
+}
+
+/** Result of {@link OrdersApi.confirmDownload}. */
+export interface ConfirmOrdersResult {
+  marketplace: NeweggMarketplace;
+  /** The order numbers Newegg echoed as marked-downloaded. */
+  orderNumbers: string[];
+  requestDate?: { raw: string; iso?: string };
+  responseDate?: { raw: string; iso?: string };
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+/** Input to {@link OrdersApi.removeItems} (Remove Item / KillItem; §11.4). */
+export interface RemoveOrderItemsInput {
+  orderNumber: string | number;
+  /** Seller part numbers to remove from the order (must be unique). */
+  sellerPartNumbers: string[];
+  /** Optional reason (`Memo`). */
+  memo?: string;
+  /** Optional eligible seller-account email (`IssueUser`). */
+  issueUser?: string;
+}
+
+/** Result of {@link OrdersApi.removeItems}. */
+export interface RemoveOrderItemsResult {
+  marketplace: NeweggMarketplace;
+  orderNumber: string;
+  /** Seller part numbers Newegg echoed as removed. */
+  removedSellerPartNumbers: string[];
+  /** `null`/absent on success; a detailed error description when the operation failed. */
+  memo?: string;
+  requestDate?: { raw: string; iso?: string };
+  responseDate?: { raw: string; iso?: string };
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
 export interface OrdersApi {
   /** Search orders by criteria (single page). Omit `input` to match all orders. */
   list(input?: ListOrdersInput, options?: RequestOptions): Promise<OrdersPage>;
@@ -565,6 +684,34 @@ export interface OrdersApi {
     orderNumber: string | number,
     options?: RequestOptions,
   ): Promise<OrderStatusSnapshot | undefined>;
+  /**
+   * Ship one order in one or more packages (Ship Order, `Action` = 2 — a WRITE via PUT to the
+   * order-status endpoint). Newegg's envelope `IsSuccess` is always `true`, so the real outcome
+   * is {@link ShipOrderResult.failCount} + per-package `processStatus`. NOT idempotent: an
+   * ambiguous transport failure throws {@link IndeterminateOrderWriteError} instead of retrying.
+   */
+  ship(input: ShipOrderInput, options?: RequestOptions): Promise<ShipOrderResult>;
+  /**
+   * Cancel (void) an unshipped order with a reason (Cancel Order, `Action` = 1). NOT idempotent
+   * (see {@link OrdersApi.ship}); an SBN order may come back `processing` (poll separately).
+   */
+  cancel(input: CancelOrderInput, options?: RequestOptions): Promise<CancelOrderResult>;
+  /**
+   * Mark one or more orders as downloaded/acknowledged (Order Confirmation). Effectively
+   * idempotent, but still a mutation.
+   */
+  confirmDownload(
+    input: ConfirmOrdersInput,
+    options?: RequestOptions,
+  ): Promise<ConfirmOrdersResult>;
+  /**
+   * Remove one or more line items from an unshipped order by seller part number (KillItem). Not
+   * allowed on SBN orders. NOT idempotent (see {@link OrdersApi.ship}).
+   */
+  removeItems(
+    input: RemoveOrderItemsInput,
+    options?: RequestOptions,
+  ): Promise<RemoveOrderItemsResult>;
 }
 
 // ----------------------------------------------------------------------------

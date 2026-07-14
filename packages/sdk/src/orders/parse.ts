@@ -5,6 +5,9 @@
  * single-element list as an object instead of an array) via the shared wire helpers.
  */
 import type {
+  CancelOrderInput,
+  CancelOrderOutcome,
+  ConfirmOrdersInput,
   ListOrdersInput,
   Order,
   OrderAmounts,
@@ -14,6 +17,9 @@ import type {
   OrderPackage,
   OrderSalesChannel,
   OrderStatus,
+  RemoveOrderItemsInput,
+  ShipOrderInput,
+  ShipPackageResult,
   ShipToAddress,
 } from "../types.js";
 import type { NeweggValidationIssue } from "../errors/index.js";
@@ -21,11 +27,18 @@ import { NeweggValidationError } from "../errors/index.js";
 import { formatPacificWallClock, toTimestamp } from "../platform/dates.js";
 import { asArray, asBoolean, asNumber, asString, getField } from "../schemas/wire.js";
 import {
+  KILL_ITEM_OPERATION,
+  ORDER_ACTION_CANCEL,
+  ORDER_ACTION_SHIP,
+  ORDER_CONFIRMATION_OPERATION,
   ORDERS_PAGE_SIZE_MAX,
+  cancelOutcomeFromLabel,
+  cancelReasonToCode,
   orderFulfillmentFromCode,
   orderItemStatusFromCode,
   orderSalesChannelFromCode,
   orderStatusFromCode,
+  orderStatusFromLabel,
   orderStatusToCode,
   orderTypeFilterToCode,
   premierOrderFilterToCode,
@@ -265,4 +278,256 @@ export function buildOrderInfoRequest(input: ListOrdersInput): {
 
 function renderOrderDate(value: Date | string): string {
   return typeof value === "string" ? value : formatPacificWallClock(value);
+}
+
+// ── Order writes (§11) ──────────────────────────────────────────────────────────────────────
+
+/** Validates and stringifies an order number (Newegg requires a positive integer 1–2147483647). */
+function normalizeOrderNumber(
+  value: string | number,
+  issues: NeweggValidationIssue[],
+  path = "orderNumber",
+): string {
+  const str = String(value).trim();
+  if (!/^\d+$/.test(str) || Number(str) < 1) {
+    issues.push({ path, message: "must be a positive integer (1–2147483647)" });
+  }
+  return str;
+}
+
+/** Ship Order request (`Action` = 2). `sellerId` fills the shipment header (must match the URL). */
+export function buildShipRequest(
+  input: ShipOrderInput,
+  sellerId: string,
+): { body: unknown; orderNumber: string } {
+  const issues: NeweggValidationIssue[] = [];
+  const orderNumber = normalizeOrderNumber(input.orderNumber, issues);
+  if (!input.packages || input.packages.length === 0) {
+    issues.push({ path: "packages", message: "at least one package is required" });
+  }
+  const packages = (input.packages ?? []).map((pkg, p) => {
+    if (!pkg.trackingNumber) {
+      issues.push({ path: `packages[${p}].trackingNumber`, message: "is required" });
+    }
+    if (!pkg.shipCarrier)
+      issues.push({ path: `packages[${p}].shipCarrier`, message: "is required" });
+    if (!pkg.shipService)
+      issues.push({ path: `packages[${p}].shipService`, message: "is required" });
+    if (!pkg.items || pkg.items.length === 0) {
+      issues.push({ path: `packages[${p}].items`, message: "at least one item is required" });
+    }
+    const items = (pkg.items ?? []).map((it, i) => {
+      if (!it.sellerPartNumber) {
+        issues.push({
+          path: `packages[${p}].items[${i}].sellerPartNumber`,
+          message: "is required",
+        });
+      }
+      if (!Number.isInteger(it.shippedQty) || it.shippedQty < 1) {
+        issues.push({
+          path: `packages[${p}].items[${i}].shippedQty`,
+          message: "must be an integer >= 1",
+        });
+      }
+      const item: Record<string, unknown> = {
+        SellerPartNumber: it.sellerPartNumber,
+        ShippedQty: String(it.shippedQty),
+      };
+      if (it.neweggItemNumber) item.NeweggItemNumber = it.neweggItemNumber;
+      return item;
+    });
+    return {
+      TrackingNumber: pkg.trackingNumber,
+      ShipCarrier: pkg.shipCarrier,
+      ShipService: pkg.shipService,
+      ItemList: { Item: items },
+    };
+  });
+  if (issues.length > 0) throw new NeweggValidationError("Invalid ship-order input.", issues);
+  const body = {
+    Action: ORDER_ACTION_SHIP,
+    Value: {
+      Shipment: {
+        Header: { SellerID: sellerId, SONumber: orderNumber },
+        PackageList: { Package: packages },
+      },
+    },
+  };
+  return { body, orderNumber };
+}
+
+/** Cancel Order request (`Action` = 1). The reason maps to a Newegg reason code. */
+export function buildCancelRequest(input: CancelOrderInput): {
+  body: unknown;
+  orderNumber: string;
+} {
+  const issues: NeweggValidationIssue[] = [];
+  const orderNumber = normalizeOrderNumber(input.orderNumber, issues);
+  if (issues.length > 0) throw new NeweggValidationError("Invalid cancel-order input.", issues);
+  const body = { Action: ORDER_ACTION_CANCEL, Value: cancelReasonToCode(input.reason) };
+  return { body, orderNumber };
+}
+
+/** Order Confirmation request (mark-downloaded). `IssueUser` sits at the request-envelope top. */
+export function buildConfirmRequest(input: ConfirmOrdersInput): { body: unknown } {
+  const issues: NeweggValidationIssue[] = [];
+  if (!input.orderNumbers || input.orderNumbers.length === 0) {
+    issues.push({ path: "orderNumbers", message: "at least one order number is required" });
+  }
+  const orderNumbers = (input.orderNumbers ?? []).map((value, i) =>
+    normalizeOrderNumber(value, issues, `orderNumbers[${i}]`),
+  );
+  if (issues.length > 0) throw new NeweggValidationError("Invalid confirm-orders input.", issues);
+  const body: Record<string, unknown> = {
+    OperationType: ORDER_CONFIRMATION_OPERATION,
+    RequestBody: { DownloadedOrderList: { OrderNumber: orderNumbers } },
+  };
+  // IssueUser placement is per Newegg's request-envelope convention (the sample omits it). ASSUMPTION.
+  if (input.issueUser) body.IssueUser = input.issueUser;
+  return { body };
+}
+
+/** Remove Item (KillItem) request. `Memo`/`IssueUser` placement follows Newegg convention (ASSUMPTION). */
+export function buildRemoveItemsRequest(input: RemoveOrderItemsInput): {
+  body: unknown;
+  orderNumber: string;
+} {
+  const issues: NeweggValidationIssue[] = [];
+  const orderNumber = normalizeOrderNumber(input.orderNumber, issues);
+  if (!input.sellerPartNumbers || input.sellerPartNumbers.length === 0) {
+    issues.push({
+      path: "sellerPartNumbers",
+      message: "at least one seller part number is required",
+    });
+  }
+  const seen = new Set<string>();
+  (input.sellerPartNumbers ?? []).forEach((spn, i) => {
+    if (!spn) issues.push({ path: `sellerPartNumbers[${i}]`, message: "must not be empty" });
+    else if (seen.has(spn)) {
+      issues.push({ path: `sellerPartNumbers[${i}]`, message: `duplicate '${spn}'` });
+    } else seen.add(spn);
+  });
+  if (issues.length > 0) throw new NeweggValidationError("Invalid remove-items input.", issues);
+  const requestBody: Record<string, unknown> = {
+    KillItem: {
+      Order: {
+        ItemList: { Item: input.sellerPartNumbers.map((spn) => ({ SellerPartNumber: spn })) },
+      },
+    },
+  };
+  if (input.memo) requestBody.Memo = input.memo;
+  const body: Record<string, unknown> = {
+    OperationType: KILL_ITEM_OPERATION,
+    RequestBody: requestBody,
+  };
+  if (input.issueUser) body.IssueUser = input.issueUser;
+  return { body, orderNumber };
+}
+
+interface ParsedShipResponse {
+  orderNumber: string;
+  status: OrderStatus;
+  statusLabel?: string;
+  totalPackageCount: number;
+  successCount: number;
+  failCount: number;
+  packages: ShipPackageResult[];
+}
+
+function parseShipPackageResult(raw: unknown): ShipPackageResult {
+  const g = (key: string): unknown => getField(raw, key);
+  return {
+    trackingNumber: asString(g("TrackingNumber")),
+    shipDate: toTimestamp(asString(g("ShipDate"))),
+    processStatus: asBoolean(g("ProcessStatus")) ?? false,
+    processResult: asString(g("ProcessResult")),
+    items: listItems(g("ItemList"), "Item").map((item) => ({
+      sellerPartNumber: asString(getField(item, "SellerPartNumber")),
+      neweggItemNumber: asString(getField(item, "NeweggItemNumber")),
+      shippedQty: asNumber(getField(item, "ShippedQty")),
+    })),
+  };
+}
+
+/** Parses a Ship Order response (tolerates the optional `NeweggAPIResponse` wrapper). */
+export function parseShipResponse(json: unknown): ParsedShipResponse {
+  const root = getField(json, "NeweggAPIResponse") ?? json;
+  const summary = getField(root, "PackageProcessingSummary");
+  const result = getField(root, "Result");
+  const label = asString(getField(result, "OrderStatus"));
+  return {
+    orderNumber: asString(getField(result, "OrderNumber")) ?? "",
+    status: orderStatusFromLabel(label),
+    statusLabel: label,
+    totalPackageCount: asNumber(getField(summary, "TotalPackageCount")) ?? 0,
+    successCount: asNumber(getField(summary, "SuccessCount")) ?? 0,
+    failCount: asNumber(getField(summary, "FailCount")) ?? 0,
+    packages: listItems(getField(getField(result, "Shipment"), "PackageList"), "Package").map(
+      parseShipPackageResult,
+    ),
+  };
+}
+
+interface ParsedCancelResponse {
+  orderNumber: string;
+  outcome: CancelOrderOutcome;
+  outcomeLabel?: string;
+}
+
+/** Parses a Cancel Order response. */
+export function parseCancelResponse(json: unknown): ParsedCancelResponse {
+  const root = getField(json, "NeweggAPIResponse") ?? json;
+  const result = getField(root, "Result") ?? root;
+  const label = asString(getField(result, "OrderStatus"));
+  return {
+    orderNumber: asString(getField(result, "OrderNumber")) ?? "",
+    outcome: cancelOutcomeFromLabel(label),
+    outcomeLabel: label,
+  };
+}
+
+interface ParsedConfirmResponse {
+  orderNumbers: string[];
+  requestDate?: { raw: string; iso?: string };
+  responseDate?: { raw: string; iso?: string };
+}
+
+/** Parses an Order Confirmation response (tolerates the optional `NeweggAPIResponse` wrapper). */
+export function parseConfirmResponse(json: unknown): ParsedConfirmResponse {
+  const root = getField(json, "NeweggAPIResponse") ?? json;
+  const body = getField(root, "ResponseBody") ?? root;
+  const orderNumbers = listItems(getField(body, "DownloadedOrderList"), "OrderNumber")
+    .map((value) => asString(value))
+    .filter((value): value is string => value !== undefined);
+  return {
+    orderNumbers,
+    requestDate: toTimestamp(asString(getField(body, "RequestDate"))),
+    responseDate: toTimestamp(asString(getField(root, "ResponseDate"))),
+  };
+}
+
+interface ParsedRemoveItemsResponse {
+  orderNumber: string;
+  removedSellerPartNumbers: string[];
+  memo?: string;
+  requestDate?: { raw: string; iso?: string };
+  responseDate?: { raw: string; iso?: string };
+}
+
+/** Parses a Remove Item (KillItem) response (tolerates the optional `NeweggAPIResponse` wrapper). */
+export function parseRemoveItemsResponse(json: unknown): ParsedRemoveItemsResponse {
+  const root = getField(json, "NeweggAPIResponse") ?? json;
+  const body = getField(root, "ResponseBody") ?? root;
+  const orders = getField(body, "Orders");
+  const result = getField(orders, "Result");
+  const removedSellerPartNumbers = listItems(getField(result, "ItemList"), "Item")
+    .map((item) => asString(getField(item, "SellerPartNumber")))
+    .filter((value): value is string => value !== undefined);
+  return {
+    orderNumber: asString(getField(orders, "OrderNumber")) ?? "",
+    removedSellerPartNumbers,
+    memo: asString(getField(root, "Memo")),
+    requestDate: toTimestamp(asString(getField(body, "RequestDate"))),
+    responseDate: toTimestamp(asString(getField(root, "ResponseDate"))),
+  };
 }
