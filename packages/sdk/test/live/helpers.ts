@@ -67,58 +67,33 @@ export function testWarehouse(): string | undefined {
   return env.NEWEGG_LIVE_TEST_WAREHOUSE ? String(env.NEWEGG_LIVE_TEST_WAREHOUSE) : undefined;
 }
 
-function marketplacePrefix(): string {
-  const m = marketplace();
-  return m === "b2b" ? "b2b/" : m === "ca" ? "can/" : "";
-}
-
 /**
- * Best-effort READ-ONLY discovery of a real item identifier for inventory-read tests. Prefers
- * an explicit `NEWEGG_LIVE_TEST_SELLER_PART_NUMBER`; otherwise reads recent orders (order-info
- * is a read despite the PUT verb) and returns the first SellerPartNumber found. Returns
- * `undefined` on any failure so tests skip cleanly instead of failing. Never writes.
+ * Best-effort READ-ONLY discovery of real item identifiers for inventory-read tests. Prefers an
+ * explicit `NEWEGG_LIVE_TEST_SELLER_PART_NUMBER`; otherwise dogfoods the SDK — `orders.list`
+ * reads recent orders (order-info is a read despite the PUT verb) and returns the distinct
+ * SellerPartNumbers found on their line items. Returns `[]` on any failure so tests skip cleanly
+ * instead of failing. Never writes. Going through `makeLiveClient()` means discovery honors
+ * `NEWEGG_API_BASE_URL` (fixture-server mode) for free, unlike the old hardcoded-base raw fetch.
  */
 export async function discoverIdentifiers(limit = 5): Promise<ItemIdentifier[]> {
   const explicit = env.NEWEGG_LIVE_TEST_SELLER_PART_NUMBER;
   if (explicit) return [{ type: "sellerPartNumber", value: explicit }];
 
-  const body = JSON.stringify({
-    OperationType: "GetOrderInfoRequest",
-    RequestBody: {
-      PageIndex: 1,
-      PageSize: 20,
-      RequestCriteria: {
-        OrderDateFrom: "01/01/2025 00:00:00",
-        OrderDateTo: "12/31/2026 23:59:59",
-      },
-    },
-  });
-
-  for (const version of ["304", ""]) {
-    const url =
-      `https://api.newegg.com/marketplace/${marketplacePrefix()}ordermgmt/order/orderinfo` +
-      `?sellerid=${env.NEWEGG_SELLER_ID}${version ? `&version=${version}` : ""}`;
-    try {
-      const res = await fetch(url, {
-        method: "PUT",
-        headers: {
-          Authorization: String(env.NEWEGG_API_KEY),
-          SecretKey: String(env.NEWEGG_SECRET_KEY),
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body,
-      });
-      if (!res.ok) continue;
-      const text = await res.text();
-      const skus = [...text.matchAll(/"SellerPartNumber"\s*:\s*"([^"]+)"/g)]
-        .map((m) => m[1])
-        .filter((v): v is string => Boolean(v));
-      const distinct = [...new Set(skus)].slice(0, limit);
-      if (distinct.length) return distinct.map((value) => ({ type: "sellerPartNumber", value }));
-    } catch {
-      // best-effort: try the next version, else give up and let the test skip
-    }
+  try {
+    const client = makeLiveClient();
+    const page = await client.orders.list({
+      dateFrom: "01/01/2020 00:00:00",
+      dateTo: "12/31/2026 23:59:59",
+      pageSize: 20,
+    });
+    const skus = page.orders
+      .flatMap((order) => order.items)
+      .map((item) => item.sellerPartNumber)
+      .filter((value): value is string => Boolean(value));
+    const distinct = [...new Set(skus)].slice(0, limit);
+    return distinct.map((value) => ({ type: "sellerPartNumber", value }));
+  } catch {
+    // best-effort: let the inventory-read tests skip if no identifier can be discovered
+    return [];
   }
-  return [];
 }

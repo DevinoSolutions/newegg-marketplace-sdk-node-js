@@ -53,9 +53,11 @@ for (const file of files) {
     for (const { re, why } of FORBIDDEN) {
       if (re.test(line)) fail(`${rel}:${i + 1} ${why} — the live suite is read-only`);
     }
-    // Raw network calls are confined to helpers.ts (read-only discovery); tests go through the SDK.
-    if (isTestFile && /\bfetch\s*\(/.test(line)) {
-      fail(`${rel}:${i + 1} raw fetch() in a live test — go through the SDK or helpers.ts`);
+    // Every live call — tests AND helpers — now goes through the SDK; no raw network access.
+    if (/\bfetch\s*\(/.test(line)) {
+      fail(
+        `${rel}:${i + 1} raw fetch() in the live suite — every live call must go through the SDK`,
+      );
     }
   });
   if (isTestFile && !lines.some((l) => l.includes("describe.skipIf(!liveEnabled)"))) {
