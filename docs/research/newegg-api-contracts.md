@@ -624,3 +624,277 @@ Response — a **flat object** (no envelope; XML root `QueryOrderStatusInfo`):
   the order does not belong to this seller). Both XML `<Errors>` and JSON-array shapes (§1).
   The SDK's "try" variant maps `SO003` to a not-found (`undefined`) result, mirroring the
   inventory `CT026` handling (§5); every other error throws.
+
+## 11. Order Management (writes)
+
+> Extracted 2026-07-14 from the official Newegg Developer Portal order-management pages (sources
+> cited per subsection). These are the **mutating** order operations — ship, cancel, mark-downloaded
+> (confirmation), and remove-item. The SDK implements them under the same write-safety rules as
+> inventory writes (MCP preview→apply, `NEWEGG_MCP_ALLOW_WRITES` gate) and, like feeds, treats them
+> as **non-idempotent**: a request whose body may have reached Newegg is never auto-retried
+> (ADR 0004). Auth required; XML/JSON in and out; each is rate limited **1000 requests/hour**.
+
+**Shared endpoint quirk (HTTP verb ≠ semantics, cf. §2/§10.2).** Ship Order and Cancel Order both
+`PUT` to `ordermgmt/orderstatus/orders/{ordernumber}` — the _same_ URL that Get Order Status (§10.2)
+reads with `GET`. That path is **read-on-GET, write-on-PUT**; the `Action` field in the PUT body
+selects the mutation (`1` cancel, `2` ship). Classify by this doc, never by the URL. Order
+Confirmation and Remove Item use distinct paths (`…/orders/confirmation`, `ordermgmt/killitem/…`).
+
+Response dates are Pacific Time (§2), in either `M/D/YYYY H:mm:ss` (confirmation) or an ISO-like
+`YYYY-MM-DDTHH:mm:ss` / `YYYY-MM-DD HH:mm:ss` form (ship `ShipDate`, remove-item `RequestDate`) —
+parse via `platform/dates.ts`. Any single-element list (`Package`, `Item`, `OrderNumber`) may be an
+object instead of an array (§2).
+
+### 11.1 Ship Order (`Action` = 2)
+
+Source: `https://developer.newegg.com/newegg_marketplace_api/order_management/ship_order/` (2026-07-14).
+
+```
+PUT https://api.newegg.com/marketplace/ordermgmt/orderstatus/orders/{ordernumber}?sellerid={SellerID}&version={version}
+PUT https://api.newegg.com/marketplace/b2b/ordermgmt/orderstatus/orders/{ordernumber}?sellerid={SellerID}&version={version}
+PUT https://api.newegg.com/marketplace/can/ordermgmt/orderstatus/orders/{ordernumber}?sellerid={SellerID}&version={version}
+```
+
+`PUT`, only `version=304`. Updates shipment of one or more items. Newegg accepts one item split
+across multiple packages but rejects a package that ships fewer than the ordered quantity of an item
+without the rest being shipped in sibling packages (total shipped must equal total ordered for that
+item). Shipping every item completes the order; shipping some leaves it `PartiallyShipped`.
+
+Request — `Value.Shipment` carries a header + a `PackageList`; each `Package` has its own
+carrier/tracking and an `ItemList`. (In XML the `Value` element is CDATA-wrapped XML; in JSON it is
+a nested object.)
+
+```json
+{
+  "Action": "2",
+  "Value": {
+    "Shipment": {
+      "Header": { "SellerID": "A006", "SONumber": "159243598" },
+      "PackageList": {
+        "Package": [
+          {
+            "TrackingNumber": "TRACK1",
+            "ShipCarrier": "Purolator",
+            "ShipService": "3-5",
+            "ItemList": { "Item": { "SellerPartNumber": "A006ZX-35833", "ShippedQty": "1" } }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+- `Action` `2` = ship (required). `SONumber` is the order number and must equal `{ordernumber}` in
+  the URL (else `SO040`); the header `SellerID` must match the URL `sellerid`.
+- Per package (required): `TrackingNumber`, `ShipCarrier` (a Newegg Integrated Carrier List value),
+  `ShipService`. Per item (required): `SellerPartNumber`, `ShippedQty` (> 0); `NeweggItemNumber`
+  optional. `Package` and `Item` are object-or-array (§2).
+
+Response — `PackageProcessingSummary` counts, then a `Result` with the new order status and
+per-package `ProcessStatus`:
+
+```json
+{
+  "IsSuccess": true,
+  "PackageProcessingSummary": { "TotalPackageCount": 1, "SuccessCount": 1, "FailCount": 0 },
+  "Result": {
+    "OrderNumber": "159243598",
+    "OrderStatus": "Shipped",
+    "SellerID": "A006",
+    "Shipment": {
+      "PackageList": [
+        {
+          "TrackingNumber": "TRACK1",
+          "ShipDate": "2012-02-10T15:30:01",
+          "ProcessStatus": true,
+          "ProcessResult": "Success",
+          "ItemList": [
+            {
+              "NeweggItemNumber": "9SIA0060845543",
+              "SellerPartNumber": "A006ZX-35833",
+              "ShippedQty": 1
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+- **`IsSuccess` "always returns true"** per the docs — do NOT read it as the per-package outcome.
+  Real success is per package: `ProcessStatus` (`true`/`false`) + `ProcessResult`, with
+  `SuccessCount`/`FailCount` in the summary. **ASSUMPTION:** the SDK surfaces a partial failure
+  (`FailCount > 0`, or any `ProcessStatus=false`) as an error/warning, not silent success.
+- `OrderStatus` here is a **string** (`Shipped` / `PartiallyShipped`), not the §10 numeric code.
+- `ShipDate` is Pacific (`YYYY-MM-DDTHH:mm:ss`).
+
+### 11.2 Cancel Order (`Action` = 1)
+
+Source: `https://developer.newegg.com/newegg_marketplace_api/order_management/cancel_status/` (2026-07-14).
+
+```
+PUT https://api.newegg.com/marketplace/ordermgmt/orderstatus/orders/{ordernumber}?sellerid={SellerID}&version={version}
+PUT https://api.newegg.com/marketplace/b2b/ordermgmt/orderstatus/orders/{ordernumber}?sellerid={SellerID}&version={version}
+PUT https://api.newegg.com/marketplace/can/ordermgmt/orderstatus/orders/{ordernumber}?sellerid={SellerID}&version={version}
+```
+
+`PUT`, only `version=304`. Same URL as Ship (§11.1) and Get Order Status (§10.2); `Action=1` selects
+cancel. Only **unshipped** orders can be voided (`SO006`/`SO008`).
+
+Request — a reason code in `Value`:
+
+```json
+{ "Action": "1", "Value": "24" }
+```
+
+- `Value` cancel reason code (required): `24` Out of Stock · `72` Customer Requested to Cancel ·
+  `73` Price Error · `74` Unable to Fulfill Order (any other → `SO017`).
+- **SBN caveat:** a Shipped-by-Newegg order may not cancel if the Newegg warehouse is already
+  processing it; the response comes back `Processing` and the final result must be polled via Get
+  SBN Order Cancellation Request Result (deferred — see the end of §11).
+
+Response:
+
+```json
+{
+  "IsSuccess": "true",
+  "Result": { "OrderNumber": "159243598", "SellerID": "A006", "OrderStatus": "Void" }
+}
+```
+
+- `OrderStatus`: `Void` = cancelled successfully; `Processing` = SBN cancellation accepted, result
+  pending (poll separately). `IsSuccess` is a string boolean (`"true"`/`"false"`).
+
+### 11.3 Order Confirmation (mark downloaded)
+
+Source: `https://developer.newegg.com/newegg_marketplace_api/order_management/order_confirmation/` (2026-07-14).
+
+```
+POST https://api.newegg.com/marketplace/ordermgmt/orderstatus/orders/confirmation?sellerid={SellerID}
+POST https://api.newegg.com/marketplace/b2b/ordermgmt/orderstatus/orders/confirmation?sellerid={SellerID}
+POST https://api.newegg.com/marketplace/can/ordermgmt/orderstatus/orders/confirmation?sellerid={SellerID}
+```
+
+`POST` (no `{ordernumber}` path segment, no `version`). Marks one or more orders as **downloaded**
+(acknowledged) on the seller portal — the workflow signal that an order has been pulled into the
+seller's system. Re-marking a downloaded order is effectively a no-op, but it is still a mutation →
+same write gating.
+
+Request — `DownloadedOrderList.OrderNumber[]` (array wrapper):
+
+```json
+{
+  "OperationType": "OrderConfirmationRequest",
+  "RequestBody": { "DownloadedOrderList": { "OrderNumber": ["159243598"] } }
+}
+```
+
+- `OperationType` fixed `OrderConfirmationRequest`. `OrderNumber` list required; `IssueUser` (an
+  eligible seller-account email) optional.
+
+Response — wrapped in `NeweggAPIResponse` (tolerate the wrapper present or absent, §8):
+
+```json
+{
+  "NeweggAPIResponse": {
+    "IsSuccess": "true",
+    "OperationType": "OrderConfirmationResponse",
+    "SellerID": "A006",
+    "ResponseDate": "2/22/2012 16:38:53",
+    "ResponseBody": {
+      "RequestDate": "2/22/2012 16:38:53",
+      "DownloadedOrderList": { "OrderNumber": "159243598" }
+    }
+  }
+}
+```
+
+- `ResponseDate`/`RequestDate` Pacific (`M/D/YYYY H:mm:ss`). Errors use the **`CE` prefix** (`CE001`
+  SellerID null/empty), not `SO` — route through the shared upstream-error path (§1).
+
+### 11.4 Remove Item (KillItem)
+
+Source: `https://developer.newegg.com/newegg_marketplace_api/order_management/remove_item/` (2026-07-14).
+
+```
+PUT https://api.newegg.com/marketplace/ordermgmt/killitem/orders/{ordernumber}?sellerid={SellerID}
+PUT https://api.newegg.com/marketplace/b2b/ordermgmt/killitem/orders/{ordernumber}?sellerid={SellerID}
+PUT https://api.newegg.com/marketplace/can/ordermgmt/killitem/orders/{ordernumber}?sellerid={SellerID}
+```
+
+`PUT` to the `killitem` path (no `version`). Removes one or more line items from an unshipped order
+by `SellerPartNumber`. **Not** allowed on SBN orders (`SO005`/`SO056`).
+
+Request — `KillItem.Order.ItemList.Item[]`:
+
+```json
+{
+  "OperationType": "KillItemRequest",
+  "RequestBody": {
+    "KillItem": { "Order": { "ItemList": { "Item": [{ "SellerPartNumber": "AWHZ3434" }] } } }
+  }
+}
+```
+
+- `OperationType` fixed `KillItemRequest`. Each `Item.SellerPartNumber` required; `Item` is
+  object-or-array. `IssueUser` and `Memo` (reason) optional. A repeated part# → `SO055`.
+
+Response:
+
+```json
+{
+  "IsSuccess": true,
+  "OperationType": "KillItemResponse",
+  "SellerID": "A006",
+  "Memo": null,
+  "ResponseBody": {
+    "Orders": {
+      "OrderNumber": "88237462",
+      "Result": { "ItemList": [{ "SellerPartNumber": "AWHZ3434" }] }
+    },
+    "RequestDate": "2012-02-22 16:42:10"
+  },
+  "ResponseDate": "2012-02-22 16:42:10"
+}
+```
+
+- `ResponseBody.Orders.Result.ItemList` echoes the removed items. `Memo` is `null` on success and
+  carries the error description when `IsSuccess` is false. Dates Pacific (`YYYY-MM-DD HH:mm:ss`).
+
+### 11.5 Order-write error codes
+
+Ship/Cancel (`orderstatus/orders/{n}`) and Remove-Item (`killitem`) return the `SO*` family; Order
+Confirmation returns `CE*`. Both arrive as XML `<Errors><Error><Code>` or a JSON array
+`[{ "Code", "Message" }]` (§1) — route through `errors/parse-upstream.ts`. Key codes:
+
+| Code             | Meaning (write-relevant)                                      |
+| ---------------- | ------------------------------------------------------------- |
+| SO001 / SO009    | Seller ID / order number null or empty                        |
+| SO002            | Order number must be an integer 1–2147483647                  |
+| SO003            | No data found, or the order is not this seller's              |
+| SO004 / SO054    | Replacement SO with an RMA — cannot be voided                 |
+| SO005 / SO056    | Cannot remove item — Shipped-by-Newegg order                  |
+| SO006            | Only unshipped orders can be voided (current status `{0}`)    |
+| SO008            | Order already voided                                          |
+| SO011            | Only unshipped orders can be shipped (current status `{0}`)   |
+| SO012            | Only shipped-by-seller orders are supported                   |
+| SO014 / SO037    | `Action` must be `1` (cancel) or `2` (ship)                   |
+| SO016            | Order not yet downloaded to the portal — retry after ~2 hours |
+| SO017            | Cancel reason must be `24` / `72` / `73` / `74`               |
+| SO020            | A package is missing shipping information                     |
+| SO025 / SO027    | Some / all items already shipped                              |
+| SO030            | Malformed shipment segment                                    |
+| SO040            | Body order# / Seller ID ≠ the URL values                      |
+| SO050 / SO055    | Invalid / repeated `SellerPartNumber` (remove-item)           |
+| SO051            | Item already cancelled in Newegg's system                     |
+| SO056 (ship ctx) | Premier order — must ship via Newegg Shipping Label Service   |
+| CE001            | (confirmation) Seller ID null or empty                        |
+
+`SO056` text differs by endpoint (Premier-order-ship in §11.1; SBN-remove in §11.4) — Newegg reuses
+the number, so surface the message, not just the code.
+
+**DEFERRED (not contracted here):** Get SBN Order Cancellation Request Result
+(`…order_management/get_sbn_shipped_by_newegg_order_cancellation_request_result/`) — needed only to
+poll the `Processing` outcome of an SBN cancel (§11.2); add when SBN cancel is implemented.
