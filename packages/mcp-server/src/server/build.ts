@@ -18,6 +18,8 @@ import { SERVER_NAME, SERVER_VERSION } from "../version.js";
 import { buildCapabilities, buildPublicConfiguration } from "../resources/index.js";
 import {
   TOOL_NAMES,
+  catalogLookupStatusTool,
+  catalogResolveTool,
   createInventoryPreviewTool,
   feedResultTool,
   feedStatusInputSchema,
@@ -103,6 +105,8 @@ export function enabledToolNames(config: McpServerConfig): string[] {
   names.push(TOOL_NAMES.feedStatus, TOOL_NAMES.feedResult, TOOL_NAMES.serviceStatus);
   // Order reads are always available (never write-gated).
   names.push(TOOL_NAMES.ordersList, TOOL_NAMES.ordersGet, TOOL_NAMES.ordersGetStatus);
+  // Catalog resolution is read-only (report submission mutates nothing; contracts §12.4).
+  names.push(TOOL_NAMES.catalogResolve, TOOL_NAMES.catalogLookupStatus);
   return names;
 }
 
@@ -229,6 +233,8 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   registerToolDefinition(server, ordersListTool, ctx);
   registerToolDefinition(server, ordersGetTool, ctx);
   registerToolDefinition(server, ordersGetStatusTool, ctx);
+  registerToolDefinition(server, catalogResolveTool, ctx);
+  registerToolDefinition(server, catalogLookupStatusTool, ctx);
 
   registerResources(server, ctx, enabledToolNames(config));
   return server;
