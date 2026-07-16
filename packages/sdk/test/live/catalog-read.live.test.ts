@@ -20,10 +20,7 @@ describe.skipIf(!liveEnabled)("live (read-only): catalog item lookup", () => {
     async () => {
       const client = makeLiveClient();
       try {
-        const result = await client.catalog.resolve(
-          { upc: PUBLIC_UPC },
-          { timeoutMs: 150_000 },
-        );
+        const result = await client.catalog.resolve({ upc: PUBLIC_UPC }, { timeoutMs: 150_000 });
         expect(result.marketplace).toBe(marketplace());
         expect(typeof result.requestId).toBe("string");
         expect(result.resolutions).toHaveLength(1);
