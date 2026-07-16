@@ -898,3 +898,134 @@ the number, so surface the message, not just the code.
 **DEFERRED (not contracted here):** Get SBN Order Cancellation Request Result
 (`…order_management/get_sbn_shipped_by_newegg_order_cancellation_request_result/`) — needed only to
 poll the `Processing` outcome of an SBN cancel (§11.2); add when SBN cancel is implemented.
+
+## 12. Reports Management — Item Lookup (catalog resolution)
+
+Verified 2026-07-16 against the official pages:
+
+- Submit: `https://developer.newegg.com/newegg_marketplace_api/reports_management/submit_report_request/submit_item_lookup_report/`
+- Status: `https://developer.newegg.com/newegg_marketplace_api/reports_management/get_report_status/`
+- Result: `https://developer.newegg.com/newegg_marketplace_api/reports_management/get_report_result/get_item_lookup_report/`
+
+Async 3-step lifecycle: submit → poll status → page through the result. All three endpoints exist
+on every platform via the standard prefix (`reportmgmt/…`, `b2b/reportmgmt/…`, `can/reportmgmt/…`).
+
+**Read/write classification:** all three are READS. Report submission is a `POST`, but it creates a
+report job only — it never mutates listings, prices, inventory, or orders (§2's rule: classify by
+contract, not verb). Owner approved live read-only use 2026-07-16.
+
+### 12.1 Submit Item Lookup Report
+
+`POST {prefix}reportmgmt/report/submitrequest?sellerid={sellerid}` — rate limit **100/hour**.
+
+```json
+{
+  "OperationType": "ItemLookupRequest",
+  "RequestBody": {
+    "RequestCriteria": {
+      "Item": [
+        { "UPC": "20140711101111", "Condition": "1" },
+        { "ManufacturerName": "q-see", "ManufacturerPartNumber": "canmfpn20140711101", "PacksOrSets": 1 }
+      ]
+    }
+  }
+}
+```
+
+- Per item: `UPC` (required if no MPN) OR `ManufacturerName` + `ManufacturerPartNumber` (both
+  required if no UPC). Optional: `Condition` (integer 1–6, table in §4; Used only on Newegg.com),
+  `PacksOrSets` (integer).
+- Max **1000** items per request (error `RP021` beyond that).
+- Response (`OperationType: "ItemLookupReportResponse"`): the request id is nested in a LIST —
+  `ResponseBody.ResponseList[0].RequestId` (XML wraps it further as `ResponseList > ResponseInfo`):
+
+```json
+{
+  "IsSuccess": true,
+  "OperationType": "ItemLookupReportResponse",
+  "SellerID": "a001",
+  "ResponseBody": {
+    "ResponseList": [
+      { "RequestId": "270Z8Y3SYIGQV", "RequestType": "ITEM_LOOKUP",
+        "RequestDate": "07/12/2014 11:34:57", "RequestStatus": "SUBMITTED" }
+    ]
+  }
+}
+```
+
+- Dates Pacific, `MM/DD/YYYY HH:mm:ss`. `RequestStatus` on submit is `SUBMITTED`.
+
+### 12.2 Get Report Status
+
+`PUT {prefix}reportmgmt/report/status?sellerid={sellerid}` — rate limit **500/hour**.
+
+```json
+{
+  "OperationType": "GetReportStatusRequest",
+  "RequestBody": {
+    "GetRequestStatus": {
+      "RequestIDList": { "RequestID": "2PQBYWH4V68ZP" },
+      "MaxCount": "10"
+    }
+  }
+}
+```
+
+- NOTE the extra `GetRequestStatus` wrapper inside `RequestBody`. `RequestID` accepts a single id
+  (official JSON example) — XML shows the same element repeated for multiple ids, so an array is
+  the multi-id JSON form (**ASSUMPTION** for arrays; single-string form is verified).
+- When `RequestID` is provided, `RequestType`/`MaxCount`/`RequestStatus`/date filters are ignored.
+  `MaxCount` caps at 100. Report types include `ITEM_LOOKUP` and `ITEM_BASIC_INFO_REPORT`.
+- Response (`OperationType: "GetReportStatusResponse"`): `ResponseBody.ResponseList[]` (XML nests
+  `ResponseInfo`; treat as object-OR-array) with `RequestId`, `RequestType`, `RequestDate`,
+  `RequestStatus`, `TotalCount`.
+- `RequestStatus` enum: `SUBMITTED` | `IN_PROGRESS` | `FINISHED` | `CANCELLED`.
+- Errors: `RP004`–`RP007` (date-filter validation), standard `<Errors>`/JSON-array envelope (§1).
+
+### 12.3 Get Item Lookup Report Result
+
+`PUT {prefix}reportmgmt/report/result?sellerid={sellerid}` — rate limit **500/hour**.
+
+```json
+{
+  "OperationType": "ItemLookupRequest",
+  "RequestBody": {
+    "RequestID": "2PQBYWH4V68ZP",
+    "PageInfo": { "PageIndex": "1", "PageSize": "100" }
+  }
+}
+```
+
+- `PageSize` max 100. `PageIndex` 1-based. Optional `IssueUser` (registered portal email).
+- Response (`OperationType: "ItemLookupResponse"`):
+
+```json
+{
+  "IsSuccess": true,
+  "SellerID": "A006",
+  "ResponseBody": {
+    "PageInfo": { "TotalCount": 3, "TotalPageCount": 1, "PageIndex": 1, "PageSize": 100 },
+    "RequestID": "27YV8H1HHRFLZ",
+    "RequestDate": "02/16/2023 14:00:03",
+    "ItemList": [
+      { "ManufacturerName": "Plantronics", "ManufacturerPartNumber": "203500-105",
+        "Condition": 1, "Note": "No match found." },
+      { "NeweggItemNumber": "0G6-0008-003W9", "UPC": "017229164116", "Condition": 1,
+        "PacksOrSets": 1, "ManufacturerName": "Plantronics",
+        "ManufacturerPartNumber": "206110-101", "WebsiteShortTitle": "Plantronics Voyager 5200 …",
+        "Variety": { "GroupID": 204142502, "Options": [{ "Name": "Color", "Value": "Blue" }] } }
+    ]
+  },
+  "ResponseDate": "02/16/2023 14:06:04"
+}
+```
+
+- The list key is `ResponseBody.ItemList` (XML: `ItemList > Item`; treat as object-OR-array).
+- Each row ECHOES the submitted criteria. A row WITHOUT `NeweggItemNumber` is a miss and carries
+  `Note` (e.g. `"No match found."`). Hit rows carry `NeweggItemNumber` ("Newegg's assigned number
+  for item"), `UPC`, `Condition` (number; §4 table), `PacksOrSets`, `ManufacturerName`,
+  `ManufacturerPartNumber`, `WebsiteShortTitle` (catalog title — useful to confirm the product),
+  and optionally `Variety` (`GroupID` + `Options[{Name,Value}]`) for variant groups.
+- The official JSON example is syntactically invalid (missing comma, trailing comma) — trust the
+  field inventory, not the sample's punctuation. Numbers may arrive as strings elsewhere; parse
+  tolerantly as always.
