@@ -18,6 +18,12 @@ const fail = (msg: string): void => {
 // Mutating surface of the SDK + write-shaped raw traffic. If a legitimate new
 // READ genuinely needs one of these tokens, change this list in the same PR and
 // say why — that review moment is the point of the guard.
+//
+// NOTE (2026-07-16, owner-approved): catalog lookup via reportmgmt (catalog.resolve /
+// submitLookup / lookupStatus / lookupResult) is classified READ — report submission
+// creates a report job and mutates nothing on the seller account (contracts §12.4). It is
+// therefore deliberately absent from this list; `submitfeed` and every listing/order/price
+// mutation remain forbidden.
 const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /\.updateItem\s*\(/, why: "inventory write (updateItem)" },
   { re: /\.updateMany\s*\(/, why: "inventory write (updateMany)" },
