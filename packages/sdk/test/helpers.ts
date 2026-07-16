@@ -62,6 +62,9 @@ export const paths = {
   orderStatus: /ordermgmt\/orderstatus\/orders\//,
   orderConfirmation: /ordermgmt\/orderstatus\/orders\/confirmation/,
   killItem: /ordermgmt\/killitem\/orders\//,
+  reportSubmit: /reportmgmt\/report\/submitrequest\?/,
+  reportStatus: /reportmgmt\/report\/status\?/,
+  reportResult: /reportmgmt\/report\/result\?/,
 } as const;
 
 /** §5.1 US single-item read sample (numbers as strings). */

@@ -13,6 +13,7 @@ export type NeweggErrorCode =
   | "feed_processing"
   | "feed_cancelled"
   | "order_write_indeterminate"
+  | "catalog_lookup_timeout"
   | "timeout"
   | "unsupported_operation";
 
@@ -219,6 +220,29 @@ export class IndeterminateOrderWriteError extends NeweggError {
       orderNumber: this.orderNumber,
       guidance: this.guidance,
     };
+  }
+}
+
+export interface CatalogLookupTimeoutErrorInit extends NeweggErrorInit {
+  /** The lookup report's request id — poll it instead of resubmitting. */
+  requestId: string;
+}
+
+/**
+ * The Item Lookup Report did not reach FINISHED within the resolve() time budget (or Newegg
+ * cancelled it). The report keeps its request id at Newegg — continue with
+ * `catalog.lookupStatus(requestId)` / `catalog.lookupResult(requestId)` rather than
+ * resubmitting (submissions are budgeted at 100/hour).
+ */
+export class CatalogLookupTimeoutError extends NeweggError {
+  readonly requestId: string;
+  constructor(message: string, init: CatalogLookupTimeoutErrorInit) {
+    super("catalog_lookup_timeout", message, { ...init, retryable: init.retryable ?? true });
+    this.name = "CatalogLookupTimeoutError";
+    this.requestId = init.requestId;
+  }
+  override toJSON(): Record<string, unknown> {
+    return { ...super.toJSON(), requestId: this.requestId };
   }
 }
 

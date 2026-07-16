@@ -17,4 +17,9 @@ export const Operation = {
   OrderCancel: "orders.cancel",
   OrderConfirm: "orders.confirm",
   OrderRemoveItem: "orders.removeItems",
+  // Catalog resolution via the Item Lookup Report (reportmgmt, §12). Submit 100/hr;
+  // status and result 500/hr each.
+  CatalogLookupSubmit: "catalog.lookupSubmit",
+  CatalogLookupStatus: "catalog.lookupStatus",
+  CatalogLookupResult: "catalog.lookupResult",
 } as const;

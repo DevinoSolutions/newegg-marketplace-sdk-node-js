@@ -50,6 +50,7 @@ export interface NeweggClient {
   readonly feeds: FeedsApi;
   readonly service: ServiceApi;
   readonly orders: OrdersApi; // order reads (list / get / status) + writes (ship / cancel / confirm / remove)
+  readonly catalog: CatalogApi; // read-only catalog resolution (Item Lookup Report, contracts §12)
   // Read-only, fail-fast credential preflight (single service-status GET). Throws
   // NeweggAuthenticationError (401) / NeweggAuthorizationError (403) immediately on
   // bad or unauthorized credentials; resolves on success. Never mutates.
@@ -541,6 +542,112 @@ export interface OrdersApi {
     input: RemoveOrderItemsInput,
     options?: RequestOptions,
   ): Promise<RemoveOrderItemsResult>; // KillItem
+}
+
+// ----------------------------------------------------------------------------
+// catalog (item lookup / resolution — contracts §12; READ-only, incl. report submission)
+// ----------------------------------------------------------------------------
+export type CatalogLookupInput =
+  | { neweggItemNumber: string } // passthrough: already resolved, no API call
+  | { upc: string; condition?: ItemCondition; packsOrSets?: number }
+  | {
+      manufacturer: string;
+      manufacturerPartNumber: string;
+      condition?: ItemCondition;
+      packsOrSets?: number;
+    };
+
+export interface CatalogMatch {
+  neweggItemNumber: string;
+  upc?: string;
+  condition?: ItemCondition;
+  packsOrSets?: number;
+  manufacturer?: string;
+  manufacturerPartNumber?: string;
+  websiteShortTitle?: string; // Newegg catalog title — confirm the match is the intended product
+}
+
+export interface CatalogResolution {
+  input: CatalogLookupInput;
+  found: boolean;
+  matches: CatalogMatch[];
+}
+
+export interface ResolveCatalogOptions {
+  correlationId?: string;
+  signal?: AbortSignal;
+  includeRaw?: boolean;
+  timeoutMs?: number; // overall submit+poll+result budget; default 120_000
+  pollIntervalMs?: number; // first poll delay; default 2_000, grows 1.5x per poll
+  maxPollIntervalMs?: number; // poll delay ceiling; default 15_000
+}
+
+export interface ResolveCatalogResult {
+  marketplace: NeweggMarketplace;
+  requestId?: string; // absent when every input was a neweggItemNumber passthrough
+  resolutions: CatalogResolution[];
+  correlationId: string;
+  raw?: unknown;
+}
+
+export interface CatalogLookupSubmission {
+  marketplace: NeweggMarketplace;
+  requestId: string;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+export type CatalogLookupState = "submitted" | "inProgress" | "finished" | "cancelled" | "unknown";
+
+export interface CatalogLookupStatus {
+  marketplace: NeweggMarketplace;
+  requestId: string;
+  status: CatalogLookupState;
+  statusRaw?: string; // Newegg's literal string when status is "unknown"
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+export interface CatalogLookupResultPage {
+  marketplace: NeweggMarketplace;
+  requestId: string;
+  matches: CatalogMatch[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPageCount: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+export interface CatalogApi {
+  // One-call facade: submit → poll → all result pages → per-input resolutions. Throws
+  // CatalogLookupTimeoutError (carrying requestId) if not FINISHED within timeoutMs —
+  // continue with lookupStatus/lookupResult instead of resubmitting (submit is 100/hr).
+  resolve(
+    input: CatalogLookupInput | CatalogLookupInput[],
+    options?: ResolveCatalogOptions,
+  ): Promise<ResolveCatalogResult>;
+  // Max 1000 items (RP021). Rejects neweggItemNumber inputs with NeweggValidationError.
+  submitLookup(
+    inputs: CatalogLookupInput[],
+    options?: RequestOptions,
+  ): Promise<CatalogLookupSubmission>;
+  lookupStatus(requestId: string, options?: RequestOptions): Promise<CatalogLookupStatus>;
+  lookupResult(
+    requestId: string,
+    page?: number,
+    options?: RequestOptions,
+  ): Promise<CatalogLookupResultPage>;
+}
+
+// Error (exported class, code "catalog_lookup_timeout", retryable true on timeout /
+// false on CANCELLED): carries readonly requestId.
+export class CatalogLookupTimeoutError extends NeweggError {
+  readonly requestId: string;
 }
 
 // ----------------------------------------------------------------------------

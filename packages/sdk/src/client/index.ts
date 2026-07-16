@@ -2,6 +2,7 @@ import type { NeweggClient, NeweggClientConfig } from "../types.js";
 import { getAdapter } from "../platform/index.js";
 import { rateLimitKey } from "../rate-limit/index.js";
 import { FEED_RECORDS_PER_HOUR, FEED_SUBMISSIONS_PER_MINUTE } from "../feeds/constants.js";
+import { CatalogApiImpl } from "../catalog/api.js";
 import { FeedsApiImpl } from "../feeds/api.js";
 import { InventoryApiImpl } from "../inventory/api.js";
 import { OrdersApiImpl } from "../orders/api.js";
@@ -31,6 +32,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
   const inventory = new InventoryApiImpl(http, feeds);
   const service = new ServiceApiImpl(http);
   const orders = new OrdersApiImpl(http);
+  const catalog = new CatalogApiImpl(http);
 
   return {
     marketplace: resolved.marketplace,
@@ -38,6 +40,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
     feeds,
     service,
     orders,
+    catalog,
     async verifyCredentials(options) {
       // Read-only preflight: a single service-status GET. Bad/unauthorized credentials throw
       // here (NeweggAuthenticationError on 401, NeweggAuthorizationError on 403) so callers
