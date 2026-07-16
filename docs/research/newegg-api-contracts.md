@@ -925,7 +925,11 @@ contract, not verb). Owner approved live read-only use 2026-07-16.
     "RequestCriteria": {
       "Item": [
         { "UPC": "20140711101111", "Condition": "1" },
-        { "ManufacturerName": "q-see", "ManufacturerPartNumber": "canmfpn20140711101", "PacksOrSets": 1 }
+        {
+          "ManufacturerName": "q-see",
+          "ManufacturerPartNumber": "canmfpn20140711101",
+          "PacksOrSets": 1
+        }
       ]
     }
   }
@@ -946,8 +950,12 @@ contract, not verb). Owner approved live read-only use 2026-07-16.
   "SellerID": "a001",
   "ResponseBody": {
     "ResponseList": [
-      { "RequestId": "270Z8Y3SYIGQV", "RequestType": "ITEM_LOOKUP",
-        "RequestDate": "07/12/2014 11:34:57", "RequestStatus": "SUBMITTED" }
+      {
+        "RequestId": "270Z8Y3SYIGQV",
+        "RequestType": "ITEM_LOOKUP",
+        "RequestDate": "07/12/2014 11:34:57",
+        "RequestStatus": "SUBMITTED"
+      }
     ]
   }
 }
@@ -1008,12 +1016,22 @@ contract, not verb). Owner approved live read-only use 2026-07-16.
     "RequestID": "27YV8H1HHRFLZ",
     "RequestDate": "02/16/2023 14:00:03",
     "ItemList": [
-      { "ManufacturerName": "Plantronics", "ManufacturerPartNumber": "203500-105",
-        "Condition": 1, "Note": "No match found." },
-      { "NeweggItemNumber": "0G6-0008-003W9", "UPC": "017229164116", "Condition": 1,
-        "PacksOrSets": 1, "ManufacturerName": "Plantronics",
-        "ManufacturerPartNumber": "206110-101", "WebsiteShortTitle": "Plantronics Voyager 5200 …",
-        "Variety": { "GroupID": 204142502, "Options": [{ "Name": "Color", "Value": "Blue" }] } }
+      {
+        "ManufacturerName": "Plantronics",
+        "ManufacturerPartNumber": "203500-105",
+        "Condition": 1,
+        "Note": "No match found."
+      },
+      {
+        "NeweggItemNumber": "0G6-0008-003W9",
+        "UPC": "017229164116",
+        "Condition": 1,
+        "PacksOrSets": 1,
+        "ManufacturerName": "Plantronics",
+        "ManufacturerPartNumber": "206110-101",
+        "WebsiteShortTitle": "Plantronics Voyager 5200 …",
+        "Variety": { "GroupID": 204142502, "Options": [{ "Name": "Color", "Value": "Blue" }] }
+      }
     ]
   },
   "ResponseDate": "02/16/2023 14:06:04"
