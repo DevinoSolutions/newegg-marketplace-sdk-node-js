@@ -7,7 +7,6 @@
  */
 import { z } from "zod";
 import {
-  businessError,
   errorResult,
   mapErrorToPayload,
   okResult,
@@ -16,6 +15,7 @@ import {
   type ToolDefinition,
   type ToolResult,
 } from "./shared.js";
+import { appendConsumedNote, consumeTypedPreview } from "./preview-apply-core.js";
 import { inventoryOperationResultSchema, mapFeedJob, mapItemOutcome } from "./operation-result.js";
 import { TOOL_NAMES } from "./names.js";
 
@@ -28,45 +28,16 @@ const applyInputSchema = z
   })
   .describe("The previewId to apply. Quantities cannot be supplied here.");
 
-const CONSUME_ERRORS: Record<
-  "not_found" | "expired" | "already_used",
-  { code: string; message: string }
-> = {
-  not_found: {
-    code: "preview_not_found",
-    message:
-      "No preview matches that previewId. It may never have existed, was already consumed and " +
-      "evicted, or the server restarted. Create a new preview and apply it.",
-  },
-  expired: {
-    code: "preview_expired",
-    message: "This preview has expired. Create a new preview and apply it within the TTL.",
-  },
-  already_used: {
-    code: "preview_already_used",
-    message: "This preview was already applied. Previews are single-use; create a new preview.",
-  },
-};
-
 async function handler(
   input: z.infer<typeof applyInputSchema>,
   ctx: ToolContext,
 ): Promise<ToolResult> {
-  const consumed = await ctx.previewStore.consume(input.previewId);
-  if (consumed.status !== "ok") {
-    const mapped = CONSUME_ERRORS[consumed.status];
-    return errorResult(businessError(mapped.code, mapped.message));
+  const outcome = await consumeTypedPreview(ctx, input.previewId, "inventoryUpdate");
+  if ("error" in outcome) {
+    return outcome.error;
   }
 
-  const record = consumed.record;
-  if (record.kind !== "inventoryUpdate") {
-    return errorResult(
-      businessError(
-        "preview_kind_mismatch",
-        "This previewId belongs to a different operation type; apply it with its matching tool.",
-      ),
-    );
-  }
+  const record = outcome.record;
   try {
     // Execute exactly the stored, normalized operation. The SDK tolerates the normalized
     // shape (it round-trips `previewUpdate` output back through `updateMany`).
@@ -101,9 +72,7 @@ async function handler(
       rateLimit: serializeRateLimit(result.rateLimit),
     });
   } catch (error) {
-    const payload = mapErrorToPayload(error, ctx.logger);
-    payload.message = `${payload.message} The preview has been consumed and cannot be reused; create a new preview to retry.`;
-    return errorResult(payload);
+    return errorResult(appendConsumedNote(mapErrorToPayload(error, ctx.logger)));
   }
 }
 

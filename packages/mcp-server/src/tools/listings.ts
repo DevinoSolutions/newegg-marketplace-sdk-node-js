@@ -8,11 +8,10 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
-import type { CreateListingInput, NormalizedCreateListing } from "@devino/newegg-marketplace-sdk";
+import type { NormalizedCreateListing } from "@devino/newegg-marketplace-sdk";
 import type { McpServerConfig } from "../config/index.js";
 import type { ListingPreviewRecord } from "../preview-store/index.js";
 import {
-  businessError,
   errorResult,
   mapErrorToPayload,
   marketplaceSchema,
@@ -23,6 +22,7 @@ import {
   type ToolDefinition,
   type ToolResult,
 } from "./shared.js";
+import { appendConsumedNote, consumeTypedPreview } from "./preview-apply-core.js";
 import { feedRequestStatusSchema } from "./operation-result.js";
 import { TOOL_NAMES } from "./names.js";
 
@@ -151,6 +151,8 @@ const listingItemOutputSchema = z
   })
   .loose();
 
+// Intentionally richer than inventory's feedJobs (operation-result.ts): existing-item creation
+// carries requestType and chunkIndex so callers can trace a multi-chunk submission.
 const listingFeedJobSchema = z.object({
   requestId: z.string(),
   requestType: z.string(),
@@ -185,13 +187,6 @@ const listingOperationResultSchema = z.object({
 function hashPayload(marketplace: string, items: NormalizedCreateListing[]): string {
   const canonical = JSON.stringify({ marketplace, items });
   return createHash("sha256").update(canonical, "utf8").digest("hex");
-}
-
-/** The SDK's strict create-validator rejects the `inputIndex` that normalization adds; drop it to
- * recover the `CreateListingInput` the feed submission re-validates and submits. */
-function toCreateInput(item: NormalizedCreateListing): CreateListingInput {
-  const { inputIndex: _inputIndex, ...rest } = item;
-  return rest;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,48 +264,20 @@ const applyInputSchema = z
   })
   .describe("The previewId to apply. Listing details cannot be supplied here.");
 
-const CONSUME_ERRORS: Record<
-  "not_found" | "expired" | "already_used",
-  { code: string; message: string }
-> = {
-  not_found: {
-    code: "preview_not_found",
-    message:
-      "No preview matches that previewId. It may never have existed, was already consumed and " +
-      "evicted, or the server restarted. Create a new preview and apply it.",
-  },
-  expired: {
-    code: "preview_expired",
-    message: "This preview has expired. Create a new preview and apply it within the TTL.",
-  },
-  already_used: {
-    code: "preview_already_used",
-    message: "This preview was already applied. Previews are single-use; create a new preview.",
-  },
-};
-
 async function applyHandler(
   input: z.infer<typeof applyInputSchema>,
   ctx: ToolContext,
 ): Promise<ToolResult> {
-  const consumed = await ctx.previewStore.consume(input.previewId);
-  if (consumed.status !== "ok") {
-    const mapped = CONSUME_ERRORS[consumed.status];
-    return errorResult(businessError(mapped.code, mapped.message));
+  const outcome = await consumeTypedPreview(ctx, input.previewId, "listingCreate");
+  if ("error" in outcome) {
+    return outcome.error;
   }
 
-  const record = consumed.record;
-  if (record.kind !== "listingCreate") {
-    return errorResult(
-      businessError(
-        "preview_kind_mismatch",
-        "This previewId belongs to a different operation type; apply it with its matching tool.",
-      ),
-    );
-  }
-
+  const record = outcome.record;
   try {
-    const submission = await ctx.client.listings.create(record.items.map(toCreateInput));
+    // The SDK round-trips its own normalized output (strips inputIndex internally), so the stored
+    // NormalizedCreateListing[] is submitted as-is.
+    const submission = await ctx.client.listings.create(record.items);
 
     const warnings = [...submission.warnings];
     if (submission.feeds.length > 0) {
@@ -336,9 +303,7 @@ async function applyHandler(
       rateLimit: serializeRateLimit(submission.rateLimit),
     });
   } catch (error) {
-    const payload = mapErrorToPayload(error, ctx.logger);
-    payload.message = `${payload.message} The preview has been consumed and cannot be reused; create a new preview to retry.`;
-    return errorResult(payload);
+    return errorResult(appendConsumedNote(mapErrorToPayload(error, ctx.logger)));
   }
 }
 

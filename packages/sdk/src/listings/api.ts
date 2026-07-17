@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
-  CreateListingInput,
+  CreateListingInputOrNormalized,
   FeedSubmission,
   ListingCreatePreview,
   ListingsApi,
@@ -36,7 +36,9 @@ export class ListingsApiImpl implements ListingsApi {
     this.#http = http;
   }
 
-  previewCreate(input: CreateListingInput | CreateListingInput[]): ListingCreatePreview {
+  previewCreate(
+    input: CreateListingInputOrNormalized | CreateListingInputOrNormalized[],
+  ): ListingCreatePreview {
     const items = normalizeCreateListings(Array.isArray(input) ? input : [input]);
     const chunks = chunk(items, LISTING_FEED_MAX_RECORDS);
     return {
@@ -50,7 +52,7 @@ export class ListingsApiImpl implements ListingsApi {
   }
 
   async create(
-    input: CreateListingInput | CreateListingInput[],
+    input: CreateListingInputOrNormalized | CreateListingInputOrNormalized[],
     options: RequestOptions = {},
   ): Promise<FeedSubmission> {
     const correlationId = options.correlationId ?? randomUUID();

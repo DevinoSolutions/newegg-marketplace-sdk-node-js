@@ -905,13 +905,19 @@ export interface ListingCreatePreview {
 }
 
 /** Existing-item listing creation (contracts §13). WRITE: `create` mutates the account. */
+/** Accepted by `previewCreate`/`create`: raw inputs OR the normalized output of a prior
+ * `previewCreate` (round-trip safe — `inputIndex` is stripped internally). */
+export type CreateListingInputOrNormalized = CreateListingInput | NormalizedCreateListing;
+
 export interface ListingsApi {
   /** Validate + normalize + build envelopes without any network access. */
-  previewCreate(input: CreateListingInput | CreateListingInput[]): ListingCreatePreview;
+  previewCreate(
+    input: CreateListingInputOrNormalized | CreateListingInputOrNormalized[],
+  ): ListingCreatePreview;
   /** Submit the Existing Item Creation feed. Poll the returned requestId(s) with
    * `feeds.getStatus` / `feeds.getResult`. */
   create(
-    input: CreateListingInput | CreateListingInput[],
+    input: CreateListingInputOrNormalized | CreateListingInputOrNormalized[],
     options?: RequestOptions,
   ): Promise<FeedSubmission>;
 }

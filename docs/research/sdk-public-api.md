@@ -698,13 +698,19 @@ export interface ListingCreatePreview {
   envelopes: unknown[]; // one §13.2 envelope per chunk — exactly what create() would submit
 }
 
+// Accepts raw inputs OR the normalized output of a prior previewCreate (round-trip safe —
+// inputIndex is stripped internally, so preview.items can be fed straight back in).
+export type CreateListingInputOrNormalized = CreateListingInput | NormalizedCreateListing;
+
 export interface ListingsApi {
   // Validate + normalize + build envelopes without any network access.
-  previewCreate(input: CreateListingInput | CreateListingInput[]): ListingCreatePreview;
+  previewCreate(
+    input: CreateListingInputOrNormalized | CreateListingInputOrNormalized[],
+  ): ListingCreatePreview;
   // WRITE: submit the Existing Item Creation feed (chunked at 3000). Poll the returned
   // requestId(s) with feeds.getStatus / feeds.getResult. Returns FeedSubmission.
   create(
-    input: CreateListingInput | CreateListingInput[],
+    input: CreateListingInputOrNormalized | CreateListingInputOrNormalized[],
     options?: RequestOptions,
   ): Promise<FeedSubmission>;
 }

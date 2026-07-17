@@ -149,4 +149,19 @@ describe("newegg_listing_apply_create", () => {
       await harness.close();
     }
   });
+
+  it("rejects a listing previewId applied through the inventory tool (reverse kind mismatch)", async () => {
+    const harness = await startHarness({ env: writesEnv() });
+    try {
+      const preview = await callTool(harness.mcp, "newegg_listing_preview_create", {
+        items: [ITEM],
+      });
+      const previewId = preview.json.previewId as string;
+      const apply = await callTool(harness.mcp, "newegg_inventory_apply_update", { previewId });
+      expect(apply.isError).toBe(true);
+      expect(apply.json.errorCode).toBe("preview_kind_mismatch");
+    } finally {
+      await harness.close();
+    }
+  });
 });

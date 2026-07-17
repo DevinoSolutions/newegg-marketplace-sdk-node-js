@@ -144,6 +144,27 @@ describe("listings.previewCreate", () => {
   });
 });
 
+describe("listings round-trips its own normalized output", () => {
+  it("re-feeds previewCreate().items back in and validates with an identical envelope", () => {
+    const { client, calls } = makeClient("ca", []);
+    const first = client.listings.previewCreate(MINIMAL);
+    // preview.items are NormalizedCreateListing (carry inputIndex); feeding them straight back must
+    // not trip the strict validator and must reproduce the exact same envelope.
+    const second = client.listings.previewCreate(first.items);
+    expect(calls).toHaveLength(0);
+    expect(JSON.stringify(second.envelopes)).toBe(JSON.stringify(first.envelopes));
+  });
+
+  it("submits previewCreate().items through create() unchanged", async () => {
+    const { client, calls } = makeClient("ca", [submitRoute()]);
+    const preview = client.listings.previewCreate(MINIMAL);
+    const submission = await client.listings.create(preview.items);
+    expect(calls).toHaveLength(1);
+    expect(submission.feeds[0]!.requestType).toBe("ITEM_DATA");
+    expect(submission.itemAssignments).toEqual([{ inputIndex: 0, requestId: "REQ-1", chunkIndex: 0 }]);
+  });
+});
+
 describe("listings validation", () => {
   const cases: Array<[string, CreateListingInput | CreateListingInput[]]> = [
     [

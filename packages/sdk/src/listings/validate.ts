@@ -38,11 +38,25 @@ const createListingSchema = z
 
 const createListingsSchema = z.array(createListingSchema).min(1);
 
-/** Validates and normalizes creation inputs (defaults: New / 1 / Default / deactivated). */
-export function normalizeCreateListings(inputs: CreateListingInput[]): NormalizedCreateListing[] {
+/** Recovers a `CreateListingInput` from a normalized item by dropping the `inputIndex` the strict
+ * schema would reject — so `normalizeCreateListings` round-trips its own output (mirrors how
+ * inventory's `updateMany` tolerates `previewUpdate` output). Genuine unknown keys still fail. */
+function stripInputIndex(item: CreateListingInput | NormalizedCreateListing): CreateListingInput {
+  if ("inputIndex" in item) {
+    const { inputIndex: _inputIndex, ...rest } = item;
+    return rest;
+  }
+  return item;
+}
+
+/** Validates and normalizes creation inputs (defaults: New / 1 / Default / deactivated). Accepts
+ * either raw `CreateListingInput`s or the normalized output of a prior call (round-trip safe). */
+export function normalizeCreateListings(
+  inputs: Array<CreateListingInput | NormalizedCreateListing>,
+): NormalizedCreateListing[] {
   const parsed = parseOrThrow(
     createListingsSchema,
-    inputs,
+    inputs.map(stripInputIndex),
     "listings.create input validation failed.",
   );
   const seen = new Map<string, number>();
