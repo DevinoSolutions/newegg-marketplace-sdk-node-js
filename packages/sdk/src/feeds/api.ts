@@ -12,24 +12,17 @@ import type {
   WaitForResultOptions,
 } from "../types.js";
 import type { FeedItemInput, RequestSpec } from "../platform/index.js";
-import type { HttpResult, NeweggHttpClient, RequestContext } from "../client/http.js";
-import { sha256Hex } from "../auth/index.js";
-import {
-  IndeterminateFeedSubmissionError,
-  NeweggApiError,
-  NeweggError,
-  NeweggFeedSubmissionError,
-} from "../errors/index.js";
+import type { NeweggHttpClient } from "../client/http.js";
+import { NeweggApiError } from "../errors/index.js";
 import { parseUpstreamBody } from "../errors/parse-upstream.js";
 import { LogEvent } from "../logging/index.js";
 import { toTimestamp } from "../platform/dates.js";
 import { rateLimitKey } from "../rate-limit/index.js";
 import { Operation } from "../client/operations.js";
-import { fullJitterDelay } from "../client/retry.js";
-import { TransportError } from "../client/transport.js";
-import { chunk, delay, isAbortError } from "../util.js";
+import { chunk, delay } from "../util.js";
 import { INVENTORY_FEED_MAX_RECORDS } from "./constants.js";
-import { findStatusEntry, parseFeedSubmitResponse, parseProcessingReport } from "./parse.js";
+import { findStatusEntry, parseProcessingReport } from "./parse.js";
+import { submitLedgeredFeedChunk } from "./submit-core.js";
 import {
   parseOrThrow,
   requireSellerPartNumbers,
@@ -37,8 +30,6 @@ import {
 } from "../inventory/validate.js";
 import { dedupeUpdates, warehouseIgnoredWarnings } from "../inventory/strategy.js";
 import { submitInventoryFeedInputSchema } from "../schemas/inputs.js";
-
-const AMBIGUOUS_HTTP_STATUSES = new Set([408, 502, 503, 504]);
 
 function toFeedItemInput(update: NormalizedInventoryUpdate): FeedItemInput {
   return {
@@ -65,7 +56,7 @@ export class FeedsApiImpl implements FeedsApi {
     input: SubmitInventoryFeedInput,
     options: RequestOptions = {},
   ): Promise<FeedSubmission> {
-    const { marketplace, sellerId, operationStore, logger } = this.#config;
+    const { marketplace } = this.#config;
     const correlationId = options.correlationId ?? randomUUID();
     const validated = parseOrThrow(
       submitInventoryFeedInputSchema,
@@ -89,191 +80,26 @@ export class FeedsApiImpl implements FeedsApi {
       const chunkItems = chunks[chunkIndex] ?? [];
       const envelope = this.#http.adapter.buildFeedEnvelope(chunkItems.map(toFeedItemInput));
       const bodyText = JSON.stringify(envelope);
-      const payloadHash = sha256Hex(bodyText);
-      const opKey = `${marketplace}:${sellerId}:feed:${payloadHash}`;
-      const submittedAtIso = new Date().toISOString();
 
-      const existing = await operationStore.get(opKey);
-      if (existing && (existing.state === "submitting" || existing.state === "submitted")) {
-        logger.warn(LogEvent.IndeterminateSubmission, {
-          correlationId,
-          marketplace,
-          sellerIdHash: this.#http.sellerIdHash,
-          payloadHash,
-          priorState: existing.state,
-        });
-        throw new IndeterminateFeedSubmissionError(
-          existing.state === "submitted"
-            ? "An identical feed payload was already submitted; not resubmitting."
-            : "An identical feed payload is already in flight; not resubmitting.",
-          {
-            payloadHash,
-            marketplace,
-            submittedAtIso,
-            correlationId,
-            neweggRequestId: existing.requestIds?.[0],
-            details: { priorState: existing.state, existingRequestIds: existing.requestIds },
-          },
-        );
-      }
-
-      await operationStore.put(opKey, {
-        state: "submitting",
-        payloadHash,
-        updatedAt: submittedAtIso,
-      });
-
-      const chunkCorrelation = `${correlationId}-c${chunkIndex}`;
-      const spec: RequestSpec = {
-        method: "POST",
+      const { job, rateLimit: chunkRate } = await submitLedgeredFeedChunk({
+        http: this.#http,
         path: `${this.#http.adapter.prefix}datafeedmgmt/feeds/submitfeed`,
-        query: { requesttype: this.#http.adapter.feedRequestType },
-        bodyText,
-      };
-      const ctx: RequestContext = {
-        operation: Operation.FeedSubmit,
-        correlationId: chunkCorrelation,
-        signal: options.signal,
-        timeoutMs: options.timeoutMs,
-        rateLimitKey: rateLimitKey(marketplace, sellerId, Operation.FeedSubmit),
-        recordCost: chunkItems.length,
-      };
-
-      const result = await this.#submitChunk(spec, ctx, {
-        opKey,
-        payloadHash,
-        submittedAtIso,
-        correlationId,
-      });
-
-      const parsed = parseFeedSubmitResponse(result.json);
-      if (!parsed.isSuccess || !parsed.requestId) {
-        await operationStore.put(opKey, {
-          state: "failed",
-          payloadHash,
-          updatedAt: new Date().toISOString(),
-        });
-        throw new NeweggFeedSubmissionError("Newegg rejected the feed submission.", {
-          correlationId: chunkCorrelation,
-          httpStatus: result.status,
-          details: { isSuccess: parsed.isSuccess },
-        });
-      }
-
-      const requestId = parsed.requestId;
-      await operationStore.put(opKey, {
-        state: "submitted",
-        payloadHash,
-        requestIds: [requestId],
-        updatedAt: new Date().toISOString(),
-      });
-
-      feeds.push({
-        requestId,
         requestType: this.#http.adapter.feedRequestType,
-        marketplace,
-        status: parsed.status,
-        itemCount: chunkItems.length,
+        bodyText,
+        recordCount: chunkItems.length,
         chunkIndex,
-        submittedAt: toTimestamp(parsed.requestDate),
-        correlationId: chunkCorrelation,
+        correlationId,
+        options,
       });
+
+      feeds.push(job);
       for (const item of chunkItems) {
-        itemAssignments.push({ inputIndex: item.inputIndex, requestId, chunkIndex });
+        itemAssignments.push({ inputIndex: item.inputIndex, requestId: job.requestId, chunkIndex });
       }
-      rateLimit = result.rateLimit ?? rateLimit;
-      logger.info(LogEvent.FeedSubmitted, {
-        correlationId: chunkCorrelation,
-        marketplace,
-        sellerIdHash: this.#http.sellerIdHash,
-        requestId,
-        itemCount: chunkItems.length,
-        chunkIndex,
-      });
+      rateLimit = chunkRate ?? rateLimit;
     }
 
     return { feeds, deduplicatedItemCount, itemAssignments, warnings, correlationId, rateLimit };
-  }
-
-  /**
-   * Submits one chunk. Acquires the local budget, then executes with pre-send-only retry.
-   * Ambiguous failures (timeout/reset after dispatch, or 408/5xx) throw
-   * {@link IndeterminateFeedSubmissionError} and leave the ledger in `submitting`.
-   */
-  async #submitChunk(
-    spec: RequestSpec,
-    ctx: RequestContext,
-    ledger: { opKey: string; payloadHash: string; submittedAtIso: string; correlationId: string },
-  ): Promise<HttpResult> {
-    const { operationStore, retry, logger, marketplace } = this.#config;
-    await this.#http.acquireRateLimit(ctx);
-
-    let attempt = 0;
-    for (;;) {
-      try {
-        return await this.#http.executeOnce(spec, ctx);
-      } catch (err) {
-        if (isAbortError(err)) throw err;
-
-        const preSendRetryable =
-          err instanceof TransportError &&
-          err.phase === "pre-send" &&
-          attempt + 1 < retry.maxAttempts;
-        if (preSendRetryable) {
-          const delayMs = fullJitterDelay(attempt, retry);
-          logger.info(LogEvent.RetryScheduled, {
-            correlationId: ctx.correlationId,
-            marketplace,
-            operation: ctx.operation,
-            attempt: attempt + 1,
-            delayMs,
-            reason: "pre_send_transport",
-          });
-          await delay(delayMs, ctx.signal);
-          attempt++;
-          continue;
-        }
-
-        const ambiguous =
-          (err instanceof TransportError && err.phase === "ambiguous") ||
-          (err instanceof NeweggError &&
-            err.httpStatus !== undefined &&
-            AMBIGUOUS_HTTP_STATUSES.has(err.httpStatus));
-        if (ambiguous) {
-          logger.warn(LogEvent.IndeterminateSubmission, {
-            correlationId: ctx.correlationId,
-            marketplace,
-            sellerIdHash: this.#http.sellerIdHash,
-            payloadHash: ledger.payloadHash,
-          });
-          // Leave the ledger in "submitting": the payload may have reached Newegg.
-          throw new IndeterminateFeedSubmissionError(
-            "The feed submission may have reached Newegg but the outcome is unknown.",
-            {
-              payloadHash: ledger.payloadHash,
-              marketplace,
-              submittedAtIso: ledger.submittedAtIso,
-              correlationId: ledger.correlationId,
-              cause: err,
-            },
-          );
-        }
-
-        // Definitive failure (pre-send exhausted, or 4xx / rate-limit): record and surface.
-        await operationStore.put(ledger.opKey, {
-          state: "failed",
-          payloadHash: ledger.payloadHash,
-          updatedAt: new Date().toISOString(),
-        });
-        if (err instanceof TransportError) {
-          throw new NeweggFeedSubmissionError(
-            "Feed submission failed before dispatch and was not sent.",
-            { correlationId: ctx.correlationId, retryable: false, cause: err.cause },
-          );
-        }
-        throw err;
-      }
-    }
   }
 
   async getStatus(requestId: string, options: RequestOptions = {}): Promise<FeedStatusReport> {

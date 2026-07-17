@@ -51,6 +51,7 @@ export interface NeweggClient {
   readonly service: ServiceApi;
   readonly orders: OrdersApi; // order reads (list / get / status) + writes (ship / cancel / confirm / remove)
   readonly catalog: CatalogApi; // read-only catalog resolution (Item Lookup Report, contracts §12)
+  readonly listings: ListingsApi; // WRITE: existing-item listing creation (ITEM_DATA&v2 feed, contracts §13)
   // Read-only, fail-fast credential preflight (single service-status GET). Throws
   // NeweggAuthenticationError (401) / NeweggAuthorizationError (403) immediately on
   // bad or unauthorized credentials; resolves on success. Never mutates.
@@ -648,6 +649,64 @@ export interface CatalogApi {
 // false on CANCELLED): carries readonly requestId.
 export class CatalogLookupTimeoutError extends NeweggError {
   readonly requestId: string;
+}
+
+// ----------------------------------------------------------------------------
+// listings (existing item creation — contracts §13; WRITE surface)
+// ----------------------------------------------------------------------------
+// create() submits an ITEM_DATA data feed with the bare `&v2` template flag (BatchItemCreation).
+// It adds seller offers on products ALREADY in Newegg's catalog — resolve identifiers with
+// catalog.resolve() first. previewCreate() is offline (validation + envelopes, zero network).
+export type ListingCondition = "New" | "Refurbished";
+export type ListingShipping = "Default" | "Free";
+
+export interface CreateListingInput {
+  sellerPartNumber: string; // seller SKU, <=40 chars, immutable once created
+  manufacturer: string; // always required; must match Newegg's predefined manufacturer name
+  neweggItemNumber?: string;
+  upc?: string;
+  manufacturerPartNumber?: string; // wire field ManufacturerPartsNumber
+  sellingPrice: number;
+  quantity: number; // available quantity for the default warehouse
+  condition?: ListingCondition; // default "New"; immutable once created
+  packsOrSets?: number; // default 1; immutable once created
+  shipping?: ListingShipping; // default "Default"
+  activate?: boolean; // default false: offer created DEACTIVATED (hidden, not for sale)
+  currency?: "USD" | "CAD";
+  msrp?: number;
+  map?: number;
+  checkoutMap?: boolean;
+  countryOfOrigin?: string; // ISO 3166-1 alpha-3
+  leadTime?: number; // business days, 1-14; Newegg defaults to 2 when omitted
+  shippingTemplate?: string;
+}
+
+export interface NormalizedCreateListing extends CreateListingInput {
+  inputIndex: number;
+  condition: ListingCondition;
+  packsOrSets: number;
+  shipping: ListingShipping;
+  activate: boolean;
+}
+
+export interface ListingCreatePreview {
+  marketplace: NeweggMarketplace;
+  items: NormalizedCreateListing[];
+  itemCount: number;
+  chunkCount: number;
+  warnings: string[];
+  envelopes: unknown[]; // one §13.2 envelope per chunk — exactly what create() would submit
+}
+
+export interface ListingsApi {
+  // Validate + normalize + build envelopes without any network access.
+  previewCreate(input: CreateListingInput | CreateListingInput[]): ListingCreatePreview;
+  // WRITE: submit the Existing Item Creation feed (chunked at 3000). Poll the returned
+  // requestId(s) with feeds.getStatus / feeds.getResult. Returns FeedSubmission.
+  create(
+    input: CreateListingInput | CreateListingInput[],
+    options?: RequestOptions,
+  ): Promise<FeedSubmission>;
 }
 
 // ----------------------------------------------------------------------------
