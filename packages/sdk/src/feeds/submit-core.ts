@@ -18,6 +18,9 @@ import { parseFeedSubmitResponse } from "./parse.js";
 
 const AMBIGUOUS_HTTP_STATUSES = new Set([408, 502, 503, 504]);
 
+/** Submit-feed endpoint path (after the marketplace prefix); shared by inventory + listing feeds. */
+export const SUBMIT_FEED_PATH = "datafeedmgmt/feeds/submitfeed";
+
 export interface LedgeredChunkArgs {
   http: NeweggHttpClient;
   /** e.g. `${adapter.prefix}datafeedmgmt/feeds/submitfeed` */
@@ -123,8 +126,7 @@ export async function submitLedgeredFeedChunk(
   const { marketplace, sellerId, operationStore, logger } = http.config;
   const { correlationId } = args;
 
-  const bodyText = args.bodyText;
-  const payloadHash = sha256Hex(bodyText);
+  const payloadHash = sha256Hex(args.bodyText);
   const opKey = `${marketplace}:${sellerId}:feed:${payloadHash}`;
   const submittedAtIso = new Date().toISOString();
 
@@ -163,7 +165,7 @@ export async function submitLedgeredFeedChunk(
     method: "POST",
     path: args.path,
     query: { requesttype: args.requestType },
-    bodyText,
+    bodyText: args.bodyText,
     rawQuerySuffix: args.rawQuerySuffix,
   };
   const ctx: RequestContext = {

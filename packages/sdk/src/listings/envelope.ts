@@ -1,9 +1,10 @@
 import type { NormalizedCreateListing } from "../types.js";
 import { EXISTING_ITEM_DOCUMENT_VERSION, EXISTING_ITEM_MESSAGE_TYPE } from "./constants.js";
 
-/** Money as Newegg expects it: plain 2-decimal string, no separators. */
+/** Money as Newegg expects it: plain 2-decimal string, no separators. Rounds to the cent
+ * first so float artifacts (e.g. 2.675 stored as 2.67499…) don't truncate the wrong way. */
 function money(value: number): string {
-  return value.toFixed(2);
+  return (Math.round(value * 100) / 100).toFixed(2);
 }
 
 function basicInfo(item: NormalizedCreateListing): Record<string, unknown> {

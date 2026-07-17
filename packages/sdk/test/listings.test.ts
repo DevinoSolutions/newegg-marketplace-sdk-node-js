@@ -95,6 +95,30 @@ describe("listings envelope (contracts §13.2)", () => {
     expect(JSON.stringify(envelope)).not.toContain("Overwrite");
     expect(JSON.stringify(envelope)).not.toContain("SummaryInfo");
   });
+
+  it("formats money as a rounded 2-decimal string (locks the contract)", () => {
+    function priceOf(sellingPrice: number, msrp: number): { selling: unknown; msrp: unknown } {
+      const item: NormalizedCreateListing = {
+        inputIndex: 0,
+        sellerPartNumber: "EB-1",
+        manufacturer: "Corsair",
+        upc: "840006676577",
+        sellingPrice,
+        msrp,
+        quantity: 1,
+        condition: "New",
+        packsOrSets: 1,
+        shipping: "Default",
+        activate: false,
+      };
+      const basic = (buildExistingItemEnvelope([item]) as ItemEnvelope).NeweggEnvelope.Message
+        .Itemfeed[0]!.Item[0]!.BasicInfo;
+      return { selling: basic.SellingPrice, msrp: basic.MSRP };
+    }
+    // Trailing zero padded; float artifact (2.675) rounds up to the nearest cent, not truncated.
+    expect(priceOf(9.9, 2.675)).toEqual({ selling: "9.90", msrp: "2.68" });
+    expect(priceOf(1000, 0.1).selling).toBe("1000.00");
+  });
 });
 
 describe("listings.previewCreate", () => {
@@ -174,6 +198,13 @@ describe("listings.create wire (contracts §13.1)", () => {
     expect(chunk1.NeweggEnvelope.Message.Itemfeed[0]!.Item).toHaveLength(1);
     expect(submission.feeds).toHaveLength(2);
     expect(submission.feeds.map((f) => f.chunkIndex)).toEqual([0, 1]);
+    // The lone chunk-1 item must map to the SECOND submit's request id, not the first.
+    expect(submission.itemAssignments).toHaveLength(3001);
+    expect(submission.itemAssignments[3000]).toEqual({
+      inputIndex: 3000,
+      requestId: "REQ-2",
+      chunkIndex: 1,
+    });
   });
 
   it("dedups an identical resubmission via the operation ledger", async () => {

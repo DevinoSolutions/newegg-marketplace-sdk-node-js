@@ -22,7 +22,7 @@ import { Operation } from "../client/operations.js";
 import { chunk, delay } from "../util.js";
 import { INVENTORY_FEED_MAX_RECORDS } from "./constants.js";
 import { findStatusEntry, parseProcessingReport } from "./parse.js";
-import { submitLedgeredFeedChunk } from "./submit-core.js";
+import { SUBMIT_FEED_PATH, submitLedgeredFeedChunk } from "./submit-core.js";
 import {
   parseOrThrow,
   requireSellerPartNumbers,
@@ -74,7 +74,7 @@ export class FeedsApiImpl implements FeedsApi {
     const chunks = chunk(deduped, INVENTORY_FEED_MAX_RECORDS);
     const feeds: FeedJob[] = [];
     const itemAssignments: FeedSubmission["itemAssignments"] = [];
-    let rateLimit = undefined as FeedSubmission["rateLimit"];
+    let rateLimit: FeedSubmission["rateLimit"];
 
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
       const chunkItems = chunks[chunkIndex] ?? [];
@@ -83,7 +83,7 @@ export class FeedsApiImpl implements FeedsApi {
 
       const { job, rateLimit: chunkRate } = await submitLedgeredFeedChunk({
         http: this.#http,
-        path: `${this.#http.adapter.prefix}datafeedmgmt/feeds/submitfeed`,
+        path: `${this.#http.adapter.prefix}${SUBMIT_FEED_PATH}`,
         requestType: this.#http.adapter.feedRequestType,
         bodyText,
         recordCount: chunkItems.length,
