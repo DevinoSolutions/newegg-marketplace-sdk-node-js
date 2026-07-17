@@ -1047,3 +1047,127 @@ contract, not verb). Owner approved live read-only use 2026-07-16.
 - The official JSON example is syntactically invalid (missing comma, trailing comma) — trust the
   field inventory, not the sample's punctuation. Numbers may arrive as strings elsewhere; parse
   tolerantly as always.
+
+## 13. Data Feeds — Existing Item Creation (listing writes)
+
+Creates seller listings against products **already in Newegg's catalog** (resolved via §12). This is
+the `&v2` datafeed template — distinct from full item creation (`&v1`) and the basic-info feed
+(`&v3`).
+
+Verified against the official Java/C# SDKs and the docs page:
+
+- Docs: `https://developer.newegg.com/newegg_marketplace_api/datafeed_management/existing_item_creation_feed/`
+  (fetched 2026-07-17, page last updated 2021-03-09).
+- Java SDK `Newegg/newegg-marketplace-sdk-java` file
+  `DataFeed/src/main/java/com/newegg/marketplace/sdk/datafeed/inner/SubmitCreationCaller.java`
+  (`requesttype=ITEM_DATA&v2`; `&v1` = full item creation, `&v3` = basic-info feed).
+- C# SDK `Newegg/newegg-marketplace-sdk-dotnet` file
+  `DataFeed/Model/SubmitFeed/ExistingItemCreationFeed.cs` (`base("2.0","BatchItemCreation")`).
+
+**Read/write classification:** WRITE. Any live use requires explicit owner authorization in the
+current session; the live test suite must never contain this surface (enforced by
+`scripts/check-live-readonly.ts`).
+
+### 13.1 Submit Existing Item Creation Feed
+
+```
+POST {prefix}datafeedmgmt/feeds/submitfeed?sellerid={id}&requesttype=ITEM_DATA&v2
+```
+
+Prefixes `""` / `b2b/` / `can/` (§1). **`&v2` is a bare flag (no `=`)** selecting the existing-item
+template; `&v1` selects full item creation, `&v3` the basic-info feed.
+
+- **Discrepancy:** the docs page (fetched 2026-07-17) omits `&v2` from the URL — the official Java
+  SDK's `SubmitCreationCaller` sends `requesttype=ITEM_DATA&v2`, and the C# SDK models this feed as
+  `BatchItemCreation` v2.0. The SDKs win; the docs page is treated as stale.
+- Limits: **10 submits/min** (shared submitfeed budget), **3,000 records per file**, **15 MB per
+  file**, **30,000 records/hour**. Request-failure errors: `DF003` / `DF004` / `DF011`.
+
+### 13.2 Request envelope (JSON)
+
+```json
+{
+  "NeweggEnvelope": {
+    "Header": { "DocumentVersion": "2.0" },
+    "MessageType": "BatchItemCreation",
+    "Message": {
+      "Itemfeed": [
+        {
+          "Item": [
+            {
+              "BasicInfo": {
+                "SellerPartNumber": "...",
+                "Manufacturer": "...",
+                "ManufacturerPartsNumber": "...",
+                "UPCOrISBN": "...",
+                "NeweggItemNumber": "...",
+                "Currency": "CAD",
+                "MSRP": "0.00",
+                "MAP": "0.00",
+                "CheckoutMAP": "False",
+                "SellingPrice": "9.99",
+                "Shipping": "Default",
+                "Inventory": "1",
+                "ItemCondition": "New",
+                "PacksOrSets": "1",
+                "ActivationMark": "False",
+                "CountryOfOrigin": "TWN",
+                "LeadTime": "2",
+                "ShippingTemplate": "..."
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+- `SummaryInfo` is an XML-only required-but-EMPTY element — **omitted entirely** in the JSON
+  serialization.
+- There is **no `Overwrite` field in the v2 envelope** (`Overwrite` is v1-only; see §7.2 for the
+  inventory feed's hard-coded `"No"`).
+- Spelling landmines: `ManufacturerPartsNumber` (plural "Parts"), `UPCOrISBN`, `CheckoutMAP`,
+  `ActivationMark`.
+- `Itemfeed` and `Item` are arrays in JSON; numbers/prices are sent as strings.
+
+### 13.3 BasicInfo field table
+
+From the official docs page:
+
+| Attribute                 | Required?    | Notes                                                                                                                                                                                                                   |
+| ------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SellerPartNumber`        | Yes          | ≤40 chars incl. space; immutable once created.                                                                                                                                                                          |
+| `Manufacturer`            | Yes (always) | Must match a name predefined in Newegg's system — additions via mktp.content@newegg.com.                                                                                                                                |
+| `UPCOrISBN`               | Conditional  | One of {`UPCOrISBN`, `ManufacturerPartsNumber`, `NeweggItemNumber`} required. 12-digit UPC or 13-digit EAN.                                                                                                             |
+| `ManufacturerPartsNumber` | Conditional  | One of the three above; ≤40 chars.                                                                                                                                                                                      |
+| `NeweggItemNumber`        | Conditional  | One of the three above; Newegg's assigned catalog number (§12).                                                                                                                                                         |
+| `SellingPrice`            | Yes          | String.                                                                                                                                                                                                                 |
+| `Shipping`                | Yes          | Docs page values `Default` \| `Free`. **Discrepancy:** the C# SDK's carrier-speed `Shipping` enum belongs to the v1 feed — docs page wins here, to be confirmed against the first live preview.                         |
+| `Inventory`               | Yes          | Integer. Default warehouse: CAN warehouse on newegg.ca, USA warehouse on the US/B2B platforms.                                                                                                                          |
+| `PacksOrSets`             | Yes          | Integer; immutable once created.                                                                                                                                                                                        |
+| `Currency`                | Optional     | `USD` / `CAD`; defaults CAD on newegg.ca, USD elsewhere.                                                                                                                                                                |
+| `MSRP`                    | Optional     | String.                                                                                                                                                                                                                 |
+| `MAP`                     | Optional     | `0` / `0.00` removes MAP; null = no change.                                                                                                                                                                             |
+| `CheckoutMAP`             | Optional     | `True` / `False`.                                                                                                                                                                                                       |
+| `ItemCondition`           | Optional     | `New` / `Refurbished` everywhere; `UsedLikeNew` / `UsedVeryGood` / `UsedGood` / `UsedAcceptable` (+ `ConditionDetails` + `UsedItemImages`/`ImageUrl`/`IsPrimary`) are Newegg.com-platform-only. Immutable once created. |
+| `ActivationMark`          | Optional     | `True` = listed for sale, `False` = hidden/offline, null = no change.                                                                                                                                                   |
+| `CountryOfOrigin`         | Optional     | ISO 3166-1 alpha-3.                                                                                                                                                                                                     |
+| `LeadTime`                | Optional     | Business days 1–14; Newegg default 2.                                                                                                                                                                                   |
+| `ShippingTemplate`        | Optional     | ≤200 chars; blank = no change.                                                                                                                                                                                          |
+
+### 13.4 Submit response
+
+Identical `SubmitFeedResponse` shape to §7.3 — `IsSuccess`, `OperationType: "SubmitFeedResponse"`,
+`SellerID`, `ResponseBody.ResponseList[]` entries
+`{ RequestId, RequestType: "ITEM_DATA", RequestDate (Pacific Time), RequestStatus: "SUBMITTED" }`.
+The XML variant nests `ResponseList > ResponseInfo`. Parsed by the SDK's existing feed-submit parser.
+
+### 13.5 Result
+
+Generic `ProcessingReport` (§7.6 shape): `NeweggEnvelope > Message > ProcessingReport` with
+`ProcessingSummary { ProcessedCount, SuccessCount, WithErrorCount }` and `Result[]` records carrying
+`AdditionalInfo { SellerPartNumber, ManufacturerPartsNumber, UPCOrISBN, SubCategoryID }` +
+`ErrorList > ErrorDescription[]` (CDATA text). Partial success is possible (e.g. `"Item Created with
+Image error(s)."`).
