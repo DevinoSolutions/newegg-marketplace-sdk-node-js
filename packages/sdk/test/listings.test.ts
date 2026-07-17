@@ -161,7 +161,9 @@ describe("listings round-trips its own normalized output", () => {
     const submission = await client.listings.create(preview.items);
     expect(calls).toHaveLength(1);
     expect(submission.feeds[0]!.requestType).toBe("ITEM_DATA");
-    expect(submission.itemAssignments).toEqual([{ inputIndex: 0, requestId: "REQ-1", chunkIndex: 0 }]);
+    expect(submission.itemAssignments).toEqual([
+      { inputIndex: 0, requestId: "REQ-1", chunkIndex: 0 },
+    ]);
   });
 });
 

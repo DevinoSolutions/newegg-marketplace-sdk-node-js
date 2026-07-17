@@ -48,7 +48,12 @@ const createListingItemSchema = z
       .min(1)
       .optional()
       .describe("Newegg catalog item number (from newegg_catalog_resolve)."),
-    upc: z.string().min(1).max(40).optional().describe("UPC/EAN/GTIN identifying the catalog item."),
+    upc: z
+      .string()
+      .min(1)
+      .max(40)
+      .optional()
+      .describe("UPC/EAN/GTIN identifying the catalog item."),
     manufacturerPartNumber: z
       .string()
       .min(1)
@@ -56,11 +61,7 @@ const createListingItemSchema = z
       .optional()
       .describe("Manufacturer part number (MPN)."),
     sellingPrice: z.number().positive().finite().describe("Seller price for this offer."),
-    quantity: z
-      .number()
-      .int()
-      .min(0)
-      .describe("Available quantity for the default warehouse."),
+    quantity: z.number().int().min(0).describe("Available quantity for the default warehouse."),
     condition: z
       .enum(["New", "Refurbished"])
       .optional()
@@ -78,7 +79,12 @@ const createListingItemSchema = z
           "activated.",
       ),
     currency: z.enum(["USD", "CAD"]).optional().describe("Price currency."),
-    msrp: z.number().positive().finite().optional().describe("Manufacturer suggested retail price."),
+    msrp: z
+      .number()
+      .positive()
+      .finite()
+      .optional()
+      .describe("Manufacturer suggested retail price."),
     map: z.number().min(0).finite().optional().describe("Minimum advertised price."),
     checkoutMap: z.boolean().optional().describe("Enforce MAP at checkout."),
     countryOfOrigin: z.string().length(3).optional().describe("ISO 3166-1 alpha-3 country code."),

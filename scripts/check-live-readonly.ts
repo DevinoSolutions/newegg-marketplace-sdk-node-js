@@ -41,6 +41,10 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /killitem/i, why: "remove-item (KillItem) endpoint (write)" },
   { re: /KillItemRequest|OrderConfirmationRequest/, why: "raw order-write OperationType (write)" },
   { re: /cancel_?status/i, why: "cancel-order endpoint (write)" },
+  // Listing creation (Existing Item Creation feed, contracts §13) — WRITE surface.
+  { re: /listings\s*\.\s*create\s*\(/, why: "listings.create (write)" },
+  { re: /BatchItemCreation/, why: "item-creation feed MessageType (write)" },
+  { re: /ITEM_DATA/, why: "item-creation feed request type (write)" },
 ];
 
 let files: string[] = [];
