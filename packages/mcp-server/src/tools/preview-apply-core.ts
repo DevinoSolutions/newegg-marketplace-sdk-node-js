@@ -37,7 +37,7 @@ const CONSUME_ERRORS: Record<
 };
 
 /** Outcome of {@link consumeTypedPreview}: either the kind-narrowed record or a ready error result. */
-export type TypedPreviewOutcome<K extends PreviewRecord["kind"]> =
+type TypedPreviewOutcome<K extends PreviewRecord["kind"]> =
   { readonly record: Extract<PreviewRecord, { kind: K }> } | { readonly error: ToolResult };
 
 /**

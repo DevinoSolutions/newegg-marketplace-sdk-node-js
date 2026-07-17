@@ -21,7 +21,7 @@ const AMBIGUOUS_HTTP_STATUSES = new Set([408, 502, 503, 504]);
 /** Submit-feed endpoint path (after the marketplace prefix); shared by inventory + listing feeds. */
 export const SUBMIT_FEED_PATH = "datafeedmgmt/feeds/submitfeed";
 
-export interface LedgeredChunkArgs {
+interface LedgeredChunkArgs {
   http: NeweggHttpClient;
   /** e.g. `${adapter.prefix}datafeedmgmt/feeds/submitfeed` */
   path: string;

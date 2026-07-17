@@ -34,6 +34,8 @@ export {
 export {
   InMemoryPreviewStore,
   type ConsumeResult,
+  type InventoryPreviewRecord,
+  type ListingPreviewRecord,
   type PreviewRecord,
   type PreviewStore,
 } from "./preview-store/index.js";
