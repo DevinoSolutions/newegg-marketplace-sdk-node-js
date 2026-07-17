@@ -11,20 +11,35 @@ import type {
   NeweggMarketplace,
   NormalizedInventoryUpdate,
   InventoryUpdateStrategy,
+  NormalizedCreateListing,
 } from "@devino/newegg-marketplace-sdk";
 
-/** A stored, ready-to-apply operation. Quantities here are authoritative at apply time. */
-export interface PreviewRecord {
+/** Fields common to every stored, ready-to-apply operation. */
+interface PreviewRecordBase {
   readonly previewId: string;
-  /** sha-256 (hex) of the canonical `{ marketplace, strategy, normalizedUpdates }` payload. */
+  /** sha-256 (hex) of the canonical payload for this operation kind. */
   readonly hash: string;
   readonly marketplace: NeweggMarketplace;
-  /** Strategy to replay through `updateMany` — one of "direct" | "feed" | "auto". */
-  readonly strategy: InventoryUpdateStrategy;
-  readonly normalizedUpdates: NormalizedInventoryUpdate[];
   readonly createdAt: Date;
   readonly expiresAt: Date;
 }
+
+/** A stored inventory update. Quantities here are authoritative at apply time. */
+export interface InventoryPreviewRecord extends PreviewRecordBase {
+  readonly kind: "inventoryUpdate";
+  /** Strategy to replay through `updateMany` — one of "direct" | "feed" | "auto". */
+  readonly strategy: InventoryUpdateStrategy;
+  readonly normalizedUpdates: NormalizedInventoryUpdate[];
+}
+
+/** A stored existing-item listing creation. Items here are authoritative at apply time. */
+export interface ListingPreviewRecord extends PreviewRecordBase {
+  readonly kind: "listingCreate";
+  readonly items: NormalizedCreateListing[];
+}
+
+/** A stored, ready-to-apply operation, discriminated by `kind`. */
+export type PreviewRecord = InventoryPreviewRecord | ListingPreviewRecord;
 
 /** Result of an atomic consume — distinguishes the three failure modes ADR 0005 requires. */
 export type ConsumeResult =

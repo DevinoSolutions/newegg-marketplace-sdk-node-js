@@ -59,6 +59,14 @@ async function handler(
   }
 
   const record = consumed.record;
+  if (record.kind !== "inventoryUpdate") {
+    return errorResult(
+      businessError(
+        "preview_kind_mismatch",
+        "This previewId belongs to a different operation type; apply it with its matching tool.",
+      ),
+    );
+  }
   try {
     // Execute exactly the stored, normalized operation. The SDK tolerates the normalized
     // shape (it round-trips `previewUpdate` output back through `updateMany`).

@@ -191,6 +191,7 @@ async function handler(input: PreviewInput, ctx: ToolContext): Promise<ToolResul
 
   const record: PreviewRecord = {
     previewId,
+    kind: "inventoryUpdate",
     hash: hashPayload(preview.marketplace, requestedStrategy, preview.normalizedUpdates),
     marketplace: preview.marketplace,
     strategy: requestedStrategy,
