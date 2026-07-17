@@ -16,6 +16,9 @@ export interface RequestSpec {
   body?: unknown;
   /** Pre-serialized body bytes (feeds use this so the payload hash matches exactly what is sent). */
   bodyText?: string;
+  /** Raw query text appended verbatim after the built query string (e.g. the bare `v2`
+   * template flag of the item-creation feeds — URLSearchParams would emit `v2=`). */
+  rawQuerySuffix?: string;
 }
 
 /** Normalized single-item read result (before the API attaches marketplace/correlation). */

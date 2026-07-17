@@ -127,10 +127,13 @@ export class NeweggHttpClient {
       path: url.pathname,
     });
 
+    const target: string | URL =
+      spec.rawQuerySuffix !== undefined ? `${url.toString()}&${spec.rawQuerySuffix}` : url;
+
     let response: Response;
     let bodyStr: string;
     try {
-      response = await this.config.fetch(url, {
+      response = await this.config.fetch(target, {
         method: spec.method,
         headers,
         body: bodyText,
