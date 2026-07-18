@@ -270,7 +270,16 @@ export interface InventoryApi {
     updates: InventoryUpdate | InventoryUpdate[],
     options?: PreviewOptions,
   ): Promise<InventoryUpdatePreview>;
+  /**
+   * WARNING (proven live): when the target item is DEACTIVATED, Newegg accepts the
+   * update and reports it "succeeded", then silently disregards it — the stored
+   * quantity does not change. A "succeeded" outcome is therefore only trustworthy for
+   * active items; check `active` on a {@link getItem} snapshot first, or use the
+   * ITEM_DATA v2 feed (`listings.create` resubmission), which does persist fields on
+   * deactivated items.
+   */
   updateItem(update: InventoryUpdate, options?: UpdateOptions): Promise<InventoryUpdateResult>;
+  /** See the deactivated-item warning on {@link updateItem} — it applies per item here. */
   updateMany(
     updates: InventoryUpdate[],
     options?: UpdateManyOptions,
@@ -752,6 +761,9 @@ export interface CatalogMatch {
 export interface CatalogResolution {
   input: CatalogLookupInput;
   found: boolean;
+  /** Ranked best-first: rows with a known `condition` precede condition-less pseudo-rows
+   * (the lookup report emits refurb echoes like `…R` without a Condition field, and the
+   * item-creation feed rejects those numbers). `matches[0]` is the listing-safe pick. */
   matches: CatalogMatch[];
 }
 

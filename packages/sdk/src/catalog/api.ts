@@ -63,6 +63,14 @@ function matchesInput(input: WireLookupInput, match: CatalogMatch): boolean {
   return true;
 }
 
+/** Rank for ordering a resolution's matches: condition-bearing rows first. The lookup
+ * report interleaves pseudo-rows WITHOUT a Condition field (observed live: R-suffixed
+ * refurb echoes like `20-250-259R`, which the item-creation feed rejects) ahead of the
+ * real row, so wire order is not a safe order for consumers taking `matches[0]`. */
+function matchRank(match: CatalogMatch): number {
+  return match.condition !== undefined ? 0 : 1;
+}
+
 /**
  * Catalog resolution over the async Item Lookup Report (reportmgmt, contracts §12).
  * Everything here is READ-shaped: report submission creates a report job and mutates
@@ -268,7 +276,10 @@ export class CatalogApiImpl implements CatalogApi {
           matches: [{ neweggItemNumber: original.neweggItemNumber }],
         };
       }
-      const matches = allMatches.filter((m) => matchesInput(original, m));
+      const matches = allMatches
+        .filter((m) => matchesInput(original, m))
+        // Stable sort: real (condition-bearing) rows before pseudo-rows, wire order within.
+        .sort((a, b) => matchRank(a) - matchRank(b));
       return { input: original, found: matches.length > 0, matches };
     });
 

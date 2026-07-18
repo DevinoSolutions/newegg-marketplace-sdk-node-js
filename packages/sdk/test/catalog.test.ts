@@ -413,6 +413,85 @@ describe("catalog.resolve", () => {
     expect(result.resolutions[0]?.matches).toHaveLength(2);
   });
 
+  it("ranks condition-bearing rows above condition-less pseudo-rows (live R-row trap)", async () => {
+    // Live-observed shape (feed Z2XAN6RDVOKS failure): the lookup report lists an
+    // R-suffixed refurb pseudo-row WITHOUT a Condition field FIRST, then the real row.
+    // The creation feed rejects the R number, so the real row must surface as matches[0].
+    const { client } = makeClient("ca", [
+      {
+        method: "POST",
+        pathPattern: paths.reportSubmit,
+        reply: () => ({ status: 200, body: SUBMIT_OK }),
+      },
+      {
+        method: "PUT",
+        pathPattern: paths.reportStatus,
+        reply: () => ({ status: 200, body: STATUS_FINISHED }),
+      },
+      {
+        method: "PUT",
+        pathPattern: paths.reportResult,
+        reply: () => ({
+          status: 200,
+          body: {
+            ResponseBody: {
+              PageInfo: { TotalCount: 2, TotalPageCount: 1, PageIndex: 1, PageSize: 100 },
+              ItemList: [
+                { NeweggItemNumber: "20-250-259R", UPC: "619659198114" },
+                { NeweggItemNumber: "20-250-259", UPC: "619659198114", Condition: "1" },
+              ],
+            },
+          },
+        }),
+      },
+    ]);
+    const result = await client.catalog.resolve(
+      { upc: "619659198114", condition: "new" },
+      { pollIntervalMs: 0 },
+    );
+    const matches = result.resolutions[0]?.matches ?? [];
+    // Both rows are kept (the pseudo-row can't be disproven), but ranked, not wire-ordered.
+    expect(matches.map((m) => m.neweggItemNumber)).toEqual(["20-250-259", "20-250-259R"]);
+  });
+
+  it("keeps wire order among equally-ranked matches (stable sort)", async () => {
+    const { client } = makeClient("ca", [
+      {
+        method: "POST",
+        pathPattern: paths.reportSubmit,
+        reply: () => ({ status: 200, body: SUBMIT_OK }),
+      },
+      {
+        method: "PUT",
+        pathPattern: paths.reportStatus,
+        reply: () => ({ status: 200, body: STATUS_FINISHED }),
+      },
+      {
+        method: "PUT",
+        pathPattern: paths.reportResult,
+        reply: () => ({
+          status: 200,
+          body: {
+            ResponseBody: {
+              PageInfo: { TotalCount: 3, TotalPageCount: 1, PageIndex: 1, PageSize: 100 },
+              ItemList: [
+                { NeweggItemNumber: "7A20-147-900", UPC: "887276843674", Condition: "1" },
+                { NeweggItemNumber: "20-147-900", UPC: "887276843674", Condition: "1" },
+                { NeweggItemNumber: "20-147-900R", UPC: "887276843674" },
+              ],
+            },
+          },
+        }),
+      },
+    ]);
+    const result = await client.catalog.resolve({ upc: "887276843674" }, { pollIntervalMs: 0 });
+    expect(result.resolutions[0]?.matches.map((m) => m.neweggItemNumber)).toEqual([
+      "7A20-147-900",
+      "20-147-900",
+      "20-147-900R",
+    ]);
+  });
+
   it("matches mpn inputs case-insensitively against result rows", async () => {
     const { client } = makeClient("ca", [
       {
