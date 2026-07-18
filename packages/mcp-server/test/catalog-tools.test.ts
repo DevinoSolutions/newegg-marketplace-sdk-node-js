@@ -116,6 +116,27 @@ describe("newegg_catalog_resolve (end-to-end)", () => {
     }
   });
 
+  it("probes alreadyListed by UPC, not by catalog item number (live CT026 trap)", async () => {
+    // Live-proven: the inventory API cannot resolve catalog-form item numbers
+    // (20-xxx-xxx read CT026 whether or not the seller has an offer), so probing by
+    // neweggItemNumber would report alreadyListed=false even for actively-listed
+    // products. The probe must use the match's UPC (Type "2") when it has one.
+    const harness = await startHarness({ routes: catalogRoutes(true) });
+    try {
+      const res = await callTool(harness.mcp, "newegg_catalog_resolve", {
+        items: [{ upc: "812674021181" }],
+      });
+      expect(res.isError).toBe(false);
+      const probes = harness.calls.filter((c) =>
+        /contentmgmt\/item\/inventory(\?|$)/.test(c.url.pathname + c.url.search),
+      );
+      expect(probes).toHaveLength(1);
+      expect(probes[0]?.bodyJson).toEqual({ Type: "2", Value: "812674021181" });
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("passes a neweggItemNumber through without hitting reportmgmt", async () => {
     const harness = await startHarness({ routes: catalogRoutes(true) });
     try {

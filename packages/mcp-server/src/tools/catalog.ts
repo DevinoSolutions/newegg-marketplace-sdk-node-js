@@ -90,7 +90,10 @@ const matchOutputSchema = z.object({
   alreadyListed: z
     .boolean()
     .optional()
-    .describe("true when this seller already has an offer on this item."),
+    .describe(
+      "true when this seller already has an offer for this product " +
+        "(probed by UPC when the match has one; the offer may use a different seller SKU).",
+    ),
 });
 
 function toLookupInput(item: z.infer<typeof lookupItemSchema>): CatalogLookupInput {
@@ -129,18 +132,28 @@ function serializeMatch(
   return out;
 }
 
-/** Best-effort `alreadyListed` enrichment: a failed inventory read never fails the call. */
+/** Best-effort `alreadyListed` enrichment: a failed inventory read never fails the call.
+ * Probes by UPC when the match carries one — the inventory API cannot resolve
+ * catalog-form item numbers (20-xxx-xxx reads return CT026 whether or not the seller has
+ * an offer, proven live), so an item-number probe on a catalog row would always report
+ * "not listed". Item-number probes remain for UPC-less rows (e.g. 9SI… passthroughs). */
 async function checkAlreadyListed(
   ctx: ToolContext,
-  itemNumbers: string[],
+  matches: CatalogMatch[],
 ): Promise<Map<string, boolean>> {
+  const unique = new Map<string, CatalogMatch>();
+  for (const match of matches) {
+    if (!unique.has(match.neweggItemNumber)) unique.set(match.neweggItemNumber, match);
+  }
   const listed = new Map<string, boolean>();
-  for (const value of itemNumbers.slice(0, ALREADY_LISTED_CHECK_LIMIT)) {
+  for (const match of [...unique.values()].slice(0, ALREADY_LISTED_CHECK_LIMIT)) {
     try {
-      const snapshot = await ctx.client.inventory.tryGetItem({
-        identifier: { type: "neweggItemNumber", value },
-      });
-      listed.set(value, snapshot !== undefined);
+      const identifier =
+        match.upc !== undefined
+          ? { type: "upc" as const, value: match.upc }
+          : { type: "neweggItemNumber" as const, value: match.neweggItemNumber };
+      const snapshot = await ctx.client.inventory.tryGetItem({ identifier });
+      listed.set(match.neweggItemNumber, snapshot !== undefined);
     } catch {
       // Enrichment only — resolution results stand on their own.
     }
@@ -192,10 +205,10 @@ async function resolveHandler(
   const waitMs = (input.waitSeconds ?? DEFAULT_WAIT_SECONDS) * 1000;
   try {
     const result = await ctx.client.catalog.resolve(inputs, { timeoutMs: waitMs });
-    const uniqueItemNumbers = [
-      ...new Set(result.resolutions.flatMap((r) => r.matches.map((m) => m.neweggItemNumber))),
-    ];
-    const alreadyListed = await checkAlreadyListed(ctx, uniqueItemNumbers);
+    const alreadyListed = await checkAlreadyListed(
+      ctx,
+      result.resolutions.flatMap((r) => r.matches),
+    );
     return okResult({
       marketplace: result.marketplace,
       pending: false,
@@ -287,9 +300,7 @@ async function statusHandler(
       if (page >= result.totalPageCount) break;
       page += 1;
     }
-    const alreadyListed = await checkAlreadyListed(ctx, [
-      ...new Set(matches.map((m) => m.neweggItemNumber)),
-    ]);
+    const alreadyListed = await checkAlreadyListed(ctx, matches);
     return okResult({
       marketplace: status.marketplace,
       requestId: status.requestId,

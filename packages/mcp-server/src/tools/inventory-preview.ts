@@ -239,7 +239,9 @@ export function createInventoryPreviewTool(
       "decides direct-vs-feed submission, and surfaces a prominent warning for any zero-quantity " +
       "(zero-out) updates. Returns a single-use previewId (with an expiry) that " +
       "newegg_inventory_apply_update consumes to execute exactly this plan. No Newegg mutation " +
-      "ever happens here.",
+      "ever happens here. CAUTION: Newegg silently disregards inventory updates to DEACTIVATED " +
+      "items while still reporting them succeeded — verify the item is active " +
+      "(newegg_inventory_get) before trusting an update.",
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: makeInputSchema(config.limits.maxItemsPerOperation),
     outputSchema: inventoryOperationResultSchema,
