@@ -169,7 +169,27 @@ describe("inventory reads", () => {
     expect(result).toBeUndefined();
   });
 
-  it("tryGetItem rethrows other errors — only CT026 becomes undefined (R3)", async () => {
+  it("tryGetItem returns undefined on CT010 (live: UPC reads report unknown items as CT010)", async () => {
+    // Proven live (CA, 2026-07-18): a UPC read for a product the seller has NO offer on
+    // fails HTTP 400 CT010 — not CT026 like SKU/item-number reads. 9/9 unlisted-product
+    // UPC probes returned CT010; listed products returned snapshots.
+    const { client } = makeClient("ca", [
+      {
+        method: "POST",
+        pathPattern: paths.itemInventory,
+        reply: () => ({
+          status: 400,
+          body: { Code: "CT010", Message: "Invalid Type or Value" },
+        }),
+      },
+    ]);
+    const result = await client.inventory.tryGetItem({
+      identifier: { type: "upc", value: "840006673651" },
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("tryGetItem rethrows other errors — only not-found codes become undefined (R3)", async () => {
     const { client } = makeClient("us", [
       {
         method: "PUT",

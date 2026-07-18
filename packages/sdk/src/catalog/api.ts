@@ -13,7 +13,11 @@ import type {
 } from "../types.js";
 import type { RequestSpec } from "../platform/index.js";
 import type { NeweggHttpClient } from "../client/http.js";
-import { CatalogLookupTimeoutError, NeweggValidationError } from "../errors/index.js";
+import {
+  CatalogLookupTimeoutError,
+  NeweggApiError,
+  NeweggValidationError,
+} from "../errors/index.js";
 import { Operation } from "../client/operations.js";
 import { rateLimitKey } from "../rate-limit/index.js";
 import { delay } from "../util.js";
@@ -256,11 +260,37 @@ export class CatalogApiImpl implements CatalogApi {
       // Fetch every page.
       let page = 1;
       for (;;) {
-        const result = await this.lookupResult(requestId, page, {
-          correlationId,
-          signal: options.signal,
-          includeRaw: options.includeRaw,
-        });
+        let result: CatalogLookupResultPage;
+        try {
+          result = await this.lookupResult(requestId, page, {
+            correlationId,
+            signal: options.signal,
+            includeRaw: options.includeRaw,
+          });
+        } catch (error) {
+          // Proven live (5/5): a report whose criteria include two inputs matching the SAME
+          // catalog product (e.g. a UPC plus that product's manufacturer+MPN) reaches
+          // FINISHED but its result endpoint returns HTTP 500 InternalError forever. The
+          // raw 500 looks like an outage; diagnose it so callers can fix their inputs.
+          if (error instanceof NeweggApiError && error.httpStatus === 500) {
+            throw new NeweggApiError(
+              `Newegg failed to produce the item lookup report result (HTTP 500, ` +
+                `requestId ${requestId}). If this persists across retries the report is ` +
+                `likely poisoned: submitting two criteria that match the same catalog ` +
+                `product (for example a UPC and that product's manufacturer+MPN) breaks ` +
+                `result generation permanently. De-duplicate inputs by product and ` +
+                `resubmit; this report cannot be recovered.`,
+              {
+                httpStatus: 500,
+                neweggErrorCode: error.neweggErrorCode,
+                correlationId,
+                retryable: false,
+                details: { requestId, page, cause: error.message },
+              },
+            );
+          }
+          throw error;
+        }
         allMatches = allMatches.concat(result.matches);
         lastRaw = result.raw;
         if (page >= result.totalPageCount) break;

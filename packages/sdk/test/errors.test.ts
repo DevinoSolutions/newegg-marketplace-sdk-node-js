@@ -96,6 +96,26 @@ describe("parseUpstreamError", () => {
   it("maps a 400 body to a non-retryable API error", () => {
     expect(map(400, "").retryable).toBe(false);
   });
+
+  it("maps Newegg's transient 500 InternalError to a retryable API error (observed live)", () => {
+    // Observed live (CA reportmgmt, 2026-07-18): HTTP 500 with code "InternalError" and a
+    // body that literally asks the caller to retry.
+    const body = JSON.stringify([
+      {
+        Code: "InternalError",
+        Message:
+          "Our servers are currently unavailable and cannot process your request at this " +
+          "time. Please try again. We apologize for any inconvenience.",
+      },
+    ]);
+    const error = map(500, body);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect(error.retryable).toBe(true);
+  });
+
+  it("keeps a bare 500 without a transience signal non-retryable", () => {
+    expect(map(500, "").retryable).toBe(false);
+  });
 });
 
 describe("error toJSON contract", () => {

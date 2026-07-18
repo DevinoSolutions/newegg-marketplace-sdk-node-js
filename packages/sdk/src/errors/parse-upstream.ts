@@ -171,7 +171,18 @@ export function parseUpstreamError(
     );
   }
 
-  const retryable = status === 408 || status === 502 || status === 503 || status === 504;
+  const retryable =
+    status === 408 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    // Newegg's transient 500: code "InternalError" with a body that asks for a retry
+    // ("currently unavailable … Please try again", observed live on reportmgmt). A bare
+    // 500 without that signal stays non-retryable.
+    (status === 500 &&
+      (code === "InternalError" ||
+        lowerMessage.includes("please try again") ||
+        lowerMessage.includes("currently unavailable")));
   return new NeweggApiError(
     `Newegg API request failed (HTTP ${status}${code ? `, ${code}` : ""}).`,
     { ...base, retryable },

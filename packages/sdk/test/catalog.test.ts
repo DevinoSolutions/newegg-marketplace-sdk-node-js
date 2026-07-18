@@ -7,7 +7,11 @@ import {
   parseStatusResponse,
   parseSubmitResponse,
 } from "../src/catalog/parse.js";
-import { CatalogLookupTimeoutError, NeweggValidationError } from "../src/errors/index.js";
+import {
+  CatalogLookupTimeoutError,
+  NeweggApiError,
+  NeweggValidationError,
+} from "../src/errors/index.js";
 import { makeClient, paths } from "./helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -373,6 +377,49 @@ describe("catalog.resolve", () => {
     );
     expect(err).toBeInstanceOf(CatalogLookupTimeoutError);
     expect((err as CatalogLookupTimeoutError).retryable).toBe(false);
+  });
+
+  it("explains the poisoned-report 500 when the result endpoint fails after FINISHED", async () => {
+    // Proven live (CA, 2026-07-18, 5/5 reproductions): a report whose criteria include two
+    // inputs matching the SAME catalog product (e.g. a UPC and that product's MPN) reaches
+    // FINISHED but its result endpoint returns HTTP 500 InternalError forever. The raw 500
+    // masquerades as a Newegg outage; resolve() must diagnose it.
+    const { client } = makeClient("ca", [
+      {
+        method: "POST",
+        pathPattern: paths.reportSubmit,
+        reply: () => ({ status: 200, body: SUBMIT_OK }),
+      },
+      {
+        method: "PUT",
+        pathPattern: paths.reportStatus,
+        reply: () => ({ status: 200, body: STATUS_FINISHED }),
+      },
+      {
+        method: "PUT",
+        pathPattern: paths.reportResult,
+        reply: () => ({
+          status: 500,
+          body: [
+            {
+              Code: "InternalError",
+              Message:
+                "Our servers are currently unavailable and cannot process your request at " +
+                "this time. Please try again.",
+            },
+          ],
+        }),
+      },
+    ]);
+    const err = await client.catalog
+      .resolve([{ upc: "649528906540" }], { pollIntervalMs: 0 })
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(NeweggApiError);
+    expect(String((err as Error).message)).toMatch(/same catalog product/i);
+    expect(String((err as Error).message)).toContain("REQ123");
   });
 
   it("pages through multi-page results", async () => {

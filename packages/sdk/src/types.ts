@@ -257,9 +257,10 @@ export interface InventoryApi {
   getItem(input: GetItemInput, options?: RequestOptions): Promise<InventoryItemSnapshot>;
   /**
    * Like {@link getItem} but resolves to `undefined` instead of throwing when Newegg reports
-   * the item is unknown (error code `CT026`). Every other failure — authentication,
-   * authorization, rate limit, malformed body, any other API error — still throws. Mirrors how
-   * {@link getMany} reports unknown identifiers via `missingIdentifiers`.
+   * the item is unknown (`CT026` on SKU/item-number reads; `CT010` on UPC reads — proven
+   * live). Every other failure — authentication, authorization, rate limit, malformed body,
+   * any other API error — still throws. Mirrors how {@link getMany} reports unknown
+   * identifiers via `missingIdentifiers`.
    */
   tryGetItem(
     input: GetItemInput,

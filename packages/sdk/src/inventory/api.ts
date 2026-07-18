@@ -42,9 +42,11 @@ import {
 } from "./validate.js";
 
 // Newegg error codes that mean "no such item" on an inventory read (observed live: CT026 for
-// an unknown SellerPartNumber). `tryGetItem` converts ONLY these to `undefined`; every other
-// error still throws. Extend this set only when another not-found code is confirmed.
-const UNKNOWN_ITEM_ERROR_CODES = new Set(["CT026"]);
+// an unknown SellerPartNumber or item number; CT010 for a UPC read when the seller has no
+// offer on that UPC — 9/9 unlisted-product UPC probes on CA, 2026-07-18). `tryGetItem`
+// converts ONLY these to `undefined`; every other error still throws. Extend this set only
+// when another not-found code is confirmed.
+const UNKNOWN_ITEM_ERROR_CODES = new Set(["CT026", "CT010"]);
 
 function equalsIgnoreCase(a: string | undefined, b: string): boolean {
   return a !== undefined && a.toLowerCase() === b.toLowerCase();
