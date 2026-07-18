@@ -411,12 +411,10 @@ describe("catalog.resolve", () => {
         }),
       },
     ]);
-    const err = await client.catalog
-      .resolve([{ upc: "649528906540" }], { pollIntervalMs: 0 })
-      .then(
-        () => undefined,
-        (e: unknown) => e,
-      );
+    const err = await client.catalog.resolve([{ upc: "649528906540" }], { pollIntervalMs: 0 }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
     expect(err).toBeInstanceOf(NeweggApiError);
     expect(String((err as Error).message)).toMatch(/same catalog product/i);
     expect(String((err as Error).message)).toContain("REQ123");
