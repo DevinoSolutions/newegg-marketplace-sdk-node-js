@@ -141,8 +141,11 @@ resolves the SELLER's offer numbers (`9SI…` form) only. The catalog's product-
 (`20-xxx-xxx`, as returned by the Item Lookup Report §12) return CT026 "item does not exist in
 your account" whether or not the seller has an offer on that product — they are NOT valid
 inventory identifiers. To check "do I already list this product?", read by `Type: "2"` (UPC)
-or `Type: "1"` (seller part number). Also: while an item is deactivated, reads report
-`AvailableQuantity` 0, which may mask the stored quantity.
+or `Type: "1"` (seller part number). Not-found error codes differ by identifier type
+(verified live, 2026-07-18): SKU/item-number reads fail CT026, while UPC reads for a product
+the seller has no offer on fail **CT010** (9/9 observed; CT010 also covers malformed UPC
+values — the two are indistinguishable on the wire). Also: while an item is deactivated,
+reads report `AvailableQuantity` 0, which may mask the stored quantity.
 
 ### 5.3 US batch — Get Batch Inventory (International)
 
@@ -1065,6 +1068,13 @@ contract, not verb). Owner approved live read-only use 2026-07-16.
   FIRST. The Existing Item Creation feed (§13) rejects the `R` number with "Newegg item number
   does not exist". Consumers must prefer condition-bearing rows; the SDK's `catalog.resolve`
   ranks them first.
+- **Verified live (CA, 2026-07-18, 5/5 A/B reproductions): duplicate-product criteria poison the
+  report.** A submission containing two criteria that match the SAME catalog product (observed:
+  a UPC plus that product's manufacturer+MPN) reaches `FINISHED`, but the result endpoint then
+  returns HTTP 500 `InternalError` ("currently unavailable … Please try again") on every fetch,
+  permanently — indistinguishable on the wire from an outage. The identical input set minus the
+  duplicate succeeds. De-duplicate inputs by product, not just by criteria value; the SDK's
+  `resolve()` raises a diagnostic error for this case.
 
 ## 13. Data Feeds — Existing Item Creation (listing writes)
 
