@@ -136,6 +136,14 @@ and string `"50"`):
 The XML sample also shows `WarehouseCode` `"SBS"` (shipped-by-seller bucket) inside
 `WarehouseAllocation`. The `version=304` query parameter is part of the documented URL.
 
+**Verified live (CA, 2026-07-17) — identifier resolution:** `Type: "0"` (Newegg item number)
+resolves the SELLER's offer numbers (`9SI…` form) only. The catalog's product-form numbers
+(`20-xxx-xxx`, as returned by the Item Lookup Report §12) return CT026 "item does not exist in
+your account" whether or not the seller has an offer on that product — they are NOT valid
+inventory identifiers. To check "do I already list this product?", read by `Type: "2"` (UPC)
+or `Type: "1"` (seller part number). Also: while an item is deactivated, reads report
+`AvailableQuantity` 0, which may mask the stored quantity.
+
 ### 5.3 US batch — Get Batch Inventory (International)
 
 ```
@@ -233,6 +241,10 @@ Response: `{ "UpdateInventoryAndPriceResult": { "SellerID", "ItemNumber",
 Platform notes (verbatim from docs):
 
 - "Once an item has been deactivated, all price and inventory update requests shall be disregarded."
+  **Verified live (CA, 2026-07-17): this is a FALSE SUCCESS** — the update on a deactivated item
+  is HTTP-accepted and the per-item `Result` reads succeeded, but the stored quantity does not
+  change. Do not trust a "succeeded" outcome unless the item reads `Active`. (The ITEM_DATA v2
+  feed, §13, DOES persist fields on deactivated items.)
 - "You're not able to update the inventory for a SBN (Shipped by Newegg) item."
 - Default-warehouse semantics: B2B/CAN direct updates apply to the platform's default
   warehouse; there is no `WarehouseLocation` in the request.
@@ -1047,6 +1059,12 @@ contract, not verb). Owner approved live read-only use 2026-07-16.
 - The official JSON example is syntactically invalid (missing comma, trailing comma) — trust the
   field inventory, not the sample's punctuation. Numbers may arrive as strings elsewhere; parse
   tolerantly as always.
+- **Verified live (CA, 2026-07-17):** hit lists may interleave condition-less PSEUDO-ROWS — an
+  `R`-suffixed variant of the real item number (e.g. `20-250-259R` alongside `20-250-259`)
+  carrying NO `Condition` field, apparently a refurb catalog echo — and the pseudo-row can come
+  FIRST. The Existing Item Creation feed (§13) rejects the `R` number with "Newegg item number
+  does not exist". Consumers must prefer condition-bearing rows; the SDK's `catalog.resolve`
+  ranks them first.
 
 ## 13. Data Feeds — Existing Item Creation (listing writes)
 
@@ -1171,3 +1189,16 @@ Generic `ProcessingReport` (§7.6 shape): `NeweggEnvelope > Message > Processing
 `AdditionalInfo { SellerPartNumber, ManufacturerPartsNumber, UPCOrISBN, SubCategoryID }` +
 `ErrorList > ErrorDescription[]` (CDATA text). Partial success is possible (e.g. `"Item Created with
 Image error(s)."`).
+
+Verified live (CA, 2026-07-17):
+
+- Clean successes produce NO `Result` records — only warned/failed records appear; verify success
+  via `ProcessingSummary.SuccessCount`, not per-record echoes. Records are isolated: one item's
+  failure does not poison the rest of the feed.
+- Newegg enforces **UPC + condition uniqueness per seller account**. Creating a second offer on an
+  already-listed product fails with an error naming the existing offer's
+  `Seller Part Number` — this error is the authoritative "already listed" signal (pre-checking is
+  optional; an inventory read by UPC, §5.2 note, works as a best-effort pre-check).
+- Newly created items are INVISIBLE to the inventory API (CT026) while under Newegg's content
+  review (~2 h observed; docs say ≤6 h normal / ≤24 h max) and "cannot be activated" until review
+  completes. Trust the ProcessingReport, then re-check after the review window.
