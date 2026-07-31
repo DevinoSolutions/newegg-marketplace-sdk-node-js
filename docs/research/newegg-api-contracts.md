@@ -1212,3 +1212,140 @@ Verified live (CA, 2026-07-17):
 - Newly created items are INVISIBLE to the inventory API (CT026) while under Newegg's content
   review (~2 h observed; docs say ≤6 h normal / ≤24 h max) and "cannot be activated" until review
   completes. Trust the ProcessingReport, then re-check after the review window.
+
+## 14. Public storefront APIs (UNOFFICIAL)
+
+> ⚠️ **WARNING — UNOFFICIAL.** Everything in this section is a **public retail storefront**
+> endpoint, not part of the Newegg Marketplace **seller** API. There is **no official
+> documentation URL**: the shapes below were **observed live on newegg.ca, 2026-07-31** with a
+> plain Node `fetch` (no cookies, no credentials, no session). No SLA, no versioning, no
+> deprecation notice — Newegg can change or remove these at any time, and the CDN may block
+> clients that do not look like a browser. Treat every field as best-effort.
+>
+> **Read/write classification: READ.** These endpoints are unauthenticated and touch nothing on
+> the seller account. They never carry seller credentials (§1 auth headers must NOT be sent —
+> they are meaningless here and would leak secrets to a non-API host).
+
+**Why the SDK has this at all:** the seller API exposes no competitive-pricing surface — there is
+no "who else sells this / what is the buy-box price" endpoint anywhere in `contentmgmt`,
+`ordermgmt`, `datafeedmgmt`, or `reportmgmt`. The storefront's own buy-box widget is the only
+observed source. Available for the `ca` and `us` storefronts only; **`b2b` has no public
+storefront** (the SDK throws `UnsupportedMarketplaceOperationError`).
+
+| Marketplace | Storefront origin        |
+| ----------- | ------------------------ |
+| `ca`        | `https://www.newegg.ca`  |
+| `us`        | `https://www.newegg.com` |
+| `b2b`       | — (unsupported)          |
+
+### 14.1 More Buying Options (all seller offers for a product)
+
+```
+GET https://www.newegg.ca/product/api/MoreBuyingOptions
+      ?ParentItem=20-156-294
+      &TabType=0&SortBy=0&FilterBy=&FirstCall=true&PageNum=1&PageSize=10
+```
+
+Required headers (omitting them can get the request blocked by the CDN):
+
+| Header            | Value                                                |
+| ----------------- | ---------------------------------------------------- |
+| `User-Agent`      | a browser-like desktop UA string                     |
+| `Accept`          | `application/json, text/plain, */*`                  |
+| `Accept-Language` | `en-US,en;q=0.9`                                     |
+| `Referer`         | the storefront origin, e.g. `https://www.newegg.ca/` |
+
+`ParentItem` accepts **both** observed parent forms (both verified live):
+
+- the dashed catalog form — `20-156-294`
+- a marketplace-style parent CODE — `3C6-00T1-002H0`, `0D9-002W-000F0`
+
+**ASSUMPTION**: `TabType` / `SortBy` / `FilterBy` / `FirstCall` / `PageNum` / `PageSize` were
+copied from the retail page's own first-load request and echoed back unchanged; only their
+observed values are known to work. Paging beyond page 1 was not exercised.
+
+**Response.** HTTP `200` with `content-type: text/plain` — but the body **IS JSON**. Parse by
+shape, never by content type.
+
+```json
+{
+  "ItemInfo": [
+    {
+      "Item": "20-156-294",
+      "UnitCost": 129.99,
+      "ShippingCharge": 0.01,
+      "Instock": true,
+      "Active": "1",
+      "IsActivated": true,
+      "Seller": null
+    },
+    {
+      "Item": "9SIXXXXXXXXXXX",
+      "UnitCost": 134.5,
+      "ShippingCharge": 0,
+      "Instock": true,
+      "Active": "1",
+      "IsActivated": true,
+      "Seller": { "SellerId": "XXXX", "SellerName": "Example Seller Inc", "SellerRating": 4.8 }
+    }
+  ],
+  "TabInfo": [],
+  "Total": 2,
+  "CurrentPageNum": 1,
+  "PageCount": 1
+}
+```
+
+Field notes (only the fields the SDK relies on; each row carries many more):
+
+| Field            | Notes                                                                                                                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Item`           | The offer's item number. **Newegg first-party offers echo the PARENT catalog number** (e.g. `20-156-294`); marketplace offers carry the seller offer number (`9SI…`).                                                                |
+| `UnitCost`       | Offer price, storefront currency (CAD on `.ca`). Number in observation; coerce defensively.                                                                                                                                          |
+| `ShippingCharge` | **CAUTION: `0.01` is observed on offers the page itself labels "Free Shipping".** It is a raw/sentinel value — a non-zero `ShippingCharge` does NOT reliably mean paid shipping. Expose as-is; do not derive a landed price from it. |
+| `Instock`        | Boolean.                                                                                                                                                                                                                             |
+| `Active`         | String `"1"` / `"0"`; `IsActivated` is the boolean twin. Either may be missing — read both.                                                                                                                                          |
+| `Seller`         | Object **or null**. `null` (or `{ "SellerId": "", "SellerName": null }`) ⇒ the offer is **Newegg first-party**. Marketplace offers carry `SellerId` + `SellerName` (+ `SellerRating`, …).                                            |
+| `Total`          | Offer count for the product. `CurrentPageNum` / `PageCount` describe paging.                                                                                                                                                         |
+
+**ASSUMPTION — offer ordering is the buy box.** `ItemInfo` ordering appears to be the
+storefront's featured ranking: in every observation the **first** entry matched the offer shown
+in the page's buy box. This is not documented and not guaranteed; the SDK surfaces
+`buyBox = offers[0]` under exactly this assumption.
+
+**ASSUMPTION — deactivated/out-of-stock rows.** Rows with `Active: "0"` / `Instock: false` were
+observed in the list; whether the storefront always includes them (and whether they can ever rank
+first) is unverified.
+
+### 14.2 Parent-number resolution from a seller offer number
+
+MoreBuyingOptions is keyed by the **parent** product, not by a seller offer number. Given a `9SI…`
+offer number, the public product page redirects to its parent (verified live 2026-07-31):
+
+```
+GET https://www.newegg.ca/p/<offerNumber>      (redirect: "manual" — do NOT follow)
+→ 301, Location: …
+```
+
+Two `Location` shapes were observed; both yield a usable `ParentItem`:
+
+| `Location`                                       | Parent                                                                                       |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `https://www.newegg.ca/<slug>/p/N82E168XXXXXXXX` | dashed numeric form of the 8 digits: `N82E16820156294` → `20-156-294` (`XX-XXX-XXX`)         |
+| `https://www.newegg.ca/p/<CODE>`                 | the CODE itself (`3C6-00T1-002H0`, `0D9-002W-000F0`) — pass straight through as `ParentItem` |
+
+The redirect target **is** the answer, so the request must use manual redirect handling. No
+`Location`, or a `Location` with no `/p/<value>` segment, is a hard failure (the SDK throws
+`NeweggApiError`) — never silently fall back to the offer number.
+
+**ASSUMPTION**: the `N82E168` prefix is treated as fixed-width (`N82E16` + one category digit +
+the 8 catalog digits); only 15-character product-page numbers were observed.
+
+### 14.3 SDK mapping
+
+`client.storefront.getOffers({ itemNumber })` → one §14.1 request;
+`client.storefront.getOffers({ offerNumber })` → one §14.2 redirect probe, then one §14.1 request.
+Offers are normalized to `{ offerItemNumber, sellerName, sellerId, isNewegg, price,
+shippingCharge, inStock, active }`; rows without an item number or a parseable price are dropped.
+No local rate-limit budget is applied (these are not seller-API calls and carry no
+`X-RateLimit-*` headers) — callers should throttle their own polling.

@@ -8,6 +8,7 @@ import { InventoryApiImpl } from "../inventory/api.js";
 import { ListingsApiImpl } from "../listings/api.js";
 import { OrdersApiImpl } from "../orders/api.js";
 import { ServiceApiImpl } from "../service/api.js";
+import { createStorefrontApi } from "../storefront/api.js";
 import { resolveConfig } from "./config.js";
 import { NeweggHttpClient } from "./http.js";
 import { Operation } from "./operations.js";
@@ -35,6 +36,15 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
   const orders = new OrdersApiImpl(http);
   const catalog = new CatalogApiImpl(http);
   const listings = new ListingsApiImpl(http);
+  // UNOFFICIAL public storefront (contracts §14): a different origin, unauthenticated, so it
+  // deliberately bypasses NeweggHttpClient (no seller credentials, no rate-limit budget) and
+  // only borrows the configured fetch + timeout. Always attached — `b2b` throws on call, not
+  // at construction, so creating a b2b client keeps working exactly as before.
+  const storefront = createStorefrontApi({
+    marketplace: resolved.marketplace,
+    fetchFn: resolved.fetch,
+    timeoutMs: resolved.timeoutMs,
+  });
 
   return {
     marketplace: resolved.marketplace,
@@ -44,6 +54,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
     orders,
     catalog,
     listings,
+    storefront,
     async verifyCredentials(options) {
       // Read-only preflight: a single service-status GET. Bad/unauthorized credentials throw
       // here (NeweggAuthenticationError on 401, NeweggAuthorizationError on 403) so callers

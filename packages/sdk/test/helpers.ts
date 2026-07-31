@@ -65,6 +65,9 @@ export const paths = {
   reportSubmit: /reportmgmt\/report\/submitrequest\?/,
   reportStatus: /reportmgmt\/report\/status\?/,
   reportResult: /reportmgmt\/report\/result\?/,
+  // Public storefront (UNOFFICIAL, contracts §14) — different origin, no credentials.
+  moreBuyingOptions: /product\/api\/MoreBuyingOptions/,
+  storefrontProductPage: /^\/p\//,
 } as const;
 
 /** §5.1 US single-item read sample (numbers as strings). */

@@ -52,6 +52,10 @@ export interface NeweggClient {
   readonly orders: OrdersApi; // order reads (list / get / status) + writes (ship / cancel / confirm / remove)
   readonly catalog: CatalogApi; // read-only catalog resolution (Item Lookup Report, contracts §12)
   readonly listings: ListingsApi; // WRITE: existing-item listing creation (ITEM_DATA&v2 feed, contracts §13)
+  // UNOFFICIAL public storefront buy-box/offers reader (contracts §14). Unauthenticated,
+  // read-only, no SLA — NOT part of the seller API. "us"/"ca" only; "b2b" throws
+  // UnsupportedMarketplaceOperationError on call (never at construction).
+  readonly storefront: StorefrontApi;
   // Read-only, fail-fast credential preflight (single service-status GET). Throws
   // NeweggAuthenticationError (401) / NeweggAuthorizationError (403) immediately on
   // bad or unauthorized credentials; resolves on success. Never mutates.
@@ -716,6 +720,56 @@ export interface ListingsApi {
 }
 
 // ----------------------------------------------------------------------------
+// storefront (public buy-box / offers — contracts §14) — UNOFFICIAL, read-only
+//
+// The PUBLIC retail storefront, not the seller API: unauthenticated, undocumented, no SLA,
+// may change without notice. Sends no credentials and mutates nothing. Exists because the
+// seller API has no competitive-pricing surface at all.
+// ----------------------------------------------------------------------------
+export interface StorefrontRequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number; // defaults to the client's timeoutMs
+}
+
+export interface StorefrontOffer {
+  // Newegg first-party offers echo the PARENT catalog number; marketplace offers the 9SI… offer number.
+  readonly offerItemNumber: string;
+  readonly sellerName: string | undefined; // undefined for Newegg first-party
+  readonly sellerId: string | undefined; // undefined for Newegg first-party
+  readonly isNewegg: boolean; // Seller null/empty ⇒ true
+  readonly price: number; // UnitCost
+  // Raw ShippingCharge. CAUTION: 0.01 is observed on "Free Shipping" offers — a non-zero
+  // value does NOT reliably mean paid shipping (contracts §14.1).
+  readonly shippingCharge: number;
+  readonly inStock: boolean;
+  readonly active: boolean;
+}
+
+export interface StorefrontOffersResult {
+  readonly parentItemNumber: string; // the parent actually queried (post-normalization)
+  readonly offers: readonly StorefrontOffer[]; // storefront order, preserved
+  // ASSUMPTION: first offer = buy box (storefront ordering looks like its featured ranking
+  // and matched the page's buy box in every observation). undefined when there are no offers.
+  readonly buyBox: StorefrontOffer | undefined;
+  readonly total: number; // envelope Total, falling back to offers.length
+}
+
+// itemNumber: dashed catalog form ("20-156-294"), product-page form ("N82E16820156294",
+// normalized to dashed), or a marketplace parent CODE ("3C6-00T1-002H0").
+// offerNumber: a 9SI… seller offer number — costs one extra request (the SDK resolves it to
+// its parent via the product page's 301 Location first, contracts §14.2).
+export type GetOffersArgs = { itemNumber: string } | { offerNumber: string };
+
+export interface StorefrontApi {
+  // Throws NeweggApiError on non-2xx, an unparsable body, or an unresolvable offer number;
+  // UnsupportedMarketplaceOperationError on "b2b"; NeweggValidationError on an empty identifier.
+  getOffers(
+    args: GetOffersArgs,
+    options?: StorefrontRequestOptions,
+  ): Promise<StorefrontOffersResult>;
+}
+
+// ----------------------------------------------------------------------------
 // rate limiting
 // ----------------------------------------------------------------------------
 export interface RateLimitInfo {
@@ -897,6 +951,16 @@ export interface RecordedCall {
     `ship` treats the envelope `IsSuccess` as unreliable — the real outcome is `failCount` plus
     per-package `processStatus`. Bad input (non-integer order number, empty packages/items,
     duplicate seller part numbers) throws `NeweggValidationError` before any HTTP call.
+12. **Storefront (UNOFFICIAL, read-only)**: `storefront.getOffers` reads the PUBLIC retail
+    storefront (contracts §14), not the seller API. It bypasses the authenticated HTTP core
+    entirely — no `sellerid` query, no `Authorization`/`SecretKey` headers, no rate-limit budget,
+    no retry policy — and only borrows the client's `fetch` and `timeoutMs`. Browser-like
+    headers (fixed UA + `Accept` + `Accept-Language` + `Referer`) are always sent or the CDN may
+    block the call. Bodies arrive as `content-type: text/plain` containing JSON and are parsed by
+    shape with a tolerant Zod v4 `looseObject` (unknown keys kept, scalars coerced via
+    `schemas/wire.ts`). `buyBox` is `offers[0]` under a documented **ASSUMPTION**, and
+    `shippingCharge` is raw (`0.01` ≠ paid shipping). Construction never throws: `b2b` fails at
+    call time with `UnsupportedMarketplaceOperationError`.
 
 ```
 
