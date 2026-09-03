@@ -248,6 +248,18 @@ Platform notes (verbatim from docs):
   is HTTP-accepted and the per-item `Result` reads succeeded, but the stored quantity does not
   change. Do not trust a "succeeded" outcome unless the item reads `Active`. (The ITEM_DATA v2
   feed, §13, DOES persist fields on deactivated items.)
+  **Verified live (CA, 2026-09-01) — partial apply in a single request:** sending
+  `Active: "1"` together with `Inventory` and `SellingPrice` on a deactivated item applies
+  `Active` and `SellingPrice` but silently drops `Inventory` (the item was still deactivated
+  when the inventory part was evaluated). Activate first, confirm the item reads `Active`,
+  then send `Inventory` in a second request.
+- **`AvailableQuantity` in this endpoint's response is not a reliable read** (verified live,
+  CA, 2026-09-01): a field-less body (`{ "Type", "Value" }` only) is a harmless no-op and
+  echoes the item state, but its `AvailableQuantity` read `0` thirty seconds after a
+  successful `Inventory` update whose own response echoed the new quantity, while the
+  documented Get Inventory read (§5.2, `POST …/item/inventory?version=304`) returned the
+  updated quantity at the same moment and again two minutes later. Verify quantity with
+  §5.2, never with this endpoint's echo.
 - "You're not able to update the inventory for a SBN (Shipped by Newegg) item."
 - Default-warehouse semantics: B2B/CAN direct updates apply to the platform's default
   warehouse; there is no `WarehouseLocation` in the request.
@@ -1212,6 +1224,20 @@ Verified live (CA, 2026-07-17):
 - Newly created items are INVISIBLE to the inventory API (CT026) while under Newegg's content
   review (~2 h observed; docs say ≤6 h normal / ≤24 h max) and "cannot be activated" until review
   completes. Trust the ProcessingReport, then re-check after the review window.
+
+Verified live (CA, 2026-09-02) — Refurbished offers:
+
+- A `Refurbished` offer must target a catalog item whose own condition is Refurbished. Sending
+  `ItemCondition: Refurbished` against a New catalog item fails per record with
+  `The item <n> entered already exists in our system with different Item Condition New.` (3/3).
+  Refurbished catalog items are separate records with CODE-form numbers (e.g. `0D9-0009-00CY3`,
+  `27N-0022-000R6`, `13B-005K-00054`); the Item Lookup Report (§12) returns them when the input
+  carries `Condition: 2`, and returns nothing when no refurbished record exists. Existing-item
+  creation cannot create one.
+- CODE-form `NeweggItemNumber` values are accepted by the creation feed (1/1 succeeded).
+- `PacksOrSets` must match the catalog item's own value, or the record fails with
+  `already exists in our system with different Pack or Sets <n>` (a 2-stick memory kit's
+  refurbished record carries `PacksOrSets` 2 while its New record carries 1).
 
 ## 14. Public storefront APIs (UNOFFICIAL)
 
