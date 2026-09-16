@@ -27,6 +27,7 @@ jobs:
   lint:
     name: Lint (ESLint)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,6 +40,7 @@ jobs:
   format:
     name: Format (Prettier --check)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -51,6 +53,7 @@ jobs:
   secret-scan:
     name: Secret scan (working tree)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -63,6 +66,7 @@ jobs:
   live-readonly-guard:
     name: Live-suite read-only guard
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -75,6 +79,7 @@ jobs:
   deadcode:
     name: Dead-code (knip)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -87,6 +92,7 @@ jobs:
   docs:
     name: API docs (typedoc)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: build
     # typedoc resolves each package's entry points from its package.json `exports`, which point
     # at the built `dist/` (and mcp-server's sources import the SDK by package name, resolving to
@@ -109,6 +115,7 @@ jobs:
   build:
     name: Build (tsc)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -130,6 +137,7 @@ jobs:
   typecheck:
     name: Typecheck (scripts + workspaces)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: build
     steps:
       - uses: actions/checkout@v4
@@ -147,6 +155,7 @@ jobs:
   test:
     name: Tests (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: build
     strategy:
       fail-fast: false # run 24.x even if 22.x fails, so you see both
@@ -178,6 +187,7 @@ jobs:
   exports:
     name: Verify exports (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: build
     strategy:
       fail-fast: false
@@ -199,6 +209,7 @@ jobs:
   pack:
     name: npm pack (dry run)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: build
     steps:
       - uses: actions/checkout@v4
@@ -217,6 +228,7 @@ jobs:
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: always()
     needs:
       [
