@@ -55,6 +55,8 @@ export interface NeweggClientConfig {
 export interface NeweggClient {
   readonly marketplace: NeweggMarketplace;
   readonly inventory: InventoryApi;
+  /** Read-only item pricing (Get Item Price, contracts §15). Never mutates. */
+  readonly pricing: PricingApi;
   readonly feeds: FeedsApi;
   readonly service: ServiceApi;
   /** Read-only order lookups (list / get / status). Never mutates. */
@@ -1068,6 +1070,114 @@ export interface StoredOperation {
 export interface OperationStore {
   get(key: string): Promise<StoredOperation | undefined>;
   put(key: string, op: StoredOperation): Promise<void>;
+}
+
+// ----------------------------------------------------------------------------
+// pricing reads (Get Item Price; contracts §15) — READ-only
+// ----------------------------------------------------------------------------
+/** Active promotion lock/type reported by `OnPromotion` (wire codes 1–5). */
+export type PricePromotion =
+  "priceLock" | "promotionCode" | "autoAddToCart" | "combo" | "volumeDiscount";
+
+export interface GetPriceInput {
+  identifier: ItemIdentifier;
+  /**
+   * US only: ISO 3166-1 alpha-3 destination countries to return prices for (e.g. `["USA"]`).
+   * Omit for every country the item sells to. Ignored on B2B/CAN (single-market).
+   */
+  countries?: string[];
+}
+
+export interface GetPriceManyInput {
+  /** 1–100 distinct identifiers are priced with one read request each (no wire batch; §15.3). */
+  identifiers: ItemIdentifier[];
+  /** US only; see {@link GetPriceInput.countries}. */
+  countries?: string[];
+}
+
+export interface GetPriceManyOptions extends RequestOptions {
+  /** Bounded parallelism of the per-item reads. Default 4. */
+  concurrency?: number;
+}
+
+/** One price record: a US destination country, or the single B2B/CAN market. */
+export interface PriceEntry {
+  /** US only (ISO alpha-3). Absent on B2B/CAN. */
+  countryCode?: string;
+  /**
+   * ISO 4217 code. US: as reported by Newegg per country. B2B/CAN responses carry no
+   * currency, so it is inferred from the marketplace (USD for `b2b`, CAD for `ca`; the
+   * documented default of the inventory-and-price feed) and `currencyInferred` is true.
+   */
+  currency?: string;
+  currencyInferred: boolean;
+  /** Whether the item is active (listed) in this country/market. */
+  active?: boolean;
+  /** Manufacturer's suggested retail price; documented but absent from the sample payloads. */
+  msrp?: number;
+  /** Minimum advertised price; 0 / absent means none. Ignored when `checkoutMap` is true. */
+  map?: number;
+  /** True: the price is shown only at checkout and `map` is ignored. */
+  checkoutMap?: boolean;
+  sellingPrice?: number;
+  /** `EnableFreeShipping`: true = free shipping, false = the default shipping rule. */
+  freeShipping?: boolean;
+  promotions: PricePromotion[];
+  /** Max units per customer per 48 hours (max 500). */
+  limitQuantity?: number;
+}
+
+export interface ItemPriceSnapshot {
+  marketplace: NeweggMarketplace;
+  itemNumber?: string;
+  sellerPartNumber?: string;
+  /** B2B/CAN only (`ShipByNewegg`). */
+  shippedByNewegg?: boolean;
+  /** US: one per destination country. B2B/CAN: exactly one, without `countryCode`. */
+  prices: PriceEntry[];
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  /** Only when `includeRaw`. */
+  raw?: unknown;
+}
+
+/** A per-identifier read failure inside a {@link PriceBatchSnapshot} (never secret-bearing). */
+export interface PriceReadFailure {
+  identifier: ItemIdentifier;
+  errorCode?: string;
+  httpStatus?: number;
+  message: string;
+}
+
+export interface PriceBatchSnapshot {
+  marketplace: NeweggMarketplace;
+  /** Successful reads, in the order the (de-duplicated) identifiers were requested. */
+  items: ItemPriceSnapshot[];
+  bySellerPartNumber: ReadonlyMap<string, ItemPriceSnapshot>;
+  byItemNumber: ReadonlyMap<string, ItemPriceSnapshot>;
+  /** Identifiers Newegg reported as unknown to this seller (CT026 / CT010). */
+  missingIdentifiers: ItemIdentifier[];
+  /** Identifiers whose read failed for any other reason; the rest of the batch still returns. */
+  failures: PriceReadFailure[];
+  totalCount: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+/** Read-only pricing (Get Item Price). Never mutates; price writes are a separate surface. */
+export interface PricingApi {
+  /** One Get Item Price read. Throws {@link NeweggApiError} (e.g. CT026) for unknown items. */
+  get(input: GetPriceInput, options?: RequestOptions): Promise<ItemPriceSnapshot>;
+  /** Like {@link PricingApi.get} but returns `undefined` for an unknown item (CT026 / CT010). */
+  tryGet(input: GetPriceInput, options?: RequestOptions): Promise<ItemPriceSnapshot | undefined>;
+  /**
+   * Prices many identifiers. Newegg documents batch-price endpoints but their wire shape is
+   * unverified (contracts §15.3), so this fans out single reads with bounded concurrency.
+   * Unknown items land in `missingIdentifiers`, other per-item failures in `failures`;
+   * credential errors, rate-limit exhaustion and aborts still throw.
+   */
+  getMany(input: GetPriceManyInput, options?: GetPriceManyOptions): Promise<PriceBatchSnapshot>;
 }
 
 // ----------------------------------------------------------------------------

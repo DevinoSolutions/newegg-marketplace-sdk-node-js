@@ -8,6 +8,7 @@ export type {
   PlatformAdapter,
   RequestSpec,
   ParsedItem,
+  ParsedPrice,
   DirectUpdateGroup,
   FeedItemInput,
 } from "./types.js";

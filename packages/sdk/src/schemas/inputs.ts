@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { GET_PRICE_MANY_MAX_IDENTIFIERS } from "../pricing/constants.js";
 
 /**
  * Zod v4 strict schemas for public inputs. Unknown keys are rejected (`strictObject`);
@@ -68,6 +69,23 @@ export const getItemInputSchema = z.strictObject({
 export const getManyInputSchema = z.strictObject({
   identifiers: z.array(itemIdentifierSchema),
   warehouses: z.array(z.string()).optional(),
+});
+
+const priceCountrySchema = z
+  .string()
+  .regex(/^[A-Z]{3}$/, "countries must be uppercase ISO 3166-1 alpha-3 codes");
+
+export const getPriceInputSchema = z.strictObject({
+  identifier: itemIdentifierSchema,
+  countries: z.array(priceCountrySchema).min(1, "countries must not be empty").optional(),
+});
+
+export const getPriceManyInputSchema = z.strictObject({
+  identifiers: z
+    .array(itemIdentifierSchema)
+    .min(1, "at least one identifier is required")
+    .max(GET_PRICE_MANY_MAX_IDENTIFIERS, `at most ${GET_PRICE_MANY_MAX_IDENTIFIERS} identifiers`),
+  countries: z.array(priceCountrySchema).min(1, "countries must not be empty").optional(),
 });
 
 export const submitInventoryFeedInputSchema = z.strictObject({

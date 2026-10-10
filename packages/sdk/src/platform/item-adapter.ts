@@ -1,6 +1,8 @@
 import type { ItemIdentifier, NeweggMarketplace } from "../types.js";
 import type { DirectUpdateGroup, FeedItemInput, PlatformAdapter, RequestSpec } from "./types.js";
 import { buildItemFeedEnvelope } from "./feed-envelope.js";
+import { conditionToCode } from "../schemas/condition.js";
+import { parseFlatPrice } from "./price.js";
 import { extractBatch, identifierTypeCode, isDefinedItem, parseFlatItem } from "./normalize.js";
 import { B2B_CA_FEED_REQUEST_TYPE } from "../feeds/constants.js";
 
@@ -12,6 +14,7 @@ import { B2B_CA_FEED_REQUEST_TYPE } from "../feeds/constants.js";
 export function createItemAdapter(marketplace: NeweggMarketplace, prefix: string): PlatformAdapter {
   const singleInventoryPath = `${prefix}contentmgmt/item/inventory`;
   const inventoryListPath = `${prefix}contentmgmt/item/inventorylist`;
+  const priceReadPath = `${prefix}contentmgmt/item/price`;
   const inventoryAndPricePath = `${prefix}contentmgmt/item/inventoryandprice`;
 
   return {
@@ -58,6 +61,20 @@ export function createItemAdapter(marketplace: NeweggMarketplace, prefix: string
         },
       };
     },
+
+    getPriceRequest(identifier: ItemIdentifier): RequestSpec {
+      const body: Record<string, unknown> = {
+        Type: identifierTypeCode(identifier.type),
+        Value: identifier.value,
+      };
+      if (identifier.type === "upc" && identifier.condition) {
+        body.Condition = conditionToCode(identifier.condition);
+      }
+      // READ despite the POST verb (contracts §15.2). No country list on B2B/CAN.
+      return { method: "POST", path: priceReadPath, body };
+    },
+
+    parsePrice: parseFlatPrice,
 
     buildFeedEnvelope(items: FeedItemInput[]): unknown {
       return buildItemFeedEnvelope(items);

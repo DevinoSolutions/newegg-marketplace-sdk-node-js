@@ -7,6 +7,7 @@ import { FeedsApiImpl } from "../feeds/api.js";
 import { InventoryApiImpl } from "../inventory/api.js";
 import { ListingsApiImpl } from "../listings/api.js";
 import { OrdersApiImpl } from "../orders/api.js";
+import { PricingApiImpl } from "../pricing/api.js";
 import { ServiceApiImpl } from "../service/api.js";
 import { createStorefrontApi } from "../storefront/api.js";
 import { resolveConfig } from "./config.js";
@@ -32,6 +33,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
 
   const feeds = new FeedsApiImpl(http);
   const inventory = new InventoryApiImpl(http, feeds);
+  const pricing = new PricingApiImpl(http);
   const service = new ServiceApiImpl(http);
   const orders = new OrdersApiImpl(http);
   const catalog = new CatalogApiImpl(http);
@@ -49,6 +51,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
   return {
     marketplace: resolved.marketplace,
     inventory,
+    pricing,
     feeds,
     service,
     orders,

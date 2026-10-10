@@ -2,10 +2,12 @@ import type { ItemIdentifier } from "../types.js";
 import type { DirectUpdateGroup, FeedItemInput, PlatformAdapter, RequestSpec } from "./types.js";
 import { conditionToCode } from "../schemas/condition.js";
 import { buildUsFeedEnvelope } from "./feed-envelope.js";
+import { parseUsPrice } from "./price.js";
 import { extractBatch, identifierTypeCode, isDefinedItem, parseUsItem } from "./normalize.js";
 import { US_FEED_REQUEST_TYPE } from "../feeds/constants.js";
 
 const INTERNATIONAL_INVENTORY_PATH = "contentmgmt/item/international/inventory";
+const INTERNATIONAL_PRICE_PATH = "contentmgmt/item/international/price";
 const INTERNATIONAL_INVENTORY_LIST_PATH = "contentmgmt/item/international/inventorylist";
 
 /** US (`newegg.com`) adapter. International inventory endpoints; method selects read vs write. */
@@ -60,6 +62,23 @@ export const usAdapter: PlatformAdapter = {
     };
     return { method: "POST", path: INTERNATIONAL_INVENTORY_PATH, body };
   },
+
+  getPriceRequest(identifier: ItemIdentifier, countries: string[] | undefined): RequestSpec {
+    const body: Record<string, unknown> = {
+      Type: identifierTypeCode(identifier.type),
+      Value: identifier.value,
+    };
+    if (identifier.type === "upc" && identifier.condition) {
+      body.Condition = conditionToCode(identifier.condition);
+    }
+    if (countries && countries.length > 0) {
+      body.CountryList = { CountryCode: countries };
+    }
+    // READ: Get Item Price is PUT on this path; the SAME path is a price WRITE on POST (§15.1).
+    return { method: "PUT", path: INTERNATIONAL_PRICE_PATH, body };
+  },
+
+  parsePrice: parseUsPrice,
 
   buildFeedEnvelope(items: FeedItemInput[]): unknown {
     return buildUsFeedEnvelope(items);

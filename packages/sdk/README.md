@@ -79,8 +79,31 @@ const batch = await client.inventory.getMany({
 console.log(batch.items, batch.missingIdentifiers);
 ```
 
+## Reading prices
+
+```ts
+const price = await client.pricing.get({
+  identifier: { type: "sellerPartNumber", value: "EXAMPLE-SKU" },
+  countries: ["USA"], // US only; ignored on B2B/CA
+});
+for (const entry of price.prices) {
+  // US: one entry per destination country. B2B/CA: one entry; the currency is inferred
+  // from the marketplace (USD for b2b, CAD for ca) and flagged `currencyInferred`.
+  console.log(entry.countryCode, entry.currency, entry.sellingPrice, entry.map, entry.promotions);
+}
+
+const batch = await client.pricing.getMany({
+  identifiers: [
+    { type: "sellerPartNumber", value: "SKU-1" },
+    { type: "neweggItemNumber", value: "9SIA0060884598" },
+  ],
+}); // 1-100 single reads fanned out with bounded concurrency
+console.log(batch.items, batch.missingIdentifiers, batch.failures);
+```
+
 ## What you get
 
+- **`client.pricing`** — read-only `get`, `tryGet`, `getMany` (Get Item Price; never mutates).
 - **`client.inventory`** — `getItem`, `getMany`, `previewUpdate`, `updateItem`, `updateMany`.
   `updateMany` takes `strategy: "direct" | "feed" | "auto"` (default `auto`; feeds above
   `strategy.autoFeedThreshold` post-dedup items, default 8).
