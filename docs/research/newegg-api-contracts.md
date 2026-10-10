@@ -2068,6 +2068,19 @@ parsed rows (default 50,000) and report the full `totalRows`.
 `version=313` accepted on every platform; no date-range cap on either settlement report; the TXT delimiter
 (tab) and UTF-8 encoding of the daily report files; the B2B/CAN Daily Inventory result `OperationType`
 (`DailyInventoryReportRequest`, taken from the page); that the daily reports' file arrives zipped only above
-40,000 items (the SDK reads both a bare file and a zip); what the result endpoint returns for a
-not-yet-FINISHED report (the SDK treats a missing `ReportFileURL` as "not available"); whether
-`NeweggAPIResponse` wraps the settlement results (the parser accepts both).
+40,000 items (the SDK reads both a bare file and a zip); whether `NeweggAPIResponse` wraps the
+settlement results (the parser accepts both); the FTP download itself (see below).
+
+**Live verification (2026-10-10, US seller account, read-only; no account values recorded).**
+
+- Settlement Summary: `YYYY-MM-DD` dates, `version=313` and a 60-day range were all accepted on US. The
+  report took about 170 s from SUBMITTED to FINISHED, so the SDK's 120 s default wait can time out on a
+  real account: pass a larger `timeoutMs` or continue with `waitForRequest(requestId)` (the MCP tools
+  return `pending` + `requestId` for the same reason). The paged result parsed (`PageSize` 100) and the
+  documented amount fields mapped.
+- Daily Inventory (US, `INTERNATIONAL_INVENTORY_REPORT`): submit accepted, but the report was still
+  `IN_PROGRESS` after more than 5 minutes. Calling `result` before FINISHED returns HTTP 400 `CE012`
+  (surfaced as `NeweggApiError`), so wait for FINISHED first. The FTP download is covered by mocked tests
+  and a local fake FTP server only (**ASSUMPTION**: passive FTP to the documented `ftp03.newegg.com` URL).
+- Status polling shares one 500/hour budget: aggressive probing hit HTTP 429 on `status`. The SDK backs
+  off 1.5x up to 15 s.
