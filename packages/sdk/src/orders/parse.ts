@@ -64,13 +64,22 @@ interface ParsedOrderStatus {
 
 /**
  * Reads a Newegg list that may be a bare JSON array, an XML-style `{ Inner: [...] }` wrapper,
- * a single wrapped object, or a single bare object. Missing → empty array.
+ * a single wrapped object, or a single bare object. Missing → empty array. Blank entries are
+ * dropped: Newegg sends an empty list as `""` (seen live on servicemgmt, 2026-10-10), which
+ * must not become a phantom order. Scalars stay, since some lists hold bare order numbers.
  */
 function listItems(container: unknown, innerKey: string): unknown[] {
-  if (Array.isArray(container)) return container;
+  const rows = (value: unknown): unknown[] => asArray(value).filter(isPresent);
+  if (Array.isArray(container)) return container.filter(isPresent);
   const inner = getField(container, innerKey);
-  if (inner !== undefined) return asArray(inner);
-  return asArray(container);
+  if (inner !== undefined) return rows(inner);
+  return rows(container);
+}
+
+function isPresent(value: unknown): boolean {
+  return (
+    value !== null && value !== undefined && !(typeof value === "string" && value.trim() === "")
+  );
 }
 
 function anyDefined(...values: unknown[]): boolean {

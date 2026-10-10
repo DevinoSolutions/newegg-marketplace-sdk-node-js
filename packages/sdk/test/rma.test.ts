@@ -88,6 +88,18 @@ function rmaRoute(reply: () => { status: number; body?: unknown }) {
 }
 
 describe("rma.list", () => {
+  it.each([[""], [null], [{ RMAInfo: "" }]])(
+    "treats an empty RMAInfoList (%j) as no RMAs, never a phantom row",
+    async (empty) => {
+      const { client } = makeClient(
+        "ca",
+        rmaRoute(() => ({ status: 200, body: wrapped(empty, { TotalCount: "0" }) })),
+      );
+      const page = await client.rma.list({});
+      expect(page.rmas).toEqual([]);
+    },
+  );
+
   it("sends Get RMA Information as a PUT with sellerid + version and string-valued criteria", async () => {
     const { client, calls } = makeClient(
       "us",

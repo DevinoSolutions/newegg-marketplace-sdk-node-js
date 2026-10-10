@@ -232,6 +232,24 @@ describe("orders.list", () => {
     expect(page.orders[0]!.status).toBe("unshipped");
   });
 
+  it.each([[""], ["   "], [null]])(
+    "treats an empty OrderInfoList (%j) as no orders, never a phantom row",
+    async (empty) => {
+      const { client } = makeClient("us", [
+        {
+          method: "PUT",
+          pathPattern: paths.orderInfo,
+          reply: () => ({
+            status: 200,
+            body: { ResponseBody: { PageInfo: { TotalCount: 0 }, OrderInfoList: empty } },
+          }),
+        },
+      ]);
+      const page = await client.orders.list();
+      expect(page.orders).toEqual([]);
+    },
+  );
+
   it("translates normalized criteria into the wire RequestCriteria", async () => {
     const { client, calls } = makeClient("us", [
       {

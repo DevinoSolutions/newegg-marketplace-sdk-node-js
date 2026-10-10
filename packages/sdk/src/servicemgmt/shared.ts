@@ -5,7 +5,7 @@
 import { NeweggApiError, NeweggValidationError } from "../errors/index.js";
 import type { NeweggValidationIssue } from "../errors/index.js";
 import { formatPacificWallClock } from "../platform/dates.js";
-import { asArray, asBoolean, asNumber, asString, getField } from "../schemas/wire.js";
+import { asArray, asBoolean, asNumber, asString, getField, isRecord } from "../schemas/wire.js";
 
 /** Maximum `PageSize` for Get RMA Information and Get Courtesy Refund Information. */
 const SERVICE_PAGE_SIZE_MAX = 100;
@@ -66,15 +66,17 @@ export function checkCriteriaDate(
 /**
  * Reads a Newegg list that may be a bare JSON array, an XML-style `{ Inner: [...] }` wrapper
  * (under any of `innerKeys`, since the docs vary the casing), a single wrapped object, or a
- * single bare object. Missing -> empty array.
+ * single bare object. Missing -> empty array. Only objects count as rows: VERIFIED live
+ * 2026-10-10, an empty list arrives as `""` (e.g. `"CourtesyRefundInfoList": ""`), which must
+ * not become a phantom row.
  */
 export function listItems(container: unknown, ...innerKeys: string[]): unknown[] {
-  if (Array.isArray(container)) return container;
+  if (Array.isArray(container)) return container.filter(isRecord);
   for (const key of innerKeys) {
     const inner = getField(container, key);
-    if (inner !== undefined) return asArray(inner);
+    if (inner !== undefined) return asArray(inner).filter(isRecord);
   }
-  return asArray(container);
+  return asArray(container).filter(isRecord);
 }
 
 /** Strips the optional `NeweggAPIResponse` wrapper and returns `{ root, body }`. */

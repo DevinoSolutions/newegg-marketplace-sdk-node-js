@@ -2200,9 +2200,12 @@ PaidBy }` in every sample; the field table lists the four fields flat. The SDK r
   dissatisfaction · 9 Other + `RMAReasonDescription`, and (USA/CAN only) `UnOpen`, `FileUrls`, `Memo`.
 
 The samples show numbers and statuses as strings and an empty `ShippedBy`/`RMAShipMethod`; the parser treats
-every field as optional. An account with no RMAs presumably answers an empty list (**ASSUMPTION:**
-`TotalCount` `"0"` and no `RMAInfoList`; the SDK returns an empty page for a missing list and does not treat
-it as an error).
+every field as optional. **VERIFIED live 2026-10-10 (CAN, read-only):** a populated list arrives as
+`RMAInfoList: { RMAInfo: [ … ] }` with string `PageInfo` counts. An EMPTY servicemgmt list arrives as an empty
+STRING (seen on `CourtesyRefundInfoList: ""` and `ResponseList: ""`), not as an empty array or a missing key.
+The shared `listItems` reader keeps only objects as rows, so `""`/`null`/scalars never become a phantom row.
+Before this fix, the live test caught one phantom refund with an empty id. The empty-RMA case itself is
+still unobserved, because our account has RMAs; the same reader covers it.
 
 ### 18.2 Get Courtesy Refund Information (READ)
 
@@ -2288,10 +2291,21 @@ the seller); the **MCP tools never do**: `serializeRma` / `serializeRefund` map 
 customer block, `RMANote`, item `Memo`, `NoteToCustomer`, `IssueUser` / `InUserName` / `EditUserName` (can be
 an e-mail) and the label tracking number / URL (see `docs/mcp-security.md`).
 
-**ASSUMPTIONs (retire when verified live):** `YYYY-MM-DD` and `YYYY-MM-DD HH:mm:ss` criteria dates accepted on
-all fields; the nested `PageInfo` request form; version `320` accepted on all three platforms; the empty-RMA
-response shape; the request-vs-response courtesy `Status` tables; no date-range cap on any read; the courtesy
-refund request id equalling the refund id; the `servicemgmt` paths on B2B/CAN beyond what the pages state.
-Not live-verified: no marketplace call was made when this section was written. The optional live test
-(`rma-read.live.test.ts`, read-only) asserts shapes only with identifiers discovered at runtime and skips
-the identifier-dependent cases when the account has no RMAs.
+**VERIFIED live 2026-10-10 on CAN (read-only live test `rma-read.live.test.ts`, 4/4):**
+
+- `can/servicemgmt/rma/rmainfo` accepts version `320`, the nested `PageInfo` request form and `YYYY-MM-DD`
+  criteria dates spanning 2020-01-01 to 2026-12-31.
+- `can/servicemgmt/courtesyrefund/info` and `…/requeststatus` answer `IsSuccess: "true"`.
+- Empty lists arrive as `""` (see §18.1).
+
+**ASSUMPTIONs (retire when verified live):**
+
+- `YYYY-MM-DD HH:mm:ss` criteria dates.
+- Version `320` on US/B2B.
+- The request-vs-response courtesy `Status` tables (no refunds on our account to compare).
+- No date-range cap on any read.
+- The courtesy refund request id equalling the refund id.
+- The `servicemgmt` paths on B2B.
+  The section was written from the docs alone, then checked on CAN with the live test (above). That test
+  (`rma-read.live.test.ts`, read-only) asserts shapes only with identifiers discovered at runtime, and skips
+  the identifier-dependent cases when the account has no RMAs.

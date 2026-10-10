@@ -78,6 +78,19 @@ describe("refunds.list", () => {
     });
   });
 
+  it.each([[""], [" "], [null], [[""]]])(
+    'treats an empty CourtesyRefundInfoList (%j; live shape is "") as no refunds',
+    async (empty) => {
+      const { client } = makeClient(
+        "ca",
+        infoRoute(() => ({ status: 200, body: infoResponse(empty, { TotalCount: "0" }) })),
+      );
+      const page = await client.refunds.list({ pageSize: 2 });
+      expect(page.refunds).toEqual([]);
+      expect(page.totalCount).toBe(0);
+    },
+  );
+
   it.each([
     ["open", "1"],
     ["void", "2"],
@@ -359,6 +372,25 @@ describe("refunds.listRequests / getRequestStatus", () => {
     ]);
     expect(requests[0]!.processMemo).toBe("bad order");
     expect(requests[0]!.refund).toBeUndefined();
+  });
+
+  it("treats an empty-string ResponseList (live shape, 2026-10-10) as no requests", async () => {
+    const { client } = makeClient(
+      "ca",
+      statusRoute(() => ({
+        status: 200,
+        body: {
+          NeweggAPIResponse: {
+            IsSuccess: "true",
+            OperationType: "GetCourtesyRefundRequestStatusResponse",
+            SellerID: "A006",
+            ResponseBody: { ResponseList: "" },
+          },
+        },
+      })),
+    );
+    const result = await client.refunds.listRequests({ maxCount: 2 });
+    expect(result.requests).toEqual([]);
   });
 
   it("getRequestStatus throws NeweggApiError when Newegg returns nothing for the id", async () => {
