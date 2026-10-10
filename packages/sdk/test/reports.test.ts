@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   NeweggApiError,
   NeweggRateLimitError,
@@ -1059,6 +1059,85 @@ describe("reports.dailyPrice", () => {
         UnsupportedMarketplaceOperationError,
       );
       expect(calls).toHaveLength(0);
+    }
+  });
+});
+
+describe("settlement report default wait budget (live-verified ~170 s generation)", () => {
+  const INPUT = { dateFrom: "2026-09-01", dateTo: "2026-09-30" };
+  // 16 IN_PROGRESS polls at 2 s growing x1.5 to a 15 s cap is well past 170 s of waiting.
+  const slowStatuses = [...Array.from({ length: 16 }, () => "IN_PROGRESS"), "FINISHED"];
+
+  it("waits past the old 120 s budget when the caller passes no timeoutMs", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client } = makeClient(
+        "us",
+        pagedRoutes({
+          type: "SETTLEMENT_SUMMARY_REPORT",
+          listKey: "SettlementSummaryList",
+          rowsByPage: [[]],
+          statuses: slowStatuses,
+        }),
+      );
+      const pending = client.reports.settlementSummary.waitForResult(INPUT);
+      const settled = pending.catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(250_000);
+      expect(await settled).toMatchObject({ requestId: "REQ1", truncated: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("applies the same default to settlement transactions and still gives up after ~300 s", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client } = makeClient(
+        "us",
+        pagedRoutes({
+          type: "SETTLEMENT_TRANSACTION_REPORT",
+          listKey: "SettlementTransactionInfoList",
+          rowsByPage: [[]],
+          statuses: ["IN_PROGRESS"],
+        }),
+      );
+      const settled = client.reports.settlementTransactions
+        .waitForResult({ settlementDate: "2026-09-30" })
+        .catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(200_000);
+      // Still polling at 200 s (the old 120 s default would already have thrown).
+      let done = false;
+      void settled.then(() => {
+        done = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(130_000);
+      expect(await settled).toBeInstanceOf(ReportTimeoutError);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets an explicit timeoutMs override the settlement default", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client } = makeClient(
+        "us",
+        pagedRoutes({
+          type: "SETTLEMENT_SUMMARY_REPORT",
+          listKey: "SettlementSummaryList",
+          rowsByPage: [[]],
+          statuses: ["IN_PROGRESS"],
+        }),
+      );
+      const settled = client.reports.settlementSummary
+        .waitForResult(INPUT, { timeoutMs: 10_000 })
+        .catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await settled).toBeInstanceOf(ReportTimeoutError);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

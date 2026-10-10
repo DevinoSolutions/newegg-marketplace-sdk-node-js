@@ -9,8 +9,14 @@ export const REPORT_STATUS_OPERATION_TYPE = "GetReportStatusRequest";
 /** Max rows per result page on every paged report (§12.3, §17). */
 export const REPORT_RESULT_PAGE_SIZE = 100;
 
-/** Default total budget for submit + poll + fetch, ms. */
+/** Default total budget for submit + poll + fetch, ms (item lookup and the file reports). */
 export const REPORT_DEFAULT_TIMEOUT_MS = 120_000;
+/**
+ * Default wait budget for the SETTLEMENT reports, ms. Live-verified 2026-10-10: a Settlement
+ * Summary took about 170 s from SUBMITTED to FINISHED, so the generic 120 s budget timed out on a
+ * real account. 300 s leaves headroom; poll cost is unchanged (backoff caps at 15 s).
+ */
+export const REPORT_SETTLEMENT_TIMEOUT_MS = 300_000;
 /** First poll delay, ms. */
 export const REPORT_DEFAULT_POLL_INTERVAL_MS = 2_000;
 /** Poll delay ceiling, ms. */
