@@ -45,6 +45,29 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /killitem/i, why: "remove-item (KillItem) endpoint (write)" },
   { re: /KillItemRequest|OrderConfirmationRequest/, why: "raw order-write OperationType (write)" },
   { re: /cancel_?status/i, why: "cancel-order endpoint (write)" },
+  // RMA / courtesy refund writes (contracts §18) — pre-armed: the SDK implements only the reads
+  // (client.rma.list/get/tryGet, client.refunds.list/get/tryGet/listRequests/getRequestStatus =
+  // Get RMA Information, Get Courtesy Refund Information/Request Status, which are READS via PUT
+  // and are deliberately NOT matched). Submit/Edit/Process/Reject RMA and Issue Courtesy Refund
+  // are WRITES: both prospective SDK method calls and the raw wire markers (endpoints and
+  // OperationTypes) are listed so none can land in a live test.
+  {
+    re: /\brma\s*\??\.\s*(submit|issue|create|edit|update|process|receive|reject|void|close)\w*\s*\(/i,
+    why: "rma write method (submit/edit/process/reject RMA)",
+  },
+  {
+    re: /\brefunds\s*\??\.\s*(issue|create|submit|request|new)\w*\s*\(/i,
+    why: "refunds write method (issue courtesy refund)",
+  },
+  {
+    re: /servicemgmt\/rma\/(newrma|updaterma)|\bnewrma\b|\bupdaterma\b/i,
+    why: "RMA write endpoint",
+  },
+  { re: /courtesyrefund\/new\b/i, why: "issue-courtesy-refund endpoint (write)" },
+  {
+    re: /\b(IssueRMA|EditRMA|ReceiveRMA|RejectRMA)(Request|Response)?\b|\bIssueCourtesyRefund\b|\bCourtesyRefundResponse\b/,
+    why: "raw RMA/courtesy-refund write OperationType (write)",
+  },
   // Listing creation (Existing Item Creation feed, contracts §13) — WRITE surface.
   { re: /listings\s*\.\s*create\s*\(/, why: "listings.create (write)" },
   { re: /BatchItemCreation/, why: "item-creation feed MessageType (write)" },

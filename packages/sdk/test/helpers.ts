@@ -66,6 +66,11 @@ export const paths = {
   orderStatus: /ordermgmt\/orderstatus\/orders\//,
   orderConfirmation: /ordermgmt\/orderstatus\/orders\/confirmation/,
   killItem: /ordermgmt\/killitem\/orders\//,
+  // Service Management READS (§18). The paths are literal substrings, so the (WRITE) newrma /
+  // updaterma / courtesyrefund/new endpoints can never match these patterns.
+  rmaInfo: /servicemgmt\/rma\/rmainfo\?/,
+  courtesyRefundInfo: /servicemgmt\/courtesyrefund\/info\?/,
+  courtesyRefundStatus: /servicemgmt\/courtesyrefund\/requeststatus\?/,
   reportSubmit: /reportmgmt\/report\/submitrequest\?/,
   reportStatus: /reportmgmt\/report\/status\?/,
   reportResult: /reportmgmt\/report\/result\?/,

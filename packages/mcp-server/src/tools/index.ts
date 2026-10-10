@@ -14,6 +14,7 @@ export { feedStatusTool, feedStatusInputSchema } from "./feed-status.js";
 export { feedResultTool } from "./feed-result.js";
 export { serviceStatusTool } from "./service-status.js";
 export { ordersListTool, ordersGetTool, ordersGetStatusTool } from "./orders.js";
+export { rmaListTool, rmaGetTool, refundListTool, refundStatusTool } from "./rma.js";
 export { catalogResolveTool, catalogLookupStatusTool } from "./catalog.js";
 export {
   reportsSettlementSummaryTool,

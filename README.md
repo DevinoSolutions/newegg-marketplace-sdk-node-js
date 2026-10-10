@@ -185,6 +185,26 @@ ignored update on a deactivated item shows as `unverified` instead of success. T
 `newegg_pricing_preview_update` / `newegg_pricing_apply_update` exists only with
 `NEWEGG_MCP_ALLOW_WRITES=true`. The US write path follows the docs but is not live-verified.
 
+## RMAs and courtesy refunds (read-only)
+
+```ts
+const open = await client.rma.list({ status: "open", pageSize: 20 });
+for (const rma of open.rmas)
+  console.log(rma.rmaNumber, rma.type, rma.status, rma.availableRefundAmount);
+
+const rma = await client.rma.tryGet("<rma number>"); // undefined when it does not exist
+const refunds = await client.refunds.list({ status: "closed", dateFrom: "2026-09-01" });
+const request = await client.refunds.getRequestStatus("<courtesy refund request id>");
+```
+
+These wrap Get RMA Information and the two courtesy refund reads (contracts §18). They are `PUT`
+requests but only read, so the SDK and the MCP tools (`newegg_rma_list`, `newegg_rma_get`,
+`newegg_refund_list`, `newegg_refund_status`) are always available. Submitting / editing /
+processing / rejecting an RMA and issuing a courtesy refund are writes and are not implemented. The
+MCP tools return business fields only - never the buyer's name, phone, e-mail or address. Amounts are
+USD on Newegg.com / Neweggbusiness.com and CAD on Newegg.ca; Get Courtesy Refund Information is
+limited to 30 requests per minute.
+
 ## Reports (settlement, daily inventory, daily price)
 
 ```ts
@@ -204,7 +224,7 @@ const stock = await client.reports.dailyInventory.waitForResult({}); // FTP file
 console.log(stock.totalRows, stock.rows[0]?.inventory);
 ```
 
-Reports are asynchronous Newegg jobs (submit → poll → result; 100 submissions/hour). Report
+Reports are asynchronous Newegg jobs (submit → poll → result; 100 submissions/hour). Settlement reports can take about 3 minutes, so `waitFor*` waits up to 300 s for them (120 s for the daily file reports; override with `timeoutMs`). Report
 submission is a `POST` that creates a report job only - it changes nothing on the account, so
 the reports API and its MCP tools (`newegg_reports_settlement_summary`,
 `newegg_reports_settlement_transactions`, `newegg_reports_daily_inventory`,
