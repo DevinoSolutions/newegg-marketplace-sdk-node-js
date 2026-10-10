@@ -852,7 +852,8 @@ export interface ReportWaitOptions {
   signal?: AbortSignal;
   includeRaw?: boolean;
   // poll budget: default 300_000 for settlementSummary / settlementTransactions (a Settlement
-  // Summary took ~170 s live, contracts §17), 120_000 for dailyInventory / dailyPrice; an
+  // Summary took ~170 s live, contracts §17) and for itemBasicInfo / orderList / rmaList (~140-260 s
+  // live), 120_000 for dailyInventory / dailyPrice; an
   // explicit value always wins. On timeout, ReportTimeoutError.requestId lets you continue.
   timeoutMs?: number;
   pollIntervalMs?: number; // default 2_000, x1.5 per poll
@@ -999,25 +1000,43 @@ export interface SettlementTransactionRow {
   memo?: string;
 }
 
-// (shared shape of the two paged reports below; each is exported as its own interface)
-interface PagedReportApi<Input, Row, ResultOptions = RequestOptions> {
-  submit(input: Input, options?: RequestOptions): Promise<ReportSubmission>;
+// Settlement paged reports: submit / status / result(page) / waitForRequest / waitForResult, i.e.
+// the generic `PagedReportApi<Input, Row>` declared further below (waitFor* throw
+// ReportTimeoutError, carrying requestId, on timeout/cancel).
+export interface SettlementSummaryReportApi {
+  submit(input: SettlementSummaryInput, options?: RequestOptions): Promise<ReportSubmission>;
   status(requestId: string, options?: RequestOptions): Promise<ReportStatus>;
-  result(requestId: string, page?: number, options?: ResultOptions): Promise<ReportResultPage<Row>>;
-  // Poll an already-submitted report to FINISHED, then fetch every page (<= maxPages).
-  waitForRequest(requestId: string, options?: ReportWaitOptions): Promise<CollectedReport<Row>>;
-  // submit + waitForRequest. Throws ReportTimeoutError (carrying requestId) on timeout/cancel.
-  waitForResult(input: Input, options?: ReportWaitOptions): Promise<CollectedReport<Row>>;
+  result(
+    requestId: string,
+    page?: number,
+    options?: ReportResultOptions,
+  ): Promise<ReportResultPage<SettlementSummaryRow>>;
+  waitForRequest(
+    requestId: string,
+    options?: ReportWaitOptions & { version?: string },
+  ): Promise<CollectedReport<SettlementSummaryRow>>;
+  waitForResult(
+    input: SettlementSummaryInput,
+    options?: ReportWaitOptions & { version?: string },
+  ): Promise<CollectedReport<SettlementSummaryRow>>;
 }
-export interface SettlementSummaryReportApi extends PagedReportApi<
-  SettlementSummaryInput,
-  SettlementSummaryRow,
-  ReportResultOptions
-> {}
-export interface SettlementTransactionReportApi extends PagedReportApi<
-  SettlementTransactionsInput,
-  SettlementTransactionRow
-> {}
+export interface SettlementTransactionReportApi {
+  submit(input: SettlementTransactionsInput, options?: RequestOptions): Promise<ReportSubmission>;
+  status(requestId: string, options?: RequestOptions): Promise<ReportStatus>;
+  result(
+    requestId: string,
+    page?: number,
+    options?: ReportResultOptions,
+  ): Promise<ReportResultPage<SettlementTransactionRow>>;
+  waitForRequest(
+    requestId: string,
+    options?: ReportWaitOptions,
+  ): Promise<CollectedReport<SettlementTransactionRow>>;
+  waitForResult(
+    input: SettlementTransactionsInput,
+    options?: ReportWaitOptions,
+  ): Promise<CollectedReport<SettlementTransactionRow>>;
+}
 
 export type ReportTextFileType = "csv" | "txt"; // default "csv" (XLS is not parsed)
 export interface ReportFileInfo {
@@ -1090,9 +1109,102 @@ export interface FileReportApi<Input, Row> {
   waitForResult(input: Input, options?: ReportWaitOptions): Promise<DownloadedReport<Row>>;
 }
 
+// -- Item Basic Information (file; contracts §17.8) ------------------------------------------
+// The only way to enumerate every listing. Carries NO price/inventory: join dailyInventory on
+// sellerPartNumber. Live-verified on CAN 2026-10-10 (zip, FTP host mktpftpreport.newegg.com).
+export type ItemBasicInfoStatus = "all" | "active" | "inactive"; // wire 0 / 1 / 2, default "all"
+export interface ItemBasicInfoInput {
+  status?: ItemBasicInfoStatus;
+  fileType?: ReportTextFileType;
+}
+export interface ItemVarietyOption {
+  name: string;
+  value: string;
+}
+export interface ItemBasicInfoRow {
+  sellerPartNumber?: string; // "Seller Part #" - the SKU
+  neweggItemNumber?: string; // "NE Item #"
+  manufacturerPartNumber?: string;
+  upc?: string; // absent for listings without a UPC
+  status?: string; // verbatim "Active" / "Inactive"
+  active?: boolean;
+  title?: string; // Newegg's header is misspelled "Wesite Short Title"; both spellings read
+  industry?: string;
+  subcategory?: string;
+  bulletDescription?: string;
+  itemLength?: number; // units undocumented
+  itemWidth?: number;
+  itemHeight?: number;
+  itemWeight?: number;
+  imageUrls?: string[]; // "Item Image" is comma-separated
+  dateCreated?: string; // YYYY-MM-DD (file gives MM/DD/YYYY; month-first ASSUMPTION)
+  platform?: string; // e.g. "CAN"
+  itemGroupId?: string; // variant family
+  varieties?: ItemVarietyOption[]; // up to 3 custom variety options
+  extra?: Record<string, string>; // unmapped columns
+}
+
+// -- Order List / RMA List (paged inline; contracts §17.6) -------------------------------------
+// Rows are the SAME `Order` / `Rma` shapes as orders.list / rma.list (customer block = PII; the MCP
+// tools never return it). `version` is required on the wire: defaults 309 (orders) / 320 (RMAs),
+// validated against the platform's documented set (platform/reports.ts).
+export interface PagedReportApi<Input, Row> {
+  submit(input: Input, options?: RequestOptions): Promise<ReportSubmission>;
+  status(requestId: string, options?: RequestOptions): Promise<ReportStatus>;
+  result(
+    requestId: string,
+    page?: number,
+    options?: ReportResultOptions,
+  ): Promise<ReportResultPage<Row>>;
+  waitForRequest(
+    requestId: string,
+    options?: ReportWaitOptions & { version?: string },
+  ): Promise<CollectedReport<Row>>;
+  waitForResult(
+    input: Input,
+    options?: ReportWaitOptions & { version?: string },
+  ): Promise<CollectedReport<Row>>;
+}
+export type OrderListKeywordType =
+  | "orderNumber"
+  | "invoiceNumber"
+  | "customerName"
+  | "sellerPartNumber"
+  | "neweggItemNumber"
+  | "customerPhoneNumber"
+  | "titleDescription"
+  | "manufacturer"
+  | "sellerOrderNumber"; // KeywordsType 1-9
+export interface OrderListInput {
+  status: Exclude<OrderStatus, "unknown">; // REQUIRED by Newegg (Status 0-5)
+  keyword?: { type: OrderListKeywordType; value: string };
+  type?: Exclude<OrderTypeFilter, "nws">; // default "all"
+  dateFrom?: Date | string; // Pacific; YYYY-MM-DD or M/D/YYYY H:mm[:ss]
+  dateTo?: Date | string;
+  voidSoon?: 24 | 48;
+  includeDownloaded?: boolean; // false -> wire OrderDownloaded "true" (Newegg's flag is inverted)
+  countryCode?: string; // Newegg.com only, 3-letter ISO; rejected on b2b/ca
+  premierOrder?: PremierOrderFilter; // Newegg.com only; rejected on b2b/ca
+}
+export interface RmaListInput {
+  keyword?: { type: RmaKeywordType; value: string };
+  status?: Exclude<RmaStatus, "unknown">;
+  type?: Exclude<RmaType, "unknown">;
+  processedBy?: RmaProcessedBy;
+  dateFrom?: Date | string;
+  dateTo?: Date | string;
+}
+// Additive fields filled by these reports (and by Get Order/RMA Information when present):
+//   OrderAmounts.gstOrHstAmount / pstOrQstAmount / ehfAmount (Newegg.ca), OrderPackage.items[]
+//   (package lines nested under PackageInfo.ItemInfoList), Rma.refundGstOrHstAmount /
+//   refundPstOrQstAmount (Newegg.ca), RmaItem.rmaTotalRefund (RefundInfo.RMATotalRefund).
+
 export interface ReportsApi {
   readonly settlementSummary: SettlementSummaryReportApi; // all platforms
   readonly settlementTransactions: SettlementTransactionReportApi; // all platforms
+  readonly itemBasicInfo: FileReportApi<ItemBasicInfoInput, ItemBasicInfoRow>; // all platforms (identical request)
+  readonly orderList: PagedReportApi<OrderListInput, Order>; // all platforms (country/Premier criteria: Newegg.com only)
+  readonly rmaList: PagedReportApi<RmaListInput, Rma>; // all platforms
   readonly dailyInventory: FileReportApi<DailyInventoryInput, DailyInventoryRow>; // all platforms (US per-warehouse; b2b/ca default warehouse)
   readonly dailyPrice: FileReportApi<DailyPriceInput, DailyPriceRow>; // Newegg.com only; b2b/ca throw UnsupportedMarketplaceOperationError
   status(requestId: string, options?: RequestOptions): Promise<ReportStatus>; // any report type

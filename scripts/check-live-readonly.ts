@@ -28,6 +28,8 @@ const fail = (msg: string): void => {
 // NOTE (2026-10-10): the same holds for client.reports.* (settlement summary / transaction,
 // daily inventory / price, contracts §17): report submission is a job-creating READ. The live
 // reports test asserts shapes only and never touches the credential-bearing report-file URL.
+// The Item Basic Information, Order List and RMA List reports (contracts §17.6 / §17.8) are the
+// same job-creating READS; no token was added to or removed from the list below for them.
 const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /\.updateItem\s*\(/, why: "inventory write (updateItem)" },
   { re: /\.updateMany\s*\(/, why: "inventory write (updateMany)" },

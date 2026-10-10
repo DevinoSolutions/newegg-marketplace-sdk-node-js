@@ -12,11 +12,17 @@
 import type {
   DailyInventoryRow,
   DailyPriceRow,
+  ItemBasicInfoRow,
+  ItemVarietyOption,
+  Order,
+  Rma,
   SettlementSummaryAmountField,
   SettlementSummaryRow,
   SettlementTransactionRow,
 } from "../types.js";
+import { parseOrder } from "../orders/parse.js";
 import { toTimestamp } from "../platform/dates.js";
+import { parseRma } from "../rma/parse.js";
 import { REPORT_RESULT_PAGE_SIZE } from "../reportmgmt/constants.js";
 import { normalizeHeader } from "../reportmgmt/csv.js";
 import { unwrapEnvelope } from "../reportmgmt/lifecycle.js";
@@ -154,7 +160,10 @@ interface PageEnvelope {
 /** Rows of a list node: array, single object, or an XML-era `{ ChildName: [...] }` wrapper. */
 function listRows(list: unknown, childKey: string): Array<Record<string, unknown>> {
   const inner = getField(list, childKey);
-  return asArray(inner !== undefined ? inner : list).filter(isRecord);
+  // A blank string / empty node is an empty list, never a phantom row (seen live, 2026-10-10).
+  return asArray(inner !== undefined ? inner : list)
+    .filter(isRecord)
+    .filter((row) => Object.keys(row).length > 0);
 }
 
 function readEnvelope(json: unknown, listKey: string): PageEnvelope {
@@ -312,6 +321,56 @@ export function parseSettlementTransactionsPage(
 }
 
 // ---------------------------------------------------------------------------
+// order list / RMA list (paged inline; rows reuse the Get Order / Get RMA mappers)
+// ---------------------------------------------------------------------------
+/** Order List result page (§17.6): `OrderInfoList > OrderInfo`, parsed like Get Order Information. */
+export function parseOrderListPage(json: unknown): ParsedPage<Order> {
+  const envelope = readEnvelope(json, "OrderInfoList");
+  const rows = listRows(envelope.list, "OrderInfo").map((row) => parseOrder(row));
+  const { list: _list, ...rest } = envelope;
+  return { ...rest, totalCount: envelope.totalCount || rows.length, rows };
+}
+
+/**
+ * The RMA List report nests each line's refund fields under `RMATransaction.RefundInfo` and names
+ * them differently from Get RMA Information (live-verified CAN, 2026-10-10). Flatten them onto
+ * the names `parseRma` reads, never overriding a field the line already carries.
+ */
+const RMA_LINE_ALIASES: Array<[from: string, to: string]> = [
+  ["ItemReturnQty", "ReturnQuantity"],
+  ["ItemRefundPerQty", "ReturnUnitPrice"],
+  ["ItemShippingRefund", "RefundShippingPrice"],
+  ["RefundReason", "RMAReason"],
+  ["RefundReasonDescription", "RMAReasonDescription"],
+  ["ReplacementReason", "RMAReason"],
+  ["ReplacementReasonDescription", "RMAReasonDescription"],
+  // The field table spells it "Replacment" (sic).
+  ["ReplacmentReasonDescription", "RMAReasonDescription"],
+];
+
+function flattenRmaLine(line: Record<string, unknown>): Record<string, unknown> {
+  const info = getField(line, "RefundInfo");
+  const out: Record<string, unknown> = { ...(isRecord(info) ? info : {}), ...line };
+  for (const [from, to] of RMA_LINE_ALIASES) {
+    if (out[to] === undefined && out[from] !== undefined) out[to] = out[from];
+  }
+  return out;
+}
+
+/** RMA List result page (§17.6): `RMAInfoList > RMAInfo`, parsed like Get RMA Information. */
+export function parseRmaListPage(json: unknown): ParsedPage<Rma> {
+  const envelope = readEnvelope(json, "RMAInfoList");
+  const rows = listRows(envelope.list, "RMAInfo").map((row) =>
+    parseRma({
+      ...row,
+      RMATransactionList: listRows(row.RMATransactionList, "RMATransaction").map(flattenRmaLine),
+    }),
+  );
+  const { list: _list, ...rest } = envelope;
+  return { ...rest, totalCount: envelope.totalCount || rows.length, rows };
+}
+
+// ---------------------------------------------------------------------------
 // daily inventory / daily price files
 // ---------------------------------------------------------------------------
 type RecordOfStrings = Record<string, string>;
@@ -399,6 +458,93 @@ export function inventoryRowFromRecord(record: RecordOfStrings): DailyInventoryR
   if (activationMark !== undefined) row.activationMark = activationMark;
   if (record.memo !== undefined) row.memo = record.memo;
   const extra = extras(record, KNOWN_INVENTORY_KEYS);
+  if (extra) row.extra = extra;
+  return row;
+}
+
+/** Header keys (normalized) of the Item Basic Information report that map to typed fields. */
+const KNOWN_ITEM_BASIC_INFO_KEYS = new Set([
+  "sellerpartnumber",
+  "neitemnumber",
+  "manufacturerpartnumber",
+  "upc",
+  "status",
+  // Newegg's header is misspelled "Wesite Short Title"; the corrected spelling is accepted too.
+  "wesiteshorttitle",
+  "websiteshorttitle",
+  "industry",
+  "subcategory",
+  "bulletdescription",
+  "itemlength",
+  "itemwidth",
+  "itemheight",
+  "itemweight",
+  "itemimage",
+  "datecreated",
+  "platform",
+  "itemgroupid",
+  "customvariety1name",
+  "customvariety1value",
+  "customvariety2name",
+  "customvariety2value",
+  "customvariety3name",
+  "customvariety3value",
+]);
+
+/** `MM/DD/YYYY` (as the file gives it) -> `YYYY-MM-DD`; anything else is returned unchanged. */
+function calendarDate(value: string): string {
+  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value.trim());
+  if (!match) return value;
+  const month = String(match[1]).padStart(2, "0");
+  const day = String(match[2]).padStart(2, "0");
+  return `${match[3]}-${month}-${day}`;
+}
+
+export function itemBasicInfoRowFromRecord(record: RecordOfStrings): ItemBasicInfoRow {
+  const row: ItemBasicInfoRow = {};
+  if (record.sellerpartnumber !== undefined) row.sellerPartNumber = record.sellerpartnumber;
+  if (record.neitemnumber !== undefined) row.neweggItemNumber = record.neitemnumber;
+  if (record.manufacturerpartnumber !== undefined) {
+    row.manufacturerPartNumber = record.manufacturerpartnumber;
+  }
+  if (record.upc !== undefined) row.upc = record.upc;
+  if (record.status !== undefined) {
+    row.status = record.status;
+    const lower = record.status.trim().toLowerCase();
+    if (lower === "active") row.active = true;
+    else if (lower === "inactive") row.active = false;
+  }
+  const title = record.wesiteshorttitle ?? record.websiteshorttitle;
+  if (title !== undefined) row.title = title;
+  if (record.industry !== undefined) row.industry = record.industry;
+  if (record.subcategory !== undefined) row.subcategory = record.subcategory;
+  if (record.bulletdescription !== undefined) row.bulletDescription = record.bulletdescription;
+  const length = numberCell(record, "itemlength");
+  if (length !== undefined) row.itemLength = length;
+  const width = numberCell(record, "itemwidth");
+  if (width !== undefined) row.itemWidth = width;
+  const height = numberCell(record, "itemheight");
+  if (height !== undefined) row.itemHeight = height;
+  const weight = numberCell(record, "itemweight");
+  if (weight !== undefined) row.itemWeight = weight;
+  if (record.itemimage !== undefined) {
+    const urls = record.itemimage
+      .split(",")
+      .map((url) => url.trim())
+      .filter((url) => url !== "");
+    if (urls.length > 0) row.imageUrls = urls;
+  }
+  if (record.datecreated !== undefined) row.dateCreated = calendarDate(record.datecreated);
+  if (record.platform !== undefined) row.platform = record.platform;
+  if (record.itemgroupid !== undefined) row.itemGroupId = record.itemgroupid;
+  const varieties: ItemVarietyOption[] = [];
+  for (const n of ["1", "2", "3"]) {
+    const name = record[`customvariety${n}name`];
+    const value = record[`customvariety${n}value`];
+    if (name !== undefined && value !== undefined) varieties.push({ name, value });
+  }
+  if (varieties.length > 0) row.varieties = varieties;
+  const extra = extras(record, KNOWN_ITEM_BASIC_INFO_KEYS);
   if (extra) row.extra = extra;
   return row;
 }

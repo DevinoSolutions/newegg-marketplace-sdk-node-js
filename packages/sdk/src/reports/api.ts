@@ -7,6 +7,11 @@ import type {
   DailyPriceRow,
   DownloadedReport,
   FileReportApi,
+  ItemBasicInfoInput,
+  ItemBasicInfoRow,
+  Order,
+  OrderListInput,
+  PagedReportApi as PagedReportApiShape,
   ReportFileInfo,
   ReportResultOptions,
   ReportResultPage,
@@ -15,6 +20,8 @@ import type {
   ReportSubmission,
   ReportWaitOptions,
   RequestOptions,
+  Rma,
+  RmaListInput,
   SettlementSummaryInput,
   SettlementSummaryReportApi,
   SettlementSummaryRow,
@@ -31,9 +38,14 @@ import {
   UnsupportedMarketplaceOperationError,
 } from "../errors/index.js";
 import { Operation } from "../client/operations.js";
-import { REPORT_SETTLEMENT_TIMEOUT_MS } from "../reportmgmt/constants.js";
+import { REPORT_LIST_TIMEOUT_MS, REPORT_SETTLEMENT_TIMEOUT_MS } from "../reportmgmt/constants.js";
 import { toTimestamp } from "../platform/dates.js";
-import { getReportsPlatform, type FileReportRequest } from "../platform/reports.js";
+import {
+  getReportsPlatform,
+  resolveVersion,
+  type FileReportRequest,
+  type VersionedPagedRequest,
+} from "../platform/reports.js";
 import { parseDelimited } from "../reportmgmt/csv.js";
 import { downloadViaFtp } from "../reportmgmt/ftp.js";
 import {
@@ -66,6 +78,9 @@ import {
   buildSettlementSummarySubmit,
   buildSettlementTransactionsSubmit,
   inventoryRowFromRecord,
+  itemBasicInfoRowFromRecord,
+  parseOrderListPage,
+  parseRmaListPage,
   parseSettlementSummaryPage,
   parseSettlementTransactionsPage,
   priceRowFromRecord,
@@ -208,6 +223,8 @@ interface PagedSpec<Input, Row> {
   buildSubmit(input: Input): { body: unknown; query?: Record<string, string> };
   parsePage(json: unknown): ParsedPage<Row>;
   defaultResultQuery?: Record<string, string>;
+  /** Resolves the result `version` (validated per platform); wins over `defaultResultQuery`. */
+  resolveResultVersion?(requested: string | undefined): string;
   /** Per-type default wait budget (ms) used when the caller passes no `timeoutMs`. */
   defaultWaitTimeoutMs?: number;
 }
@@ -234,8 +251,11 @@ class PagedReportApi<Input, Row> {
   ): Promise<ReportResultPage<Row>> {
     requireRequestId(requestId);
     validatePage(page);
-    const query =
-      options.version !== undefined ? { version: options.version } : this.spec.defaultResultQuery;
+    const query = this.spec.resolveResultVersion
+      ? { version: this.spec.resolveResultVersion(options.version) }
+      : options.version !== undefined
+        ? { version: options.version }
+        : this.spec.defaultResultQuery;
     const outcome = await this.core.lifecycle.result(
       buildPagedResultRequest(this.spec.resultOperationType, requestId, page),
       { ...options, ...(query ? { query } : {}) },
@@ -302,6 +322,8 @@ interface FileSpec<Input, Row> {
     buildRequest(input: Input): FileReportRequest;
   };
   rowFromRecord(record: Record<string, string>): Row;
+  /** Per-type default wait budget (ms) used when the caller passes no `timeoutMs`. */
+  defaultWaitTimeoutMs?: number;
 }
 
 const OLE_MAGIC = [0xd0, 0xcf, 0x11, 0xe0];
@@ -448,7 +470,11 @@ class FileReportApiImpl<Input, Row> implements FileReportApi<Input, Row> {
   ): Promise<DownloadedReport<Row>> {
     this.spec.resolve();
     const correlationId = options.correlationId ?? randomUUID();
-    await this.core.waitFinished(requestId, { ...options, correlationId });
+    await this.core.waitFinished(
+      requestId,
+      { ...options, correlationId },
+      this.spec.defaultWaitTimeoutMs,
+    );
     return this.download(requestId, { ...options, correlationId });
   }
 
@@ -469,11 +495,28 @@ class FileReportApiImpl<Input, Row> implements FileReportApi<Input, Row> {
  * Settlement / inventory / price reports over Reports Management (contracts §17). All READ-shaped:
  * report submission creates a report job and mutates nothing on the seller account.
  */
+/** Spec for a versioned paged report (Order List, RMA List) built from its platform data. */
+function versionedPagedSpec<Input, Row>(
+  request: VersionedPagedRequest<Input>,
+  parsePage: PagedSpec<Input, Row>["parsePage"],
+): PagedSpec<Input, Row> {
+  return {
+    resultOperationType: request.operationType,
+    buildSubmit: (input) => ({ body: request.buildSubmit(input) }),
+    parsePage,
+    resolveResultVersion: (requested) => resolveVersion(request, requested),
+    defaultWaitTimeoutMs: REPORT_LIST_TIMEOUT_MS,
+  };
+}
+
 export class ReportsApiImpl implements ReportsApi {
   readonly settlementSummary: SettlementSummaryReportApi;
   readonly settlementTransactions: SettlementTransactionReportApi;
   readonly dailyInventory: FileReportApi<DailyInventoryInput, DailyInventoryRow>;
   readonly dailyPrice: FileReportApi<DailyPriceInput, DailyPriceRow>;
+  readonly itemBasicInfo: FileReportApi<ItemBasicInfoInput, ItemBasicInfoRow>;
+  readonly orderList: PagedReportApiShape<OrderListInput, Order>;
+  readonly rmaList: PagedReportApiShape<RmaListInput, Rma>;
   readonly #core: ReportsCore;
 
   constructor(http: NeweggHttpClient) {
@@ -504,6 +547,19 @@ export class ReportsApiImpl implements ReportsApi {
       parsePage: parseSettlementTransactionsPage,
       defaultWaitTimeoutMs: REPORT_SETTLEMENT_TIMEOUT_MS,
     });
+    this.itemBasicInfo = new FileReportApiImpl<ItemBasicInfoInput, ItemBasicInfoRow>(core, {
+      resolve: () => platform.itemBasicInfo,
+      rowFromRecord: itemBasicInfoRowFromRecord,
+      defaultWaitTimeoutMs: REPORT_LIST_TIMEOUT_MS,
+    });
+    this.orderList = new PagedReportApi<OrderListInput, Order>(
+      core,
+      versionedPagedSpec(platform.orderList, parseOrderListPage),
+    );
+    this.rmaList = new PagedReportApi<RmaListInput, Rma>(
+      core,
+      versionedPagedSpec(platform.rmaList, parseRmaListPage),
+    );
     this.dailyInventory = new FileReportApiImpl<DailyInventoryInput, DailyInventoryRow>(core, {
       resolve: () => platform.dailyInventory,
       rowFromRecord: inventoryRowFromRecord,

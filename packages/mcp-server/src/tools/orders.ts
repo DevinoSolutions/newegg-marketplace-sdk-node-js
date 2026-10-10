@@ -65,6 +65,9 @@ const amountsSchema = z.object({
   vatTotal: z.number().optional(),
   dutyTotal: z.number().optional(),
   recyclingFee: z.number().optional(),
+  gstOrHstAmount: z.number().optional(),
+  pstOrQstAmount: z.number().optional(),
+  ehfAmount: z.number().optional(),
   total: z.number().optional(),
 });
 

@@ -270,6 +270,8 @@ describe("newegg_refund_list / newegg_refund_status", () => {
       expect(names.filter((name) => /rma|refund/.test(name)).sort()).toEqual([
         "newegg_refund_list",
         "newegg_refund_status",
+        // Read-only RMA List report (PII-free; contracts §17.6) - not an RMA write.
+        "newegg_reports_rma_list",
         "newegg_rma_get",
         "newegg_rma_list",
       ]);

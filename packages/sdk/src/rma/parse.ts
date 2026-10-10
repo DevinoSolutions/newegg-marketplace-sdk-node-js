@@ -99,6 +99,7 @@ function parseRmaItem(raw: unknown): RmaItem {
     returnQuantity: asNumber(g("ReturnQuantity")),
     returnUnitPrice: asNumber(g("ReturnUnitPrice")),
     refundShippingPrice: asNumber(g("RefundShippingPrice")),
+    rmaTotalRefund: asNumber(g("RMATotalRefund")),
     shippedBy: rmaShippedByFromCode(asNumber(g("ShippedBy"))),
     reason: rmaReasonFromCode(reasonCode),
     reasonCode,
@@ -108,7 +109,8 @@ function parseRmaItem(raw: unknown): RmaItem {
   };
 }
 
-function parseRma(raw: unknown): Rma {
+/** Maps one `RMAInfo` node; also used for the RMA List report rows (contracts §17.6). */
+export function parseRma(raw: unknown): Rma {
   const g = (key: string): unknown => getField(raw, key);
   return {
     rmaNumber: asString(g("RMANumber")) ?? "",
@@ -128,6 +130,8 @@ function parseRma(raw: unknown): Rma {
     orderAmount: asNumber(g("OrderAmount")),
     availableRefundAmount: asNumber(g("AvailableRefundAmount")),
     priorRefundAmount: asNumber(g("PriorRefundAmount")),
+    refundGstOrHstAmount: asNumber(g("RefundGSTorHSTAmount")),
+    refundPstOrQstAmount: asNumber(g("RefundPSTorQSTAmount")),
     processedBy: rmaProcessedByFromLabel(asString(g("RMAProcessedBy"))),
     receiveDate: toTimestamp(asString(g("RMAReceiveDate"))),
     note: asString(g("RMANote")),

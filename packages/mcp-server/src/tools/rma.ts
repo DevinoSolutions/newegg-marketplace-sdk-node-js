@@ -104,6 +104,7 @@ const rmaItemSchema = z.object({
   returnQuantity: z.number().optional(),
   returnUnitPrice: z.number().optional(),
   refundShippingPrice: z.number().optional(),
+  rmaTotalRefund: z.number().optional(),
   shippedBy: z.enum(["seller", "newegg"]).optional(),
   reason: rmaReasonSchema,
   reasonDescription: z.string().optional(),
@@ -125,6 +126,8 @@ const rmaSchema = z.object({
   orderAmount: z.number().optional(),
   availableRefundAmount: z.number().optional(),
   priorRefundAmount: z.number().optional(),
+  refundGstOrHstAmount: z.number().optional(),
+  refundPstOrQstAmount: z.number().optional(),
   processedBy: z.enum(["seller", "newegg"]).optional(),
   shipMethodDescription: z.string().optional(),
   returnLabelCost: z.number().optional(),
@@ -142,6 +145,7 @@ function serializeRmaItem(item: RmaItem): Record<string, unknown> {
     returnQuantity: item.returnQuantity,
     returnUnitPrice: item.returnUnitPrice,
     refundShippingPrice: item.refundShippingPrice,
+    rmaTotalRefund: item.rmaTotalRefund,
     shippedBy: item.shippedBy,
     reason: item.reason,
     reasonDescription: item.reasonDescription,
@@ -150,7 +154,7 @@ function serializeRmaItem(item: RmaItem): Record<string, unknown> {
 }
 
 /** Maps an SDK `Rma` field by field: customer, notes, memo, issue user and tracking are dropped. */
-function serializeRma(rma: Rma): Record<string, unknown> {
+export function serializeRma(rma: Rma): Record<string, unknown> {
   return {
     rmaNumber: rma.rmaNumber,
     type: rma.type,
@@ -166,6 +170,8 @@ function serializeRma(rma: Rma): Record<string, unknown> {
     orderAmount: rma.orderAmount,
     availableRefundAmount: rma.availableRefundAmount,
     priorRefundAmount: rma.priorRefundAmount,
+    refundGstOrHstAmount: rma.refundGstOrHstAmount,
+    refundPstOrQstAmount: rma.refundPstOrQstAmount,
     processedBy: rma.processedBy,
     shipMethodDescription: rma.shipMethodDescription,
     returnLabelCost: rma.returnLabel?.estimatedCost,
