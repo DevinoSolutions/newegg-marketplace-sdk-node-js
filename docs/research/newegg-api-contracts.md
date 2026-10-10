@@ -1583,3 +1583,105 @@ policy (reads are safe to retry).
 suite has a read-only price test (`test/live/pricing-read.live.test.ts`) that was not run when
 this section was written; promote the ASSUMPTIONs (country filter form, `MSRP` presence,
 not-found codes, inferred currency) once it has been run against a real account.
+
+## 16. Pricing (writes)
+
+> Extracted 2026-10-10 from the official Newegg Developer Portal (pages marked "Last updated
+> August 28, 2020"). **Implemented in code and mocked tests only; no price write has EVER been sent
+> to a real account** (repo rule 2; `check:live-readonly` forbids the call and both endpoints in
+> `test/live`). Everything below is therefore documented-shape, not live-verified, except where a
+> row cites an earlier live observation.
+
+### 16.1 US — Update Item Price
+
+Source: `https://developer.newegg.com/newegg_marketplace_api/item_management/update-item-price/`
+(2026-10-10).
+
+```
+POST https://api.newegg.com/marketplace/contentmgmt/item/international/price?sellerid={SellerID}
+```
+
+Same URL as the §15.2 read (**PUT = read, POST = write**). Rate limit 10,000 requests/hour.
+Request fields: `Type` (0 NE item #, 1 seller part #, 2 UPC), `Value`, `Condition` (UPC only),
+then `PriceList.Price[]` rows each with required `CountryCode` (ISO alpha-3) + `Currency` ("must
+match CountryCode or the submission errors out", CT075) and optional `MSRP`, `MAP`, `CheckoutMAP`,
+`SellingPrice`, `EnableFreeShipping`, `Active`, `LimitQuantity`. Documented omission semantics:
+only `Active` and `LimitQuantity` are stated to mean "null = no change"; **the page does not state
+what an omitted `SellingPrice`/`MAP`/… does** — **ASSUMPTION** (unverified): an omitted field is left
+unchanged, as for B2B/CAN (§16.2).
+
+The SDK therefore sends exactly one row per update:
+
+```json
+{
+  "Type": "1",
+  "Value": "<seller part #>",
+  "PriceList": { "Price": [{ "CountryCode": "USA", "Currency": "USD", "SellingPrice": "20.92" }] }
+}
+```
+
+No `Active`, `MAP`, `CheckoutMAP`, `MSRP`, `EnableFreeShipping` or `LimitQuantity` is ever sent.
+Because of the omission ASSUMPTION the SDK warns on every US preview, and the owner currently has no
+US API account to confirm it. Response: the same shape as the §15.2 read (root `<UpdatePriceResult>`
+in XML); treated as success when it parses and contains no `Result: "0"`.
+
+### 16.2 B2B / CAN — Update Inventory and Price (price-only use)
+
+Source: the "Update Inventory and Price" page listed on
+`https://developer.newegg.com/newegg_marketplace_api/item_management` (2026-10-10; same endpoint
+as §6.2):
+
+```
+PUT https://api.newegg.com/marketplace/{b2b,can}/contentmgmt/item/inventoryandprice?sellerid={SellerID}
+```
+
+The SDK sends the **price-only subset** `{ "Type": "1", "Value": "SKU", "SellingPrice": "20.92" }`
+(plus `Condition` for UPC). `Inventory`, `Active`, `MAP`, `CheckoutMAP`, `MSRP`, shipping and
+`FulfillmentOption` are never sent. Omitting fields as "no change" is **verified live for this
+endpoint** (§6.2: a field-less body is a harmless no-op, and the SDK's inventory-only bodies are
+in production use; CA, 2026-07/09). That a **price-only** body leaves `Inventory`/`Active`
+untouched is the same documented "null/omitted = no change" rule — **ASSUMPTION** until a price
+write is ever authorized and observed. Response `UpdateInventoryAndPriceResult` (§6.2) — the echoed `SellingPrice` is
+read, but the SDK **does not trust it** (see §16.4).
+
+### 16.3 Error codes relevant to a price write
+
+From the update pages' tables (2026-10-10): `CT007` selling price outside 0–99999.99 (2 decimals);
+`CT032` selling price cannot be 0; `CT029` selling price cannot exceed MSRP; `CT019` item locked by
+a promotion — selling price cannot be updated; `CT075` currency invalid for the country;
+`CT050` activation fails below strict MAP; `CT067` MAP regulated by an existing Newegg setting;
+`CT014`/`CT015` item unknown / not this seller's. The SDK pre-validates CT007/CT032 locally
+(price in (0, 99999.99], ≤ 2 decimals) and **never rounds or clamps**; CT029/CT075/CT019 are
+surfaced by `previewUpdate` as blockers/warnings when the current row reveals them.
+
+### 16.4 Silent-success traps (why every write is read back)
+
+- Updates to a **deactivated** item are "disregarded" yet reported successful (§6.2, live 2026-07-17).
+- The write response's echoed price is not authoritative (cf. the unreliable `AvailableQuantity`
+  echo, §6.2). The SDK verifies with a fresh §15 read of the same row (US: the same country).
+
+### 16.5 Alternative not used: `PRICE_DATA` feed
+
+`POST datafeedmgmt/feeds/submitfeed?requesttype=PRICE_DATA` (US) is asynchronous, indeterminate
+(ADR 0004) and shares the feed-envelope risks; per ADR 0003 a handful of price changes go direct.
+Not implemented. If it is ever added, the envelope `Overwrite` stays hard-coded `"No"`.
+
+### 16.6 SDK mapping
+
+`client.pricing.update(updates, { verify?, concurrency? })` (WRITE; 1–100 updates, one request
+each, concurrency 2, own 10,000/hour budget `pricing.update`): validate → de-duplicate
+(last-write-wins on identifier + condition + country) → write → read back →
+`PriceUpdateResult` with per-item `verified | accepted | unverified | unknown | failed`.
+Price assignments are absolute and idempotent, so the direct-operation retry policy applies
+(408/429/502/503/504 and network errors, ADR 0004). If a write still fails ambiguously (timeout /
+408 / 5xx / reset after dispatch) the SDK reads the price back: equal → `verified`, otherwise
+`unknown` ("re-read before retrying"); nothing is thrown per item. `previewUpdate` is read-only and
+computes the change percent plus blockers (unknown item, currency mismatch, price above MSRP) and
+warnings (inactive, promotion lock, below MAP, no-op). MCP: `newegg_pricing_preview_update` →
+`newegg_pricing_apply_update`, both registered only with `NEWEGG_MCP_ALLOW_WRITES=true`; the
+preview additionally blocks a change larger than `NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT` (default 50)
+and stores only the eligible updates under the single-use `previewId` (ADR 0005).
+
+**ASSUMPTIONs to retire when a write is ever authorized and run:** US omission semantics (§16.1),
+the US write response shape, `CT029` on the B2B/CAN endpoint, and whether the B2B/CAN echoed
+`SellingPrice` reflects a deactivated item's real price.
