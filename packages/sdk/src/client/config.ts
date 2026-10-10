@@ -4,6 +4,7 @@ import type {
   NeweggMarketplace,
   OperationStore,
   RateLimitStore,
+  ReportFileDownloader,
   RetryOptions,
 } from "../types.js";
 import { NeweggConfigurationError } from "../errors/index.js";
@@ -33,6 +34,7 @@ export interface ResolvedConfig {
   operationStore: OperationStore;
   autoFeedThreshold: number;
   maxQuantity?: number;
+  reportFileDownloader?: ReportFileDownloader;
 }
 
 function fail(message: string): never {
@@ -152,5 +154,6 @@ export function resolveConfig(config: NeweggClientConfig): ResolvedConfig {
     operationStore: config.operationStore ?? new InMemoryOperationStore(),
     autoFeedThreshold,
     maxQuantity,
+    reportFileDownloader: config.reportFileDownloader,
   };
 }

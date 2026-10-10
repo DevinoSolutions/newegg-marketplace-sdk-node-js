@@ -24,6 +24,10 @@ const fail = (msg: string): void => {
 // creates a report job and mutates nothing on the seller account (contracts §12.4). It is
 // therefore deliberately absent from this list; `submitfeed` and every listing/order/price
 // mutation remain forbidden.
+//
+// NOTE (2026-10-10): the same holds for client.reports.* (settlement summary / transaction,
+// daily inventory / price, contracts §17): report submission is a job-creating READ. The live
+// reports test asserts shapes only and never touches the credential-bearing report-file URL.
 const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /\.updateItem\s*\(/, why: "inventory write (updateItem)" },
   { re: /\.updateMany\s*\(/, why: "inventory write (updateMany)" },

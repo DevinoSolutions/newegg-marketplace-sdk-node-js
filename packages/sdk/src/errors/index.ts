@@ -14,6 +14,7 @@ export type NeweggErrorCode =
   | "feed_cancelled"
   | "order_write_indeterminate"
   | "catalog_lookup_timeout"
+  | "report_timeout"
   | "timeout"
   | "unsupported_operation";
 
@@ -239,6 +240,29 @@ export class CatalogLookupTimeoutError extends NeweggError {
   constructor(message: string, init: CatalogLookupTimeoutErrorInit) {
     super("catalog_lookup_timeout", message, { ...init, retryable: init.retryable ?? true });
     this.name = "CatalogLookupTimeoutError";
+    this.requestId = init.requestId;
+  }
+  override toJSON(): Record<string, unknown> {
+    return { ...super.toJSON(), requestId: this.requestId };
+  }
+}
+
+export interface ReportTimeoutErrorInit extends NeweggErrorInit {
+  /** The report's request id - continue with `status` / `waitForRequest` instead of resubmitting. */
+  requestId: string;
+}
+
+/**
+ * A `client.reports` report did not reach FINISHED within the wait budget (retryable), or Newegg
+ * cancelled it (not retryable). The report keeps its request id at Newegg - continue with
+ * `reports.<type>.status(requestId)` / `waitForRequest(requestId)` rather than resubmitting
+ * (submissions are budgeted at 100/hour).
+ */
+export class ReportTimeoutError extends NeweggError {
+  readonly requestId: string;
+  constructor(message: string, init: ReportTimeoutErrorInit) {
+    super("report_timeout", message, { ...init, retryable: init.retryable ?? true });
+    this.name = "ReportTimeoutError";
     this.requestId = init.requestId;
   }
   override toJSON(): Record<string, unknown> {

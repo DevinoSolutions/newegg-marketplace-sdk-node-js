@@ -26,4 +26,9 @@ export const Operation = {
   CatalogLookupSubmit: "catalog.lookupSubmit",
   CatalogLookupStatus: "catalog.lookupStatus",
   CatalogLookupResult: "catalog.lookupResult",
+  // Settlement / inventory / price reports (reportmgmt, §17): same endpoints and budgets as
+  // above (submit 100/hr; status and result 500/hr each), shared across report types.
+  ReportSubmit: "reports.submit",
+  ReportStatus: "reports.status",
+  ReportResult: "reports.result",
 } as const;
