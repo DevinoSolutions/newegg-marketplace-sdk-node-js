@@ -29,6 +29,9 @@ Tools (underscore names, per MCP naming rules):
 | `newegg_reports_daily_inventory`         | read               | Daily Inventory report. The FTP report file is downloaded and parsed server-side; its credential-bearing URL is **never** returned or logged.                                                                                                                                                                     |
 | `newegg_reports_daily_price`             | read               | Daily Price report (Newegg.com only). Same file handling as the daily inventory tool.                                                                                                                                                                                                                             |
 | `newegg_reports_status`                  | read               | Status of a pending report by `requestId` + `reportType`; returns the rows (bounded by `limit`) once finished.                                                                                                                                                                                                    |
+| `newegg_reports_item_basic_info`         | read               | Item Basic Information report: every listing (SKU, Newegg item number, MPN, UPC, title, status, variants). Explicit field list - descriptions, image URLs, dimensions and unmapped columns are not returned. FTP URL never returned.                                                                              |
+| `newegg_reports_order_list`              | read               | Order List report (async). **No customer data** - see the report-list note below.                                                                                                                                                                                                                                 |
+| `newegg_reports_rma_list`                | read               | RMA List report (async). Same PII-free RMA mapping as `newegg_rma_list`.                                                                                                                                                                                                                                          |
 | `newegg_rma_list`                        | read               | RMA search (Get RMA Information): status, type, keyword, date range, paging. Business fields only; **no customer PII** (see the RMA note below).                                                                                                                                                                  |
 | `newegg_rma_get`                         | read               | One RMA by number. Same PII-free mapping.                                                                                                                                                                                                                                                                         |
 | `newegg_refund_list`                     | read               | Courtesy refund search (Get Courtesy Refund Information; Newegg allows 30 requests/minute). No customer note or user names.                                                                                                                                                                                       |
@@ -67,6 +70,18 @@ Tools (underscore names, per MCP naming rules):
 > edit, process or reject an RMA or to issue a courtesy refund, and the live test suite is
 > forbidden from calling those endpoints (`npm run check:live-readonly`). A future write tool must
 > follow the preview/apply flow (ADR 0005) behind `NEWEGG_MCP_ALLOW_WRITES`.
+
+> **Order List / RMA List / Item Basic Information report tools: PII handling.** Unlike
+> `newegg_orders_list`, the Order List report tool is a PII-free surface: `serializeOrderRow` maps
+> each field explicitly and drops the whole customer block (name, phone, masked e-mail, ship-to
+> address), tracking URLs, package memos and every free-text note, and customer-name / phone
+> keyword searches are not offered. `newegg_reports_rma_list` reuses `serializeRma` (see above).
+> The Item Basic Information tool returns catalog data only (no buyer data exists in that report)
+> and withholds descriptions, image URLs and unmapped columns. `limit` is capped at 500 rows, the
+> wait is bounded (`waitSeconds`, default 55, else `pending` + `requestId`), and the report-file FTP
+> URL (credentials embedded, host `mktpftpreport.newegg.com`) is never returned or logged. Amounts
+> are confidential business data (USD / CAD, reported in `currency`). All three tools only create
+> report jobs; none writes to the account.
 
 Resources:
 

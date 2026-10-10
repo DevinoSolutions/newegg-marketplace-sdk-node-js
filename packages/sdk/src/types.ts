@@ -504,8 +504,21 @@ export interface OrderAmounts {
   vatTotal?: number;
   dutyTotal?: number;
   recyclingFee?: number;
+  /** Newegg.ca: `GSTorHSTAmount`. */
+  gstOrHstAmount?: number;
+  /** Newegg.ca: `PSTorQSTAmount`. */
+  pstOrQstAmount?: number;
+  /** Newegg.ca: `EHFAmount` (eco handling fee; seen live on the Order List report). */
+  ehfAmount?: number;
   /** `OrderTotalAmount`. */
   total?: number;
+}
+
+/** One line of a package (`PackageInfo.ItemInfoList.ItemInfo`; seen live on the Order List report). */
+export interface OrderPackageItem {
+  sellerPartNumber?: string;
+  mfrPartNumber?: string;
+  shippedQty?: number;
 }
 
 export interface OrderItem {
@@ -533,6 +546,8 @@ export interface OrderPackage {
   sellerPartNumber?: string;
   mfrPartNumber?: string;
   shippedQty?: number;
+  /** The package's lines, when Newegg nests them as `ItemInfoList` instead of flat fields. */
+  items?: OrderPackageItem[];
   memo?: string;
 }
 
@@ -1714,11 +1729,152 @@ export interface FileReportApi<Input, Row> {
   waitForResult(input: Input, options?: ReportWaitOptions): Promise<DownloadedReport<Row>>;
 }
 
+// -- item basic information (file; the only way to enumerate every listing) ---------
+/** Item Basic Information `Status` filter: 0 all (default) / 1 active only / 2 inactive only. */
+export type ItemBasicInfoStatus = "all" | "active" | "inactive";
+
+export interface ItemBasicInfoInput {
+  /** Which listings to include (default `"all"`). */
+  status?: ItemBasicInfoStatus;
+  /** Default `"csv"`. */
+  fileType?: ReportTextFileType;
+}
+
+/** A custom-variety option of a listing (`Custom Variety N Name` / `Value`). */
+export interface ItemVarietyOption {
+  name: string;
+  value: string;
+}
+
+/**
+ * One listing from the Item Basic Information report (contracts §17.8, live-verified on CAN
+ * 2026-10-10). The report carries NO price or inventory - join the Daily Inventory report
+ * (`reports.dailyInventory`) on `sellerPartNumber` for those. Columns the SDK does not map land
+ * in `extra` (keyed by the lower-cased, punctuation-free header).
+ */
+export interface ItemBasicInfoRow {
+  /** `Seller Part #` - the SKU. */
+  sellerPartNumber?: string;
+  /** `NE Item #` - the Newegg item number. */
+  neweggItemNumber?: string;
+  /** `Manufacturer Part #`. */
+  manufacturerPartNumber?: string;
+  /** Absent for listings without a UPC. */
+  upc?: string;
+  /** The listing's `Status` column, verbatim (`Active` / `Inactive`). */
+  status?: string;
+  /** `true` when `status` is Active, `false` when Inactive; absent when the column is missing/unknown. */
+  active?: boolean;
+  /** Catalog title (the column header is misspelled `Wesite Short Title` by Newegg). */
+  title?: string;
+  industry?: string;
+  subcategory?: string;
+  /** Bullet-point description; may contain newlines. */
+  bulletDescription?: string;
+  /** Item dimensions / weight as reported (units are not documented). */
+  itemLength?: number;
+  itemWidth?: number;
+  itemHeight?: number;
+  itemWeight?: number;
+  /** `Item Image`: the comma-separated image URL list, split. */
+  imageUrls?: string[];
+  /** `Date Created` as a calendar date `YYYY-MM-DD` (the file gives `MM/DD/YYYY`; month-first assumed). */
+  dateCreated?: string;
+  /** Marketplace platform code, e.g. `CAN`. */
+  platform?: string;
+  /** Variant group id, shared by every option of a variation family. */
+  itemGroupId?: string;
+  /** Up to three custom variety options. */
+  varieties?: ItemVarietyOption[];
+  extra?: Record<string, string>;
+}
+
+// -- order list / RMA list (paged inline) --------------------------------------
+/** A paged (inline JSON) report: submit, status, page-by-page result and the wait helpers. */
+export interface PagedReportApi<Input, Row> {
+  submit(input: Input, options?: RequestOptions): Promise<ReportSubmission>;
+  status(requestId: string, options?: RequestOptions): Promise<ReportStatus>;
+  /** One result page (1-based, 100 rows) of a FINISHED report. */
+  result(
+    requestId: string,
+    page?: number,
+    options?: ReportResultOptions,
+  ): Promise<ReportResultPage<Row>>;
+  /** Poll an already-submitted report to FINISHED, then fetch every page (up to `maxPages`). */
+  waitForRequest(
+    requestId: string,
+    options?: ReportWaitOptions & { version?: string },
+  ): Promise<CollectedReport<Row>>;
+  /** submit + waitForRequest. Throws {@link ReportTimeoutError} (with the requestId) on timeout. */
+  waitForResult(
+    input: Input,
+    options?: ReportWaitOptions & { version?: string },
+  ): Promise<CollectedReport<Row>>;
+}
+
+/** What the Order List report's `KeywordsValue` is matched against (`KeywordsType` 1-9). */
+export type OrderListKeywordType =
+  | "orderNumber"
+  | "invoiceNumber"
+  | "customerName"
+  | "sellerPartNumber"
+  | "neweggItemNumber"
+  | "customerPhoneNumber"
+  | "titleDescription"
+  | "manufacturer"
+  | "sellerOrderNumber";
+
+/** Criteria for the Order List report. `status` is required by Newegg. */
+export interface OrderListInput {
+  /** Order status to list (`Status` 0-5; required). `"unknown"` is not a valid criterion. */
+  status: Exclude<OrderStatus, "unknown">;
+  /** Keyword search (`KeywordsType` + `KeywordsValue`). Omit for all. */
+  keyword?: { type: OrderListKeywordType; value: string };
+  /** Fulfillment/channel filter (`Type`: all / sbn / sbs / multiChannel). `"nws"` is not offered. */
+  type?: Exclude<OrderTypeFilter, "nws">;
+  /** Order-date range start (Pacific). `Date` is rendered as its Pacific wall clock. */
+  dateFrom?: Date | string;
+  /** Order-date range end (Pacific). */
+  dateTo?: Date | string;
+  /** Only orders that auto-void within this many hours (`VoidSoon`). */
+  voidSoon?: 24 | 48;
+  /** `false` excludes already-downloaded orders. Default includes all. */
+  includeDownloaded?: boolean;
+  /** Newegg.com only: ISO 3-letter ship-to country. Rejected on B2B/CA. */
+  countryCode?: string;
+  /** Newegg.com only (`PremierOrder`). Rejected on B2B/CA. */
+  premierOrder?: PremierOrderFilter;
+}
+
+/** Criteria for the RMA List report. Every field is optional. */
+export interface RmaListInput {
+  keyword?: { type: RmaKeywordType; value: string };
+  status?: Exclude<RmaStatus, "unknown">;
+  type?: Exclude<RmaType, "unknown">;
+  processedBy?: RmaProcessedBy;
+  /** RMA-date range start (Pacific). */
+  dateFrom?: Date | string;
+  /** RMA-date range end (Pacific). */
+  dateTo?: Date | string;
+}
+
 /**
  * Read-only Reports Management reports. Report submission is a POST that creates a report job
  * only - it mutates nothing on the seller account (contracts §12 / §17 classification).
  */
 export interface ReportsApi {
+  /**
+   * Item Basic Information report (file via FTP): every listing of the seller (SKU, Newegg item
+   * number, manufacturer part number, UPC, status). The only way to enumerate "all my listings".
+   */
+  readonly itemBasicInfo: FileReportApi<ItemBasicInfoInput, ItemBasicInfoRow>;
+  /**
+   * Order List report (paged inline): orders in the same shape as {@link OrdersApi.list}. Rows
+   * carry the customer block (PII) exactly as `orders.list` does.
+   */
+  readonly orderList: PagedReportApi<OrderListInput, Order>;
+  /** RMA List report (paged inline): RMAs in the same shape as {@link RmaApi.list} (customer block is PII). */
+  readonly rmaList: PagedReportApi<RmaListInput, Rma>;
   /** Settlement Summary report: per-settlement payments, refunds and fees (all platforms). */
   readonly settlementSummary: SettlementSummaryReportApi;
   /** Settlement Transaction report: line-level transactions inside settlements (all platforms). */
@@ -1809,6 +1965,11 @@ export interface RmaItem {
   reason: RmaReason;
   reasonCode?: number;
   reasonDescription?: string;
+  /**
+   * RMA List report only (`RefundInfo.RMATotalRefund`): the refund total Newegg reports on the
+   * line. Documented as the RMA total, so it may repeat on every line of a multi-line RMA.
+   */
+  rmaTotalRefund?: number;
   /** Whether the item was unboxed (`UnOpen`; Newegg.com and Newegg.ca only). */
   unopened?: boolean;
   /** Seller-facing memo (`Memo`; Newegg.com and Newegg.ca only). */
@@ -1855,6 +2016,10 @@ export interface Rma {
   /** Total order amount minus everything refunded, including this RMA. */
   availableRefundAmount?: number;
   priorRefundAmount?: number;
+  /** RMA List report, Newegg.ca only: the GST/HST part of the refund. */
+  refundGstOrHstAmount?: number;
+  /** RMA List report, Newegg.ca only: the PST/QST part of the refund. */
+  refundPstOrQstAmount?: number;
   processedBy?: RmaProcessedBy;
   receiveDate?: { raw: string; iso?: string };
   note?: string;

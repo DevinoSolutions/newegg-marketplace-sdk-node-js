@@ -22,6 +22,9 @@ import {
   catalogResolveTool,
   reportsDailyInventoryTool,
   reportsDailyPriceTool,
+  reportsItemBasicInfoTool,
+  reportsOrderListTool,
+  reportsRmaListTool,
   reportsSettlementSummaryTool,
   reportsSettlementTransactionsTool,
   reportsStatusTool,
@@ -131,6 +134,9 @@ export function enabledToolNames(config: McpServerConfig): string[] {
     TOOL_NAMES.reportsSettlementTransactions,
     TOOL_NAMES.reportsDailyInventory,
     TOOL_NAMES.reportsDailyPrice,
+    TOOL_NAMES.reportsItemBasicInfo,
+    TOOL_NAMES.reportsOrderList,
+    TOOL_NAMES.reportsRmaList,
     TOOL_NAMES.reportsStatus,
   );
   // Listing creation: preview is read-only; apply is write-gated.
@@ -279,6 +285,9 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   registerToolDefinition(server, reportsSettlementTransactionsTool, ctx);
   registerToolDefinition(server, reportsDailyInventoryTool, ctx);
   registerToolDefinition(server, reportsDailyPriceTool, ctx);
+  registerToolDefinition(server, reportsItemBasicInfoTool, ctx);
+  registerToolDefinition(server, reportsOrderListTool, ctx);
+  registerToolDefinition(server, reportsRmaListTool, ctx);
   registerToolDefinition(server, reportsStatusTool, ctx);
   registerToolDefinition(server, createListingPreviewTool(config), ctx);
   if (config.allowWrites) {

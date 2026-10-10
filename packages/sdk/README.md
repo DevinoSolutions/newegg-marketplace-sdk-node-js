@@ -113,6 +113,12 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
   is never exposed or logged.
   Settlement reports wait up to 300 s by default (a Settlement Summary took ~170 s live); the daily
   file reports 120 s; pass `timeoutMs` to override.
+  Also: `itemBasicInfo` (file report listing **every listing** - SKU, Newegg item number, MPN, UPC,
+  title, active flag, variants; no price/inventory, join `dailyInventory` for those) and the async
+  `orderList` / `rmaList` reports (paged, rows are the same `Order` / `Rma` shapes as
+  `orders.list` / `rma.list`; the required result `version` defaults to 309 / 320 and is validated
+  per platform). These three wait up to 300 s (live: 2-4 minutes). Item Ranking (a synchronous,
+  Account-Manager-only `contentmgmt` call) and the China-only Tax Setting report are not built.
 - **`client.rma`** / **`client.refunds`** - read-only Service Management lookups (contracts §18):
   `rma.list/get/tryGet` (Get RMA Information; `version` defaults to 320) and
   `refunds.list/get/tryGet/listRequests/getRequestStatus` (courtesy refund information and request

@@ -234,6 +234,17 @@ daily reports return an FTP URL with embedded credentials; the SDK downloads the
 never exposes or logs that URL. Daily Price exists on Newegg.com only; on B2B/CA use the Daily
 Inventory report, which carries price and activation columns. Details: contracts §17.
 
+To enumerate every listing (there is no synchronous "list my products" call) use the Item Basic
+Information report; Order List and RMA List are the asynchronous variants of the order / RMA reads
+(MCP: `newegg_reports_item_basic_info`, `newegg_reports_order_list`, `newegg_reports_rma_list`,
+also reachable through `newegg_reports_status`). They take 2-4 minutes, so the MCP tools answer
+`pending` + `requestId` after `waitSeconds`. The order and RMA tools never return customer data.
+
+```ts
+const listings = await client.reports.itemBasicInfo.waitForResult({ status: "active" });
+console.log(listings.totalRows, listings.rows[0]?.sellerPartNumber); // SKU, no price/stock
+```
+
 ---
 
 ## MCP server — stdio

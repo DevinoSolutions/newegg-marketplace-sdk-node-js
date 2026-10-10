@@ -138,6 +138,9 @@ function parseAmounts(order: unknown): OrderAmounts {
     vatTotal: asNumber(g("VATTotal")),
     dutyTotal: asNumber(g("DutyTotal")),
     recyclingFee: asNumber(g("RecyclingFeeAmount")),
+    gstOrHstAmount: asNumber(g("GSTorHSTAmount")),
+    pstOrQstAmount: asNumber(g("PSTorQSTAmount")),
+    ehfAmount: asNumber(g("EHFAmount")),
     total: asNumber(g("OrderTotalAmount")),
   };
 }
@@ -163,7 +166,13 @@ function parseOrderItem(raw: unknown): OrderItem {
 
 function parseOrderPackage(raw: unknown): OrderPackage {
   const g = (key: string): unknown => getField(raw, key);
+  const lines = listItems(g("ItemInfoList"), "ItemInfo").map((line) => ({
+    sellerPartNumber: asString(getField(line, "SellerPartNumber")),
+    mfrPartNumber: asString(getField(line, "MfrPartNumber")),
+    shippedQty: asNumber(getField(line, "ShippedQty")),
+  }));
   return {
+    ...(lines.length > 0 ? { items: lines } : {}),
     shipCarrier: asString(g("ShipCarrier")),
     shipService: asString(g("ShipService")),
     trackingNumber: asString(g("TrackingNumber")),
@@ -175,7 +184,8 @@ function parseOrderPackage(raw: unknown): OrderPackage {
   };
 }
 
-function parseOrder(raw: unknown): Order {
+/** Maps one `OrderInfo` node; also used for the Order List report rows (contracts §17.6). */
+export function parseOrder(raw: unknown): Order {
   const g = (key: string): unknown => getField(raw, key);
   return {
     orderNumber: asString(g("OrderNumber")) ?? "",

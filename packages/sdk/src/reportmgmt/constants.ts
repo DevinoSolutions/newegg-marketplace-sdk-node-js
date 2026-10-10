@@ -17,6 +17,11 @@ export const REPORT_DEFAULT_TIMEOUT_MS = 120_000;
  * real account. 300 s leaves headroom; poll cost is unchanged (backoff caps at 15 s).
  */
 export const REPORT_SETTLEMENT_TIMEOUT_MS = 300_000;
+/**
+ * Default wait budget for the Item Basic Information, Order List and RMA List reports, ms. These
+ * walk the whole account history / catalog server-side like the settlement reports; same headroom.
+ */
+export const REPORT_LIST_TIMEOUT_MS = 300_000;
 /** First poll delay, ms. */
 export const REPORT_DEFAULT_POLL_INTERVAL_MS = 2_000;
 /** Poll delay ceiling, ms. */

@@ -55,6 +55,31 @@ function orderedRange(from: string, to: string, path: string, issues: NeweggVali
   }
 }
 
+/**
+ * Normalizes an optional `from`/`to` report date pair (each a `YYYY-MM-DD` or Pacific date-time
+ * string, or a `Date`), checking calendar validity and that the range is not inverted. Throws
+ * {@link NeweggValidationError} before any submission budget is spent.
+ */
+export function normalizeDateRange(
+  range: { from?: ReportDateInput; to?: ReportDateInput },
+  paths: { from: string; to: string },
+): { from?: string; to?: string } {
+  const issues: NeweggValidationIssue[] = [];
+  const out: { from?: string; to?: string } = {};
+  if (range.from !== undefined) out.from = normalizeDate(range.from, paths.from, issues);
+  if (range.to !== undefined) out.to = normalizeDate(range.to, paths.to, issues);
+  if (out.from !== undefined && out.to !== undefined) {
+    orderedRange(out.from, out.to, paths.from, issues);
+  }
+  throwIfIssues(issues);
+  return out;
+}
+
+/** Throws a {@link NeweggValidationError} listing `issues` when there are any. */
+export function throwIfInvalid(issues: NeweggValidationIssue[]): void {
+  throwIfIssues(issues);
+}
+
 function throwIfIssues(issues: NeweggValidationIssue[]): void {
   if (issues.length > 0) {
     const summary = issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ");

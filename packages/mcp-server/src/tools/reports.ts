@@ -18,9 +18,12 @@ import { ReportTimeoutError } from "@devino/newegg-marketplace-sdk";
 import type {
   CollectedReport,
   DownloadedReport,
+  ItemBasicInfoRow,
   NeweggClient,
+  Order,
   ReportWaitOptions,
 } from "@devino/newegg-marketplace-sdk";
+import { serializeRma } from "./rma.js";
 import {
   errorResult,
   mapErrorToPayload,
@@ -91,8 +94,17 @@ function pendingResult(marketplace: string, error: ReportTimeoutError): ToolResu
   });
 }
 
-function pagedOutput(collected: CollectedReport<object>, limit: number): Record<string, unknown> {
-  const rows = collected.rows.slice(0, limit);
+function identityRow(row: object): Record<string, unknown> {
+  return { ...row };
+}
+
+/** `map` turns an SDK row into the explicit, PII-free tool row (identity for the money reports). */
+function pagedOutput<Row extends object>(
+  collected: CollectedReport<Row>,
+  limit: number,
+  map: (row: Row) => Record<string, unknown> = identityRow,
+): Record<string, unknown> {
+  const rows = collected.rows.slice(0, limit).map(map);
   return {
     marketplace: collected.marketplace,
     pending: false,
@@ -104,8 +116,12 @@ function pagedOutput(collected: CollectedReport<object>, limit: number): Record<
   };
 }
 
-function fileOutput(downloaded: DownloadedReport<object>, limit: number): Record<string, unknown> {
-  const rows = downloaded.rows.slice(0, limit);
+function fileOutput<Row extends object>(
+  downloaded: DownloadedReport<Row>,
+  limit: number,
+  map: (row: Row) => Record<string, unknown> = identityRow,
+): Record<string, unknown> {
+  const rows = downloaded.rows.slice(0, limit).map(map);
   return {
     marketplace: downloaded.marketplace,
     pending: false,
@@ -392,6 +408,314 @@ export const reportsDailyPriceTool: ToolDefinition<
 };
 
 // ---------------------------------------------------------------------------
+// newegg_reports_item_basic_info
+// ---------------------------------------------------------------------------
+/**
+ * Explicit field-by-field mapping: no `extra`, so an unmapped column can never leak. The long
+ * bullet description and the image URL list are left out to keep 500-row answers small.
+ */
+function serializeItemRow(row: ItemBasicInfoRow): Record<string, unknown> {
+  return {
+    sellerPartNumber: row.sellerPartNumber,
+    neweggItemNumber: row.neweggItemNumber,
+    manufacturerPartNumber: row.manufacturerPartNumber,
+    upc: row.upc,
+    status: row.status,
+    active: row.active,
+    title: row.title,
+    industry: row.industry,
+    subcategory: row.subcategory,
+    dateCreated: row.dateCreated,
+    platform: row.platform,
+    itemGroupId: row.itemGroupId,
+    varieties: row.varieties,
+  };
+}
+
+const itemBasicInfoInputSchema = z
+  .strictObject({
+    status: z
+      .enum(["all", "active", "inactive"])
+      .optional()
+      .describe("Which listings to include (default all)."),
+    limit: limitSchema,
+    waitSeconds: waitSecondsSchema,
+  })
+  .describe("Item Basic Information report filters.");
+
+export const reportsItemBasicInfoTool: ToolDefinition<
+  typeof itemBasicInfoInputSchema,
+  typeof reportOutputSchema
+> = {
+  name: TOOL_NAMES.reportsItemBasicInfo,
+  title: "Newegg item basic information report (all listings)",
+  description:
+    "Item Basic Information report: every listing of the seller (seller part number / SKU, " +
+    "Newegg item number, manufacturer part number, UPC, title, active or inactive, variant " +
+    "group). This is the only way to enumerate ALL listings, e.g. to check whether a product " +
+    "already has a listing. It carries NO price or stock (use newegg_reports_daily_inventory or " +
+    "newegg_inventory_get / newegg_pricing_get for those). " +
+    "The report file is downloaded and parsed server-side; its credential-bearing download link " +
+    "is never exposed. Returns at most `limit` rows plus totalRows (use `status` to narrow). " +
+    "Newegg builds it in about 1-4 minutes: waits up to waitSeconds, else returns pending=true " +
+    "with a requestId for newegg_reports_status (reportType itemBasicInfo). Read-only.",
+  annotations: { readOnlyHint: true, openWorldHint: true },
+  inputSchema: itemBasicInfoInputSchema,
+  outputSchema: reportOutputSchema,
+  handler: (input, ctx) => {
+    const limit = input.limit ?? DEFAULT_LIMIT;
+    return runReport(ctx, async () =>
+      fileOutput(
+        await ctx.client.reports.itemBasicInfo.waitForResult(
+          input.status !== undefined ? { status: input.status } : {},
+          waitOptions(input.waitSeconds, limit),
+        ),
+        limit,
+        serializeItemRow,
+      ),
+    );
+  },
+};
+
+// ---------------------------------------------------------------------------
+// newegg_reports_order_list
+// ---------------------------------------------------------------------------
+/** USD on Newegg.com / Neweggbusiness.com, CAD on Newegg.ca. */
+function currencyOf(client: NeweggClient): "USD" | "CAD" {
+  return client.marketplace === "ca" ? "CAD" : "USD";
+}
+
+/**
+ * PII-free order row. The customer block (name, phone, masked e-mail, ship-to address) and the
+ * free-text package memo are NEVER mapped; everything else is business data.
+ */
+function serializeOrderRow(order: Order): Record<string, unknown> {
+  return {
+    orderNumber: order.orderNumber,
+    sellerOrderNumber: order.sellerOrderNumber,
+    invoiceNumber: order.invoiceNumber,
+    status: order.status,
+    statusDescription: order.statusDescription,
+    downloaded: order.downloaded,
+    orderDate: order.orderDate,
+    isAutoVoid: order.isAutoVoid,
+    salesChannel: order.salesChannel,
+    fulfillment: order.fulfillment,
+    shipService: order.shipService,
+    amounts: order.amounts,
+    quantity: order.quantity,
+    items: order.items.map((item) => ({
+      sellerPartNumber: item.sellerPartNumber,
+      neweggItemNumber: item.neweggItemNumber,
+      mfrPartNumber: item.mfrPartNumber,
+      upc: item.upc,
+      description: item.description,
+      orderedQty: item.orderedQty,
+      shippedQty: item.shippedQty,
+      unitPrice: item.unitPrice,
+      extendedUnitPrice: item.extendedUnitPrice,
+      extendedShippingCharge: item.extendedShippingCharge,
+      status: item.status,
+      statusDescription: item.statusDescription,
+    })),
+    packages: order.packages.map((pkg) => ({
+      shipCarrier: pkg.shipCarrier,
+      shipService: pkg.shipService,
+      shipDate: pkg.shipDate,
+      sellerPartNumber: pkg.sellerPartNumber,
+      shippedQty: pkg.shippedQty,
+      items: pkg.items?.map((line) => ({
+        sellerPartNumber: line.sellerPartNumber,
+        mfrPartNumber: line.mfrPartNumber,
+        shippedQty: line.shippedQty,
+      })),
+    })),
+  };
+}
+
+const ORDER_LIST_STATUSES = [
+  "unshipped",
+  "partiallyShipped",
+  "shipped",
+  "invoiced",
+  "voided",
+  "paymentPending",
+] as const;
+
+const orderListInputSchema = z
+  .strictObject({
+    status: z.enum(ORDER_LIST_STATUSES).describe("Order status to list (Newegg requires one)."),
+    keywordType: z
+      .enum([
+        "orderNumber",
+        "invoiceNumber",
+        "sellerPartNumber",
+        "neweggItemNumber",
+        "titleDescription",
+        "manufacturer",
+        "sellerOrderNumber",
+      ])
+      .optional()
+      .describe(
+        "What keywordValue is matched against (customer-name/phone search is not offered).",
+      ),
+    keywordValue: z.string().min(1).max(100).optional().describe("Search text for keywordType."),
+    type: z
+      .enum(["all", "sbn", "sbs", "multiChannel"])
+      .optional()
+      .describe("Fulfillment type filter (default all)."),
+    dateFrom: reportDateSchema.optional().describe("Order date range start (Pacific Time)."),
+    dateTo: reportDateSchema.optional().describe("Order date range end (Pacific Time)."),
+    voidSoon: z
+      .union([z.literal(24), z.literal(48)])
+      .optional()
+      .describe("Only orders that auto-void within this many hours."),
+    includeDownloaded: z
+      .boolean()
+      .optional()
+      .describe("false excludes already-downloaded orders (default includes them)."),
+    countryCode: z
+      .string()
+      .regex(/^[A-Z]{3}$/)
+      .optional()
+      .describe("Newegg.com only: 3-letter ISO ship-to country."),
+    premierOrder: z
+      .enum(["all", "premierOnly", "noPremier"])
+      .optional()
+      .describe("Newegg.com only: Premier order filter."),
+    limit: limitSchema,
+    waitSeconds: waitSecondsSchema,
+  })
+  .refine((input) => (input.keywordType === undefined) === (input.keywordValue === undefined), {
+    message: "keywordType and keywordValue must be given together",
+    path: ["keywordValue"],
+  })
+  .describe("Criteria for the Order List report.");
+
+const orderListOutputSchema = reportOutputSchema.extend({
+  currency: z.enum(["USD", "CAD"]).optional().describe("Currency of every amount."),
+});
+
+export const reportsOrderListTool: ToolDefinition<
+  typeof orderListInputSchema,
+  typeof orderListOutputSchema
+> = {
+  name: TOOL_NAMES.reportsOrderList,
+  title: "Newegg order list report",
+  description:
+    "Order List report: orders of one status (required), optionally narrowed by keyword, " +
+    "fulfillment type, order date range or void-soon window, with line items and packages. " +
+    "Buyer data is NEVER returned (no names, addresses, phones or e-mails). Amounts are USD " +
+    "(Newegg.com / Neweggbusiness.com) or CAD (Newegg.ca). Returns at most `limit` rows plus " +
+    "totalRows. Waits up to waitSeconds; if still processing, returns pending=true with a " +
+    "requestId for newegg_reports_status (reportType orderList). For one order prefer " +
+    "newegg_orders_get. Read-only: creates a report job and changes nothing.",
+  annotations: { readOnlyHint: true, openWorldHint: true },
+  inputSchema: orderListInputSchema,
+  outputSchema: orderListOutputSchema,
+  handler: (input, ctx) => {
+    const limit = input.limit ?? DEFAULT_LIMIT;
+    return runReport(ctx, async () => ({
+      ...pagedOutput(
+        await ctx.client.reports.orderList.waitForResult(
+          {
+            status: input.status,
+            ...(input.keywordType !== undefined && input.keywordValue !== undefined
+              ? { keyword: { type: input.keywordType, value: input.keywordValue } }
+              : {}),
+            ...(input.type !== undefined ? { type: input.type } : {}),
+            ...(input.dateFrom !== undefined ? { dateFrom: input.dateFrom } : {}),
+            ...(input.dateTo !== undefined ? { dateTo: input.dateTo } : {}),
+            ...(input.voidSoon !== undefined ? { voidSoon: input.voidSoon } : {}),
+            ...(input.includeDownloaded !== undefined
+              ? { includeDownloaded: input.includeDownloaded }
+              : {}),
+            ...(input.countryCode !== undefined ? { countryCode: input.countryCode } : {}),
+            ...(input.premierOrder !== undefined ? { premierOrder: input.premierOrder } : {}),
+          },
+          waitOptions(input.waitSeconds, limit),
+        ),
+        limit,
+        serializeOrderRow,
+      ),
+      currency: currencyOf(ctx.client),
+    }));
+  },
+};
+
+// ---------------------------------------------------------------------------
+// newegg_reports_rma_list
+// ---------------------------------------------------------------------------
+const rmaListInputSchema = z
+  .strictObject({
+    keywordType: z
+      .enum(["rmaNumber", "orderNumber", "sellerRmaNumber"])
+      .optional()
+      .describe("What keywordValue is matched against (customer-name search is not offered)."),
+    keywordValue: z.string().min(1).max(100).optional().describe("Search text for keywordType."),
+    status: z
+      .enum(["open", "received", "rejected", "voided", "closed", "processing"])
+      .optional()
+      .describe("RMA status filter (default all)."),
+    type: z.enum(["replacement", "refund"]).optional().describe("RMA kind filter (default all)."),
+    processedBy: z
+      .enum(["seller", "newegg"])
+      .optional()
+      .describe("Who processed the RMA (default all)."),
+    dateFrom: reportDateSchema.optional().describe("RMA date range start (Pacific Time)."),
+    dateTo: reportDateSchema.optional().describe("RMA date range end (Pacific Time)."),
+    limit: limitSchema,
+    waitSeconds: waitSecondsSchema,
+  })
+  .refine((input) => (input.keywordType === undefined) === (input.keywordValue === undefined), {
+    message: "keywordType and keywordValue must be given together",
+    path: ["keywordValue"],
+  })
+  .describe("Criteria for the RMA List report.");
+
+export const reportsRmaListTool: ToolDefinition<
+  typeof rmaListInputSchema,
+  typeof orderListOutputSchema
+> = {
+  name: TOOL_NAMES.reportsRmaList,
+  title: "Newegg RMA list report",
+  description:
+    "RMA List report: returns (replacements and refunds) filtered by status, kind, processor, " +
+    "keyword or RMA date range, with per-SKU reason, quantity and refund amounts. Customer data " +
+    "(name, phone, address, e-mail), RMA notes and return-label tracking are NEVER returned. " +
+    "Amounts are USD (Newegg.com / Neweggbusiness.com) or CAD (Newegg.ca). Returns at most " +
+    "`limit` rows plus totalRows. Waits up to waitSeconds; if still processing, returns " +
+    "pending=true with a requestId for newegg_reports_status (reportType rmaList). For one RMA " +
+    "prefer newegg_rma_get. Read-only: creates a report job and changes nothing.",
+  annotations: { readOnlyHint: true, openWorldHint: true },
+  inputSchema: rmaListInputSchema,
+  outputSchema: orderListOutputSchema,
+  handler: (input, ctx) => {
+    const limit = input.limit ?? DEFAULT_LIMIT;
+    return runReport(ctx, async () => ({
+      ...pagedOutput(
+        await ctx.client.reports.rmaList.waitForResult(
+          {
+            ...(input.keywordType !== undefined && input.keywordValue !== undefined
+              ? { keyword: { type: input.keywordType, value: input.keywordValue } }
+              : {}),
+            ...(input.status !== undefined ? { status: input.status } : {}),
+            ...(input.type !== undefined ? { type: input.type } : {}),
+            ...(input.processedBy !== undefined ? { processedBy: input.processedBy } : {}),
+            ...(input.dateFrom !== undefined ? { dateFrom: input.dateFrom } : {}),
+            ...(input.dateTo !== undefined ? { dateTo: input.dateTo } : {}),
+          },
+          waitOptions(input.waitSeconds, limit),
+        ),
+        limit,
+        serializeRma,
+      ),
+      currency: currencyOf(ctx.client),
+    }));
+  },
+};
+
+// ---------------------------------------------------------------------------
 // newegg_reports_status
 // ---------------------------------------------------------------------------
 const REPORT_TYPES = [
@@ -399,6 +723,9 @@ const REPORT_TYPES = [
   "settlementTransactions",
   "dailyInventory",
   "dailyPrice",
+  "itemBasicInfo",
+  "orderList",
+  "rmaList",
 ] as const;
 
 const statusInputSchema = z
@@ -422,6 +749,7 @@ const statusOutputSchema = z.object({
   returnedRows: z.number().optional(),
   truncated: z.boolean().optional(),
   fileName: z.string().optional(),
+  currency: z.enum(["USD", "CAD"]).optional(),
 });
 
 async function collectFinished(
@@ -451,6 +779,30 @@ async function collectFinished(
         await client.reports.dailyPrice.waitForRequest(input.requestId, options),
         limit,
       );
+    case "itemBasicInfo":
+      return fileOutput(
+        await client.reports.itemBasicInfo.waitForRequest(input.requestId, options),
+        limit,
+        serializeItemRow,
+      );
+    case "orderList":
+      return {
+        ...pagedOutput(
+          await client.reports.orderList.waitForRequest(input.requestId, options),
+          limit,
+          serializeOrderRow,
+        ),
+        currency: currencyOf(client),
+      };
+    case "rmaList":
+      return {
+        ...pagedOutput(
+          await client.reports.rmaList.waitForRequest(input.requestId, options),
+          limit,
+          serializeRma,
+        ),
+        currency: currencyOf(client),
+      };
   }
 }
 

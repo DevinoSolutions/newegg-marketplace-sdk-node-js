@@ -1686,22 +1686,23 @@ and stores only the eligible updates under the single-use `previewId` (ADR 0005)
 the US write response shape, `CT029` on the B2B/CAN endpoint, and whether the B2B/CAN echoed
 `SellingPrice` reflects a deactivated item's real price.
 
-## 17. Reports Management — Settlement, Daily Inventory and Daily Price reports (reads)
+## 17. Reports Management — Settlement, Daily Inventory/Price, Item Basic Info, Order List and RMA List reports (reads)
 
 Extracted 2026-10-10 from the official Reports Management pages (all under
 `https://developer.newegg.com/newegg_marketplace_api/reports_management/`; the `submit_report_request/`
 index page was last updated 2018-10-15, `get_report_result/` 2021-10-28):
 
-| Report                        | Submit page (`submit_report_request/…`)           | Result page (`get_report_result/…`)   |
-| ----------------------------- | ------------------------------------------------- | ------------------------------------- |
-| Settlement Summary            | `submit_settlement_summary_report/`               | `get_settlement_summary_report/`      |
-| Settlement Transaction        | `submit_settlement_transaction_report/`           | `get_settlement_transaction_report/`  |
-| Daily Inventory (Newegg.com)  | `submit_daily_inventory_report/`                  | `get_daily_inventory_report/`         |
-| Daily Inventory (B2B and CAN) | `submit_daily_inventory_report_b2b_can/`          | `get_daily_inventory_report_b2b_can/` |
-| Daily Price (Newegg.com only) | `submit_daily_price_report/`                      | `get_daily_price_report/`             |
-| Order List (not implemented)  | `submit_order_list_report/`                       | `get_order_list_report/`              |
-| RMA List (not implemented)    | `submit_rma_list_report/`                         | `get_rma_list_report/`                |
-| Status (all report types)     | `https://…/reports_management/get_report_status/` | —                                     |
+| Report                        | Submit page (`submit_report_request/…`)           | Result page (`get_report_result/…`)                                                                                                                         |
+| ----------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Settlement Summary            | `submit_settlement_summary_report/`               | `get_settlement_summary_report/`                                                                                                                            |
+| Settlement Transaction        | `submit_settlement_transaction_report/`           | `get_settlement_transaction_report/`                                                                                                                        |
+| Daily Inventory (Newegg.com)  | `submit_daily_inventory_report/`                  | `get_daily_inventory_report/`                                                                                                                               |
+| Daily Inventory (B2B and CAN) | `submit_daily_inventory_report_b2b_can/`          | `get_daily_inventory_report_b2b_can/`                                                                                                                       |
+| Daily Price (Newegg.com only) | `submit_daily_price_report/`                      | `get_daily_price_report/`                                                                                                                                   |
+| Order List                    | `submit_order_list_report/`                       | `get_order_list_report/`                                                                                                                                    |
+| RMA List                      | `submit_rma_list_report/`                         | `get_rma_list_report/`                                                                                                                                      |
+| Item Basic Information        | `submit-item-basic-info-report/` (hyphens)        | `get-item-basic-information-report/` — **404 on 2026-10-10** (linked from the result index, page missing); the file columns below are live-verified instead |
+| Status (all report types)     | `https://…/reports_management/get_report_status/` | —                                                                                                                                                           |
 
 The lifecycle is §12's: `POST reportmgmt/report/submitrequest` (100/hour) → `PUT
 reportmgmt/report/status` (500/hour) → `PUT reportmgmt/report/result` (500/hour), on every platform
@@ -1739,15 +1740,15 @@ RequestStatus: "SUBMITTED"}` (object-or-array; XML wraps `ResponseInfo`). The do
 
 ### 17.1 Which reports are paged-inline and which are files
 
-| Report                 | Result delivery                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------ |
-| Settlement Summary     | inline JSON, **paged** (`PageInfo`, max 100 rows/page)                               |
-| Settlement Transaction | inline JSON, **paged** (max 100 rows/page)                                           |
-| Order List             | inline JSON, paged (max 100/page; `OrderInfoList`, §10.1-like)                       |
-| RMA List               | inline JSON, paged (max 100/page; `RMAInfoList`)                                     |
-| Daily Inventory        | **file** — `ResponseBody.ReportFileURL` (FTP, embedded credentials)                  |
-| Daily Price            | **file** — `ResponseBody.ReportFileURL` (FTP, embedded credentials)                  |
-| Item Basic Information | **file** — same `ReportFileURL` shape (live-verified on CAN 2026-09-01; not wrapped) |
+| Report                 | Result delivery                                                                                |
+| ---------------------- | ---------------------------------------------------------------------------------------------- |
+| Settlement Summary     | inline JSON, **paged** (`PageInfo`, max 100 rows/page)                                         |
+| Settlement Transaction | inline JSON, **paged** (max 100 rows/page)                                                     |
+| Order List             | inline JSON, paged (max 100/page; `OrderInfoList`, §10.1-like) — live-verified                 |
+| RMA List               | inline JSON, paged (max 100/page; `RMAInfoList`) — live-verified                               |
+| Daily Inventory        | **file** — `ResponseBody.ReportFileURL` (FTP, embedded credentials)                            |
+| Daily Price            | **file** — `ResponseBody.ReportFileURL` (FTP, embedded credentials)                            |
+| Item Basic Information | **file** — same `ReportFileURL` shape, zipped (live-verified on CAN 2026-09-01 and 2026-10-10) |
 
 ### 17.2 Settlement Summary report
 
@@ -2021,10 +2022,14 @@ from every public type (`ReportFileInfo` exposes only the host and file name), r
 `raw` payload (`includeRaw`), downloads over FTP itself (passive mode, host allow-list `*.newegg.com`, size
 caps) or through the caller's `reportFileDownloader`, and keeps the URL out of thrown errors.
 
-### 17.6 Order List and RMA List reports (documented, not implemented)
+### 17.6 Order List and RMA List reports
 
-Contracted for completeness; not wrapped because Get Order Information (§10) already covers orders and
-RMAs are read directly through Get RMA Information (§18).
+Verified 2026-10-10 against `submit_order_list_report/`, `get_order_list_report/`,
+`submit_rma_list_report/` and `get_rma_list_report/` (base `https://developer.newegg.com/newegg_marketplace_api/reports_management/`)
+and live on CAN (below). Now wrapped as `client.reports.orderList` / `rmaList`: unlike Get Order Information
+(§10) and Get RMA Information (§18) these are asynchronous jobs, so they suit large date ranges; the rows
+reuse the §10.1 / §18.1 mappers. The submit pages state 100 submissions/hour, the result pages 500/hour, and
+share the copy-pasted RP error table (§17 preamble).
 
 - **Order List** — submit `OperationType: "OrderListReportRequest"`, criteria `OrderReportCriteria`
   `{ RequestType: "ORDER_LIST_REPORT", KeywordsType (0 all · 1 OrderNumber · 2 InvoiceNumber · 3 CustomerName
@@ -2044,7 +2049,52 @@ SellerRMANumber), KeywordsValue, Status (0 all · 1 Open · 2 Received · 3 Reje
 1 Seller · 2 Newegg) }`. Result: inline paged, response `GetRMAListInfoResponse`, `version` query (305
   B2B/CAN; 306/307 US; 309 all; 320 all) selects the field set; rows in `RMAInfoList > RMAInfo` with an
   `RMATransactionList > RMATransaction` per SKU. The page's samples disagree with its own field table
-  (nested `RefundInfo`, `ReturnShippingLabel > Label`) — verify live before implementing.
+  (nested `RefundInfo`, `ReturnShippingLabel > Label`); **live-verified** below: the samples win.
+
+Request details (the same on all three platforms unless noted):
+
+- Order List `Status` is **required** (an omitted status is not defaulted by the SDK); `KeywordsType` defaults
+  to `0` and `KeywordsValue` is ignored then. `OrderDownloaded` is inverted: `"false"` includes downloaded
+  orders (default), `"true"` excludes them. `CountryCode` / `PremierOrder` are **Newegg.com only** (the SDK
+  rejects them on B2B/CAN before spending a submission). Wire values are sent as strings, as in the samples.
+- The result request is `{ OperationType: "OrderListReportRequest" | "RMAListReportRequest", RequestBody: {
+RequestID, PageInfo: { PageIndex, PageSize } } }` plus the **required** `version` query. Documented versions:
+  Order List — 305 (B2B/CAN: `SellerOrderNumber`), 306 (US: `SellerOrderNumber`; B2B: `RecyclingFeeAmount`),
+  307 (US: `SalesTax`/`VATTotal`/`DutyTotal`), 309 (all: replacement order numbers; US adds
+  `RecyclingFeeAmount`), 310 (US: `AutoRegWarranty`); RMA List — 305 (B2B/CAN), 306/307 (US), 309 (all), 320
+  (all: return-shipping label). The SDK validates `version` against the platform's documented set
+  (`platform/reports.ts`) and defaults Order List to **309**, RMA List to **320**. **ASSUMPTION:** versions
+  outside that set (e.g. Order List 315, which Get Order Information accepts) are rejected by Newegg too.
+- RMA List `Status` default `0` = all; `RMAType` / `ProcessedBy` default `0`; response `OperationType`s are
+  `GetOrderInfoResponse` / `GetRMAListInfoResponse`. The RMA row additionally carries flat `CustomerAddress`
+  (one string), `LastEditUser` (can be a user e-mail) and `RMANote` — all PII-class, never mapped to an MCP tool.
+
+**Live verification (CAN, 2026-10-10, read-only; no account values recorded).**
+
+- Order List: submit/status/result all work with `version=309`. A query with no matching orders is
+  `FINISHED` within ~30 s and the result carries `PageInfo` (`TotalCount: 0`) but **no `OrderInfoList` key at
+  all** (not `""`, not `[]`). With data, `OrderInfoList` is a bare JSON array of `OrderInfo` (27 rows on one
+  page matched the synchronous Get Order Information count for the same status). The row shape equals §10.1
+  plus Newegg.ca's `GSTorHSTAmount`, `PSTorQSTAmount` and `EHFAmount` (now `OrderAmounts.gstOrHstAmount` /
+  `pstOrQstAmount` / `ehfAmount`), `UnitShippingCharge` (unmapped) and **package lines nested under
+  `PackageInfoList[].ItemInfoList[]`** (`SellerPartNumber`, `MfrPartNumber`, `ShippedQty`) instead of the
+  flat package fields of the field table (now `OrderPackage.items`). `IsSuccess` is a real boolean, the
+  numeric ids arrive as numbers, `SellerOrderNumber` as `""`.
+- RMA List: `RMAInfoList` is a bare array; every row has `RMANumber` (number), `SellerRMANumber` (`""`),
+  `RMAType`/`RMAStatus` (numbers) with descriptions, `LastEditDate`/`LastEditUser`, `OrderNumber`, `OrderAmount`,
+  `RMAProcessedBy`, the customer block (`CustomerName`, `CustomerPhoneNumber`, a flat `CustomerAddress`),
+  `RMAReceiveDate`, `RMANote`, `RefundGSTorHSTAmount`/`RefundPSTorQSTAmount` (CAN), `ReturnShippingLabel` (an
+  **array** of `{TrackingNumber, TrackingURL, LabelEstimateCost, PaidBy}`) and `RMATransactionList` (an array).
+  Each transaction nests **`RefundInfo`** = `{ItemReturnQty, ItemRefundPerQty, ItemShippingRefund,
+RMATotalRefund, RefundReason (number), RefundReasonDescription}` — different names from Get RMA Information's
+  flat `ReturnQuantity` / `ReturnUnitPrice` / `RefundShippingPrice` / `RMAReason`; the SDK flattens and aliases
+  them (`ReplacementReason*` the same way, **ASSUMPTION** for replacement RMAs: none existed to verify).
+  `RMATotalRefund` is exposed per line as `RmaItem.rmaTotalRefund` (documented as the RMA total; whether it
+  repeats on every line of a multi-line RMA is **ASSUMPTION**-unverified).
+- Timing: with the three reports running concurrently, Item Basic Info took ~214 s, RMA List ~137 s (2 RMAs),
+  Order List ~258 s (27 orders), and an empty-result Order List ~31 s. Newegg builds them in a background job,
+  so the SDK's wait budget for these three is 300 s (`REPORT_LIST_TIMEOUT_MS`) and the MCP tools return
+  `pending` + `requestId` after `waitSeconds`.
 
 ### 17.7 SDK mapping
 
@@ -2056,11 +2106,15 @@ SellerRMANumber), KeywordsValue, Status (0 all · 1 Open · 2 Received · 3 Reje
 | `settlementTransactions.…`                                                  | §17.3 (paged inline; the RP020 rule is enforced client-side)                 |
 | `dailyInventory.submit/status/result/download/waitForRequest/waitForResult` | §17.4 (file; US vs B2B/CAN differences live in `platform/reports.ts`)        |
 | `dailyPrice.…`                                                              | §17.5 (file; US only — B2B/CAN throw `UnsupportedMarketplaceOperationError`) |
+| `itemBasicInfo.submit/status/result/download/waitForRequest/waitForResult`  | §17.8 (file; identical request on every platform)                            |
+| `orderList.submit/status/result/waitForRequest/waitForResult`               | §17.6 (paged inline, `version` default 309, rows = `Order`)                  |
+| `rmaList.…`                                                                 | §17.6 (paged inline, `version` default 320, rows = `Rma`)                    |
 | `status(requestId)`                                                         | §12.2 (report-type independent)                                              |
 
 `waitFor*` polls with `pollIntervalMs` (2 s) ×1.5 per poll up to 15 s inside a time budget - **300 s for
-the two settlement reports, 120 s for the daily file reports** (changed 2026-10-10: a Settlement Summary
-took about 170 s live, see below; an explicit `timeoutMs` always wins) - then throws
+the two settlement reports and for Item Basic Info / Order List / RMA List, 120 s for the daily file reports**
+(changed 2026-10-10: a Settlement Summary took about 170 s live, see below; an explicit `timeoutMs` always
+wins) - then throws
 `ReportTimeoutError` carrying the `requestId` (continue with `waitForRequest(requestId)`; never resubmit —
 100/hour). A CANCELLED report throws a non-retryable `ReportTimeoutError`. Paged reports are fetched up to
 `maxPages` (default 50 → 5,000 rows) and flagged `truncated` beyond it; file reports keep at most `maxRows`
@@ -2071,7 +2125,11 @@ parsed rows (default 50,000) and report the full `totalRows`.
 (tab) and UTF-8 encoding of the daily report files; the B2B/CAN Daily Inventory result `OperationType`
 (`DailyInventoryReportRequest`, taken from the page); that the daily reports' file arrives zipped only above
 40,000 items (the SDK reads both a bare file and a zip); whether `NeweggAPIResponse` wraps the
-settlement results (the parser accepts both); the FTP download itself (see below).
+settlement results (the parser accepts both). Still open for the 2026-10-10 additions: Order List /
+RMA List results for versions other than the defaults (309 / 320); the replacement-RMA field names
+(`ReplacementReason*`); month-first `Date Created` and the units of the Item Basic Info dimensions; the
+`Status`/`Type` filters beyond the unfiltered CAN queries run live; the US and B2B variants of all three
+reports (only CAN was exercised).
 
 **Live verification (2026-10-10, US seller account, read-only; no account values recorded).**
 
@@ -2084,10 +2142,94 @@ settlement results (the parser accepts both); the FTP download itself (see below
   documented amount fields mapped.
 - Daily Inventory (US, `INTERNATIONAL_INVENTORY_REPORT`): submit accepted, but the report was still
   `IN_PROGRESS` after more than 5 minutes. Calling `result` before FINISHED returns HTTP 400 `CE012`
-  (surfaced as `NeweggApiError`), so wait for FINISHED first. The FTP download is covered by mocked tests
-  and a local fake FTP server only (**ASSUMPTION**: passive FTP to the documented `ftp03.newegg.com` URL).
+  (surfaced as `NeweggApiError`), so wait for FINISHED first. The FTP download of a Daily Inventory file
+  is covered by mocked tests and a local fake FTP server only (**ASSUMPTION**: passive FTP to the documented
+  `ftp03.newegg.com` URL); the SDK's downloader **was** verified live on the Item Basic Info report's
+  `mktpftpreport.newegg.com` URL (§17.8), which retires the "FTP download itself" assumption in general.
+- **Empty lists (checked 2026-10-10, CAN):** servicemgmt answers an empty list with `""` (§18); the reports do
+  NOT do that. An Order List with no matches omits the list key entirely (only `PageInfo` with
+  `TotalCount: 0` is present). The SDK's report row reader also drops a `""` / `{}` list node and blank
+  entries so neither can become a phantom row.
 - Status polling shares one 500/hour budget: aggressive probing hit HTTP 429 on `status`. The SDK backs
   off 1.5x up to 15 s.
+
+### 17.8 Item Basic Information report (file; every listing of the seller)
+
+The only way to enumerate "all my listings" (there is no synchronous list endpoint; §5/§15 reads are keyed).
+Submit page (read 2026-10-10): `https://developer.newegg.com/newegg_marketplace_api/reports_management/submit_report_request/submit-item-basic-info-report/`.
+The matching result page (`…/get_report_result/get-item-basic-information-report/`) returned **HTTP 404** on
+2026-10-10, so the response/columns below are **live-verified** (CAN, 2026-09-01 and 2026-10-10), not
+doc-sourced.
+
+Submit — `POST {prefix}reportmgmt/report/submitrequest?sellerid=` (100/hour, all three platforms, **no
+`version` query**):
+
+```json
+{
+  "OperationType": "ItemBasicInfoReportRequest",
+  "RequestBody": {
+    "ItemBasicInfoReportCriteria": {
+      "RequestType": "ITEM_BASIC_INFO_REPORT",
+      "Status": "0",
+      "FileType": "CSV"
+    }
+  }
+}
+```
+
+`Status`: `0` all (default) · `1` active only · `2` inactive only. `FileType`: `TXT` · `CSV` · `XLS` (the
+SDK sends `CSV`; XLS is not parsed). The optional `IssueUser` is not sent. Response: `OperationType:
+"ItemBasicInfoReportResponse"`, `RequestType: "ITEM_BASIC_INFO_REPORT"`, the usual §12.1 `ResponseList`
+entry. The page lists only the shared copy-pasted RP error table plus `CE003` (schema validation: bad
+`Status`/`FileType`/missing `RequestType`).
+
+Result — `PUT …/report/result` with `{ "OperationType": "ItemBasicInfoReportRequest", "RequestBody": {
+"RequestID": "<id>" } }` (no paging). The file URL is nested at `NeweggAPIResponse.ResponseBody.ReportFileURL`
+(the top-level `ResponseBody` is absent). It is an FTP URL **with embedded credentials** (a secret, §17.5) on
+host **`mktpftpreport.newegg.com`** (not `ftp03.newegg.com`); the file is a **zip** (`ApiItemBaseInfoReport_<id>.zip`)
+holding one CSV. The SDK's FTP downloader (passive, `*.newegg.com`) fetched it live without change.
+
+Columns (live, CSV; header text normalized by lower-casing and dropping punctuation, `#` → "number"):
+
+| Normalized header (SDK key)                              | `ItemBasicInfoRow` field         | Notes                                                       |
+| -------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------- |
+| `sellerpartnumber`                                       | `sellerPartNumber`               | the SKU                                                     |
+| `neitemnumber`                                           | `neweggItemNumber`               | 14-character Newegg item number                             |
+| `manufacturerpartnumber`                                 | `manufacturerPartNumber`         | present on every live row                                   |
+| `upc`                                                    | `upc`                            | blank on some rows (13 of 85 live)                          |
+| `status`                                                 | `status`, `active`               | `Active` / `Inactive` (47 / 38 live)                        |
+| `wesiteshorttitle` (sic; `websiteshorttitle` accepted)   | `title`                          | Newegg misspells the header "Wesite Short Title"            |
+| `industry`, `subcategory`                                | `industry`, `subcategory`        |                                                             |
+| `bulletdescription`                                      | `bulletDescription`              | quoted, usually contains newlines                           |
+| `itemlength` / `itemwidth` / `itemheight` / `itemweight` | `itemLength` … `itemWeight`      | decimals; **ASSUMPTION** units (in / lb) are not documented |
+| `itemimage`                                              | `imageUrls`                      | comma-separated URLs (up to 7 live), split                  |
+| `datecreated`                                            | `dateCreated`                    | `MM/DD/YYYY` (month-first **ASSUMPTION**) → `YYYY-MM-DD`    |
+| `platform`                                               | `platform`                       | `CAN` on Newegg.ca                                          |
+| `itemgroupid`                                            | `itemGroupId`                    | variant-family id, blank for single-SKU listings            |
+| `customvariety1name` … `customvariety3value`             | `varieties[]`                    | up to 3 `{name, value}` options                             |
+| anything else                                            | `extra` (SDK only; never in MCP) | forward compatibility                                       |
+
+The report carries **no price, inventory, fulfillment or condition column** — join the Daily Inventory report
+(§17.4; B2B/CAN include price and activation) on `Seller Part #` for those. SKUs and Newegg item numbers were
+unique across the file on the live account. Timing ~214 s for 85 rows while two other reports were running;
+the report finishes `inProgress` for minutes, so wait for `FINISHED` (a result call earlier returns HTTP 400
+`CE012`, §17 live notes).
+
+### 17.9 Not built: Item Ranking and Tax Setting
+
+- **Item Ranking** (`https://developer.newegg.com/newegg_marketplace_api/reports_management/item-ranking/`,
+  read 2026-10-10) is not a `reportmgmt` async report: `POST {prefix}contentmgmt/item/ranking?sellerid=` is a
+  synchronous call (1000/min) that takes `Type` (0 Newegg item # / 1 seller part # / 2 UPC), `Values` and
+  `CountryCode` and returns `ItemRankResponse > ItemList > RankItem` (buy-box rank/winner, selling price,
+  shipping, seller rating, sales ranking). The page states "Only Account Managers can help a seller to
+  access this", so it is gated per account and cannot be verified on a normal seller. It is a different
+  lifecycle and access model from the reports, so it is **left unbuilt** (a future `client.catalog.*` read).
+  Errors `CT001`–`CT003`, `CT099`.
+- **Tax Setting** (`…/get_report_result/get_tax_setting_report_for_items_enabled_for_china/`) is a
+  China-programme-only result page with no matching submit page in the Submit Report Request index
+  (the index lists no tax report), so its request is undocumented; **left unbuilt**. California's
+  Proposition 65 Warning report (`submit_californias_proposition_65_warning_report/`, status type
+  `CAPROP65_REPORT`) is likewise not built.
 
 ## 18. Service Management — RMA and courtesy refunds
 
