@@ -65,7 +65,9 @@ when the identifier is UPC.
 `4`=Used-Very Good, `5`=Used-Good, `6`=Used-Acceptable. The docs' condition table did not
 render in extraction; the mapping matches Newegg's item-condition codes used across the
 Item Management APIs (batch read sample returns `"Condition": 1` for a new item). Isolated
-in `packages/sdk/src/schemas/condition.ts`.
+in `packages/sdk/src/schemas/condition.ts`. _Update 2026-10-10:_ the Get Item Price,
+Update Item Price and Update Inventory and Price pages' `Condition` tables DO render and list
+exactly these codes (§15.2), so the mapping is now documented rather than assumed.
 
 ## 5. Inventory reads
 
@@ -1375,3 +1377,209 @@ Offers are normalized to `{ offerItemNumber, sellerName, sellerId, isNewegg, pri
 shippingCharge, inStock, active }`; rows without an item number or a parseable price are dropped.
 No local rate-limit budget is applied (these are not seller-API calls and carry no
 `X-RateLimit-*` headers) — callers should throttle their own polling.
+
+## 15. Pricing (reads)
+
+> Extracted 2026-10-10 from the official Newegg Developer Portal. Pages cited per subsection;
+> every fact is dated 2026-10-10 (the portal marks the page bodies "Last updated August 28, 2020").
+> Only the **read** operation (Get Item Price) is contracted here and implemented
+> (`client.pricing.get/tryGet/getMany`, MCP `newegg_pricing_get`). The price **write** endpoints
+> are named in §15.1 for classification only.
+
+### 15.1 Operation inventory and classification
+
+Source: `https://developer.newegg.com/newegg_marketplace_api/item_management` (2026-10-10).
+
+| Operation (portal title)         | Platforms  | Verb + path (under the §2 prefix)                           | Class     | In SDK                       |
+| -------------------------------- | ---------- | ----------------------------------------------------------- | --------- | ---------------------------- |
+| Get Item Price                   | Newegg.com | `PUT contentmgmt/item/international/price`                  | **READ**  | yes                          |
+| Get Item Price (B2B and CAN)     | B2B, CAN   | `POST {b2b,can}/contentmgmt/item/price`                     | **READ**  | yes                          |
+| Get Batch Price                  | Newegg.com | page not retrievable (§15.4)                                | READ      | no                           |
+| Get Batch Price (B2B and CAN)    | B2B, CAN   | page not retrievable (§15.4)                                | READ      | no                           |
+| Update Item Price                | Newegg.com | `POST contentmgmt/item/international/price` (**same URL**)  | **WRITE** | no                           |
+| Update Inventory and Price       | B2B, CAN   | `PUT {b2b,can}/contentmgmt/item/inventoryandprice` (§6.2)   | **WRITE** | inventory-only subset (§6.2) |
+| Price Update Feed (`PRICE_DATA`) | Newegg.com | `POST datafeedmgmt/feeds/submitfeed?requesttype=PRICE_DATA` | **WRITE** | no                           |
+
+The index page also lists Volume Discount Creation/Update/Removal, Get Volume Discount Request
+Result, Item Repricer and Get Item Repricer Setting (names only; no bodies fetched — out of scope).
+
+**Verbs do not imply safety here (cf. §2, §6.1, §10.2).** The US price URL is **read-on-PUT /
+write-on-POST**; the B2B/CAN read is a POST. The classification above comes from each page's own
+description ("Retrieves price-related information…" vs "Updates price, shipping, and/or status…"),
+never from the verb.
+
+### 15.2 US — Get Item Price
+
+Source: `https://developer.newegg.com/documents/newegg_marketplace_api/item_management/get_price/`
+(2026-10-10).
+
+```
+PUT https://api.newegg.com/marketplace/contentmgmt/item/international/price?sellerid={SellerID}
+```
+
+Auth required; XML/JSON in and out; documented rate limit **10,000 requests/hour** (no per-minute
+figure — the generic §3 per-minute window and 429 still apply). Only the US page lists this
+endpoint; it is **Newegg.com only**.
+
+Request (`Type`/`Value` as §4; `Condition` only when `Type` = `2`, default 1 = New; the page's
+condition table renders here: 1 New · 2 Refurbished · 3 Used–Like New · 4 Used–Very Good ·
+5 Used–Good · 6 Used–Acceptable — confirming the §4 mapping):
+
+```json
+{
+  "Type": "1",
+  "Value": "A006testitem201201021459",
+  "CountryList": { "CountryCode": ["USA", "AUS"] }
+}
+```
+
+The field table lists a single string `CountryCode` ("3-letter ISO code of the seller's warehouse
+location; defaults to All if blank") while the official JSON sample uses the `CountryList` wrapper
+above. **ASSUMPTION:** the SDK sends the sample's `CountryList.CountryCode[]` form, and only when
+the caller passes `countries`; omitting it returns every country (documented default).
+
+Response — one `Price` per destination country, as an object when single and an array otherwise
+(§2 quirk). The sample is all strings (numbers **and** `"0"/"1"` flags):
+
+```json
+{
+  "SellerID": "A006",
+  "ItemNumber": "9SIA0060884598",
+  "SellerPartNumber": "A006testitem201201021459",
+  "PriceList": {
+    "Price": [
+      {
+        "CountryCode": "USA",
+        "Currency": "USD",
+        "Active": "0",
+        "MAP": "25.99",
+        "CheckoutMAP": "0",
+        "SellingPrice": "20.92",
+        "EnableFreeShipping": "1",
+        "OnPromotion": "1,5",
+        "LimitQuantity": "2"
+      },
+      { "CountryCode": "IND", "Currency": "INR", "SellingPrice": "389.92" },
+      { "CountryCode": "IRL", "Currency": "EUR", "LimitQuantity": "2" }
+    ]
+  }
+}
+```
+
+(The IND/IRL rows are abbreviated here; in the official sample they carry the same fields, and the
+IRL row omits `OnPromotion` entirely.)
+
+| Field                | Notes (documented)                                                                                                                                             |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Currency`           | ISO 4217 string for `SellingPrice`/`MSRP`/`MAP` in that country (the table says "Integer" but every sample is a string — treated as a string).                 |
+| `MSRP`               | Decimal 0.00–99999.00, "supported for all sellers". **Not shown in any sample payload** — parsed when present, never required (**ASSUMPTION** it is returned). |
+| `MAP`                | Minimum advertised price; below it the shopper must add to cart to see the price.                                                                              |
+| `CheckoutMAP`        | `0`/`1`. `1` ⇒ price only at checkout and `MAP` is ignored; `MAP` > 0 with blank `CheckoutMAP` defaults to false.                                              |
+| `SellingPrice`       | The actual price.                                                                                                                                              |
+| `EnableFreeShipping` | `0` default · `1` free shipping.                                                                                                                               |
+| `OnPromotion`        | Comma-separated codes: `0` none · `1` Price Lock · `2` Promotion Code · `3` Auto Add To Cart · `4` Combo · `5` Volume Discount. May be absent.                 |
+| `Active`             | `0` inactive · `1` active (per country).                                                                                                                       |
+| `LimitQuantity`      | Max units per customer per 48 h (max 500). `0` deletes the value and `null` means no update — **write-side wording** repeated on this read page.               |
+
+Errors (documented): `CT001` invalid ItemNumber · `CT002` invalid SellerPartNumber · `CT003`
+invalid UPCCode · `CT005` invalid action `Type` (0/1/2) · `CT010` no item with the specified
+condition · `CT026` item not found. Body shape is the §1 JSON array
+(`[{"Code":"CT002","Message":"Invalid SellerPartNumber"}]`); the XML form is
+`<Errors><Error><Code/><Message/></Error></Errors>` (`CE003` for a malformed `Type`). Both
+not-found codes are treated as "unknown item" by `tryGet` / `getMany` (**ASSUMPTION** —
+extrapolated from the inventory reads, §5.2; not live-verified on this endpoint).
+
+### 15.3 B2B / CAN — Get Item Price
+
+Source: `https://developer.newegg.com/newegg_marketplace_api/item_management/get_item_price/`
+(2026-10-10).
+
+```
+POST https://api.newegg.com/marketplace/b2b/contentmgmt/item/price?sellerid={SellerID}
+POST https://api.newegg.com/marketplace/can/contentmgmt/item/price?sellerid={SellerID}
+```
+
+Auth required; XML/JSON; **10,000 requests/hour**. A **read** despite the POST verb. No `version`
+parameter is documented. Request: `{ "Type": "1", "Value": "…" }` + optional `Condition` (UPC
+only); **no country list**. Response is one flat record (XML root `<PriceResult>`); the JSON sample
+mixes types — flags as strings, money and `LimitQuantity` as numbers:
+
+```json
+{
+  "Active": "0",
+  "ItemNumber": "9SIA0060884598",
+  "SellerID": "A006",
+  "SellerPartNumber": "A006testitem201201021459",
+  "ShipByNewegg": "1",
+  "EnableFreeShipping": "1",
+  "MAP": 25.99,
+  "CheckoutMAP": 0,
+  "OnPromotion": "1,5",
+  "SellingPrice": 20.92,
+  "LimitQuantity": 1
+}
+```
+
+Fields are as §15.2 minus `CountryCode`/`Currency`, plus `ShipByNewegg` (`0` ship by seller · `1`
+ship by Newegg). `MSRP` is documented in the table and absent from the sample (same ASSUMPTION as
+§15.2). Errors: the same six codes as §15.2.
+
+**Currency (ASSUMPTION).** The B2B/CAN price response carries no currency and the read/update
+pages state none. The only documented currency rule is the _Inventory And Price Feed (B2B and
+CAN)_ page's `Currency` field
+(`https://developer.newegg.com/newegg_marketplace_api/datafeed_management/submit_feed/inventory_and_price_feed/`,
+2026-10-10): omitted ⇒ the platform default, **CAD for Newegg.ca, USD for Neweggbusiness.com**
+(the same sentence also says "Newegg.com", an evident typo). The SDK therefore reports
+`currency: "CAD"` (`ca`) / `"USD"` (`b2b`) with `currencyInferred: true`. Confirm against a real
+account before repricing anything.
+
+### 15.4 Batch price — documented, not retrievable
+
+The index page lists **Get Batch Price** (Newegg.com: "…price-related information of specified
+items for destination countries") and **Get Batch Price (B2B and CAN)** ("…price information for
+multiple items in the default warehouse at once"), with these link targets (2026-10-10):
+`…/item_management/get-batch-price/` and `…/item_management/get-batch-price-b2b-and-can/`. Every
+URL form tried on 2026-10-10 returned HTTP 404 (with and without the `/documents/` segment, hyphen
+and underscore slugs, with and without trailing slash, the `zh-hans` locale) — so request/response
+shapes, size limits and rate limits are **unverified**. By analogy with the batch inventory reads
+(§5.3/§5.4) the path would be `…/item/(international/)pricelist` with `{Type, Values[]}` — only a
+guess (**ASSUMPTION**), **not implemented**. `client.pricing.getMany` instead fans out §15.2/§15.3
+single reads (bounded concurrency, default 4; at most 100 identifiers per call as SDK policy; each
+costs one request of the 10,000/hour budget) and aggregates per-identifier outcomes. Revisit when
+the pages can be read.
+
+### 15.5 What the price endpoint adds over the field-less `inventoryandprice` read (§6.2)
+
+A field-less `PUT …/inventoryandprice` with `{Type,Value}` is, by live observation (§6.2), a
+harmless no-op that echoes `SellingPrice`/`MAP`/`CheckoutMAP`/`EnableFreeShipping`/`LimitQuantity`/
+`Active`/`AvailableQuantity`. The dedicated price read:
+
+- is a **documented, side-effect-free read** (the `inventoryandprice` call is a write endpoint
+  whose no-op behaviour is only an observation, and which silently drops fields on deactivated
+  items);
+- **adds** `OnPromotion` (promotion locks — locked items reject price/shipping edits with
+  CT019/CT016), `ShipByNewegg` (B2B/CAN), and documents `MSRP`;
+- on the US adds per-destination-country rows with `CountryCode` + `Currency` (the US price is
+  per-country; there is no single "the price");
+- **omits** `AvailableQuantity`, `FulfillmentOption` and `Result` (use the inventory reads for
+  those);
+- is subject to its own 10,000/hour budget.
+
+MAP/CheckoutMAP/free-shipping/active/limit are present in both. Neither endpoint reveals the
+buy-box competitor price — that is the unofficial storefront reader (§14).
+
+### 15.6 SDK mapping
+
+`client.pricing.get({ identifier, countries? })` → one §15.2 (`us`) or §15.3 (`b2b`/`ca`) request
+(`platform/us.ts`, `platform/item-adapter.ts`); `countries` is ignored off the US. Normalized to
+`ItemPriceSnapshot { itemNumber, sellerPartNumber, shippedByNewegg?, prices: PriceEntry[] }` where
+`PriceEntry = { countryCode?, currency, currencyInferred, active?, msrp?, map?, checkoutMap?,
+sellingPrice?, freeShipping?, promotions[], limitQuantity? }`. `tryGet` maps `CT026`/`CT010` to
+`undefined`; `getMany` returns `{ items, missingIdentifiers, failures }` and still throws on
+credential errors, exhausted rate limits and aborts. Retries follow ADR 0004's direct-operation
+policy (reads are safe to retry).
+
+**Not live-verified (2026-10-10):** the shapes above come from the docs' samples only. The live
+suite has a read-only price test (`test/live/pricing-read.live.test.ts`) that was not run when
+this section was written; promote the ASSUMPTIONs (country filter form, `MSRP` presence,
+not-found codes, inferred currency) once it has been run against a real account.
