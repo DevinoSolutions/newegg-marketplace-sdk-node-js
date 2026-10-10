@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { GET_PRICE_MANY_MAX_IDENTIFIERS } from "../pricing/constants.js";
+import {
+  GET_PRICE_MANY_MAX_IDENTIFIERS,
+  PRICE_UPDATE_MAX_SELLING_PRICE,
+} from "../pricing/constants.js";
 
 /**
  * Zod v4 strict schemas for public inputs. Unknown keys are rejected (`strictObject`);
@@ -87,6 +90,32 @@ export const getPriceManyInputSchema = z.strictObject({
     .max(GET_PRICE_MANY_MAX_IDENTIFIERS, `at most ${GET_PRICE_MANY_MAX_IDENTIFIERS} identifiers`),
   countries: z.array(priceCountrySchema).min(1, "countries must not be empty").optional(),
 });
+
+/** Newegg accepts 0.00-99999.99 (CT007); a selling price can never be 0 (CT032). */
+const sellingPriceSchema = z
+  .number()
+  .gt(0, "sellingPrice must be > 0")
+  .max(PRICE_UPDATE_MAX_SELLING_PRICE, `sellingPrice must be <= ${PRICE_UPDATE_MAX_SELLING_PRICE}`)
+  .refine(
+    (value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6,
+    "sellingPrice must have at most 2 decimal places",
+  );
+
+export const priceUpdateSchema = z
+  .strictObject({
+    identifier: itemIdentifierSchema,
+    sellingPrice: sellingPriceSchema,
+    countryCode: priceCountrySchema.optional(),
+    currency: z
+      .string()
+      .regex(/^[A-Z]{3}$/, "currency must be an uppercase ISO 4217 code")
+      .optional(),
+    metadata: z.record(z.string(), z.string()).optional(),
+    // Tolerated and stripped like `inventoryUpdateSchema.inputIndex`: previewUpdate output
+    // round-trips straight back into update(); the authoritative index is re-derived.
+    inputIndex: z.number().int().optional(),
+  })
+  .transform(({ inputIndex: _inputIndex, ...update }) => update);
 
 export const submitInventoryFeedInputSchema = z.strictObject({
   items: z.array(inventoryUpdateSchema).min(1, "at least one item is required"),

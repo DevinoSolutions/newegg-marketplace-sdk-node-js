@@ -55,7 +55,10 @@ export interface NeweggClientConfig {
 export interface NeweggClient {
   readonly marketplace: NeweggMarketplace;
   readonly inventory: InventoryApi;
-  /** Read-only item pricing (Get Item Price, contracts §15). Never mutates. */
+  /**
+   * Item pricing: Get Item Price reads (contracts §15) and, WRITE, gated selling-price updates
+   * (`update`, §16). `previewUpdate` and the reads never mutate.
+   */
   readonly pricing: PricingApi;
   readonly feeds: FeedsApi;
   readonly service: ServiceApi;
@@ -1165,7 +1168,112 @@ export interface PriceBatchSnapshot {
   raw?: unknown;
 }
 
-/** Read-only pricing (Get Item Price). Never mutates; price writes are a separate surface. */
+// ----------------------------------------------------------------------------
+// pricing writes (contracts §16) — WRITE surface
+// ----------------------------------------------------------------------------
+/** One selling-price assignment. Only `SellingPrice` is ever sent — never MAP/MSRP/shipping/Active. */
+export interface PriceUpdate {
+  identifier: ItemIdentifier;
+  /** New selling price: > 0, <= 99999.99, at most 2 decimal places. Absolute, not a delta. */
+  sellingPrice: number;
+  /** US only (required there): uppercase ISO 3166-1 alpha-3 destination country. Rejected on B2B/CA. */
+  countryCode?: string;
+  /** US only (required there): ISO 4217 code that must match the country (CT075 otherwise). Rejected on B2B/CA. */
+  currency?: string;
+  /** Caller bookkeeping, never sent to Newegg. */
+  metadata?: Record<string, string>;
+}
+
+export interface NormalizedPriceUpdate extends PriceUpdate {
+  /** Index in the caller's original array. */
+  inputIndex: number;
+}
+
+export interface PreviewPriceOptions extends RequestOptions {
+  /** Read each item's current price to compute the change and flag risks (reads only). Default true. */
+  includeCurrentPrice?: boolean;
+}
+
+/** `blocked`: do not apply (see `blockers`). `warning`: applies, but read `warnings`. */
+export type PriceChangeStatus = "ok" | "warning" | "blocked" | "unchecked";
+
+export interface PriceChange {
+  inputIndex: number;
+  identifier: ItemIdentifier;
+  countryCode?: string;
+  newSellingPrice: number;
+  /** Currency the new price is read as: the update's (US) or the current one's / inferred one's. */
+  currency?: string;
+  currentSellingPrice?: number;
+  /** Signed percent change vs the current price; undefined when the current price is 0/unknown. */
+  changePercent?: number;
+  active?: boolean;
+  map?: number;
+  msrp?: number;
+  checkoutMap?: boolean;
+  promotions: PricePromotion[];
+  status: PriceChangeStatus;
+  blockers: string[];
+  warnings: string[];
+}
+
+export interface PriceUpdatePreview {
+  marketplace: NeweggMarketplace;
+  /** Post-validation, post-dedup (last-write-wins). Blocked items are still listed here. */
+  normalizedUpdates: NormalizedPriceUpdate[];
+  deduplicated: Array<{ keptInputIndex: number; droppedInputIndexes: number[] }>;
+  /** One per normalized update, in the same order. */
+  changes: PriceChange[];
+  warnings: string[];
+  correlationId: string;
+}
+
+export interface UpdatePricesOptions extends RequestOptions {
+  /** Read each price back after the write and compare. Default true. */
+  verify?: boolean;
+  /** Bounded parallelism of the per-item writes. Default 2. */
+  concurrency?: number;
+}
+
+/**
+ * `verified`: Newegg accepted the write AND a read-back shows the new price.
+ * `accepted`: Newegg accepted it; read-back skipped (`verify: false`).
+ * `unverified`: Newegg accepted it but the read-back differs or failed (deactivated items are
+ *   silently ignored while reported as success, contracts §6.2; reads can also lag).
+ * `unknown`: the request may or may not have reached Newegg (timeout / 5xx after retries).
+ * `failed`: Newegg rejected it, or it provably never left.
+ */
+export type PriceOutcomeStatus = "verified" | "accepted" | "unverified" | "unknown" | "failed";
+
+export interface PriceUpdateOutcome {
+  inputIndex: number;
+  identifier: ItemIdentifier;
+  countryCode?: string;
+  requestedSellingPrice: number;
+  status: PriceOutcomeStatus;
+  /** The price the read-back (or, failing that, the write response) reported. */
+  observedSellingPrice?: number;
+  errorCode?: string;
+  message?: string;
+}
+
+export interface PriceUpdateResult {
+  operationId: string;
+  correlationId: string;
+  marketplace: NeweggMarketplace;
+  submittedItemCount: number;
+  /** `verified` + `accepted`. */
+  appliedItemCount: number;
+  failedItemCount: number;
+  /** `unverified` + `unknown`: re-read the price before trusting or retrying. */
+  unresolvedItemCount: number;
+  deduplicatedItemCount: number;
+  items: PriceUpdateOutcome[];
+  warnings: string[];
+  rateLimit?: RateLimitInfo;
+}
+
+/** Pricing: Get Item Price reads (contracts §15) plus gated selling-price writes (§16). */
 export interface PricingApi {
   /** One Get Item Price read. Throws {@link NeweggApiError} (e.g. CT026) for unknown items. */
   get(input: GetPriceInput, options?: RequestOptions): Promise<ItemPriceSnapshot>;
@@ -1178,6 +1286,28 @@ export interface PricingApi {
    * credential errors, rate-limit exhaustion and aborts still throw.
    */
   getMany(input: GetPriceManyInput, options?: GetPriceManyOptions): Promise<PriceBatchSnapshot>;
+  /**
+   * Validates, de-duplicates (last-write-wins) and risk-checks selling-price updates WITHOUT
+   * writing. Reads each current price (unless `includeCurrentPrice: false`) to compute the
+   * change and flag blockers (unknown item, currency mismatch, price above MSRP) and warnings
+   * (inactive item, promotion lock, below MAP, no-op).
+   */
+  previewUpdate(
+    updates: PriceUpdate | PriceUpdate[],
+    options?: PreviewPriceOptions,
+  ): Promise<PriceUpdatePreview>;
+  /**
+   * WRITE. Assigns absolute selling prices, one request per item (1-100 per call). Price
+   * assignments are idempotent, so the direct-operation retry policy applies (ADR 0004); an
+   * ambiguous failure that survives the retries is reported per item as `unknown` (after a
+   * read-back attempt), never thrown; Newegg rejections (including credential errors) are
+   * reported per item as `failed`. Only validation errors and caller aborts throw. Does NOT
+   * apply preview blockers - callers (the MCP tools) enforce those.
+   */
+  update(
+    updates: PriceUpdate | PriceUpdate[],
+    options?: UpdatePricesOptions,
+  ): Promise<PriceUpdateResult>;
 }
 
 // ----------------------------------------------------------------------------

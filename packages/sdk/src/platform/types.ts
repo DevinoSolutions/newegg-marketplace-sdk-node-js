@@ -2,6 +2,7 @@ import type {
   ItemCondition,
   ItemIdentifier,
   NeweggMarketplace,
+  NormalizedPriceUpdate,
   PricePromotion,
   WarehouseInventory,
 } from "../types.js";
@@ -56,6 +57,16 @@ export interface ParsedPrice {
   entries: ParsedPriceEntry[];
 }
 
+/** Normalized price-write response (before the API attaches outcome status). */
+export interface ParsedPriceUpdate {
+  itemNumber?: string;
+  sellerPartNumber?: string;
+  /** B2B/CAN `Result` (1 success / 0 failure); undefined when the response carries none. */
+  success?: boolean;
+  /** The selling price the write response echoes (country-matched on US). */
+  sellingPrice?: number;
+}
+
 /** A batch of direct-update entries sharing one identifier (US groups multiple warehouses). */
 export interface DirectUpdateGroup {
   identifier: ItemIdentifier;
@@ -94,6 +105,14 @@ export interface PlatformAdapter {
   /** Get Item Price — a READ on every platform despite the PUT/POST verbs (contracts §15). */
   getPriceRequest(identifier: ItemIdentifier, countries: string[] | undefined): RequestSpec;
   parsePrice(json: unknown): ParsedPrice | undefined;
+
+  /**
+   * WRITE: assigns ONE selling price. Sends the identifier plus `SellingPrice` (US: with the
+   * country/currency) and nothing else - never Active, MAP, MSRP, shipping, limits or
+   * inventory (contracts §16).
+   */
+  priceUpdateRequest(update: NormalizedPriceUpdate): RequestSpec;
+  parsePriceUpdate(json: unknown, update: NormalizedPriceUpdate): ParsedPriceUpdate;
 
   buildFeedEnvelope(items: FeedItemInput[]): unknown;
 }

@@ -1,8 +1,14 @@
-import type { ItemIdentifier } from "../types.js";
-import type { DirectUpdateGroup, FeedItemInput, PlatformAdapter, RequestSpec } from "./types.js";
+import type { ItemIdentifier, NormalizedPriceUpdate } from "../types.js";
+import type {
+  DirectUpdateGroup,
+  FeedItemInput,
+  ParsedPriceUpdate,
+  PlatformAdapter,
+  RequestSpec,
+} from "./types.js";
 import { conditionToCode } from "../schemas/condition.js";
 import { buildUsFeedEnvelope } from "./feed-envelope.js";
-import { parseUsPrice } from "./price.js";
+import { parseUsPrice, parseUsPriceUpdate } from "./price.js";
 import { extractBatch, identifierTypeCode, isDefinedItem, parseUsItem } from "./normalize.js";
 import { US_FEED_REQUEST_TYPE } from "../feeds/constants.js";
 
@@ -79,6 +85,32 @@ export const usAdapter: PlatformAdapter = {
   },
 
   parsePrice: parseUsPrice,
+
+  priceUpdateRequest(update: NormalizedPriceUpdate): RequestSpec {
+    const body: Record<string, unknown> = {
+      Type: identifierTypeCode(update.identifier.type),
+      Value: update.identifier.value,
+    };
+    if (update.identifier.type === "upc" && update.identifier.condition) {
+      body.Condition = conditionToCode(update.identifier.condition);
+    }
+    // ONLY the price travels: no Active / MAP / CheckoutMAP / shipping / LimitQuantity, so
+    // nothing else on the listing can change. WRITE: POST on the same URL the price READ PUTs.
+    body.PriceList = {
+      Price: [
+        {
+          CountryCode: update.countryCode,
+          Currency: update.currency,
+          SellingPrice: update.sellingPrice.toFixed(2),
+        },
+      ],
+    };
+    return { method: "POST", path: INTERNATIONAL_PRICE_PATH, body };
+  },
+
+  parsePriceUpdate(json: unknown, update: NormalizedPriceUpdate): ParsedPriceUpdate {
+    return parseUsPriceUpdate(json, update.countryCode);
+  },
 
   buildFeedEnvelope(items: FeedItemInput[]): unknown {
     return buildUsFeedEnvelope(items);

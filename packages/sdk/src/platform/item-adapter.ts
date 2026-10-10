@@ -1,8 +1,8 @@
-import type { ItemIdentifier, NeweggMarketplace } from "../types.js";
+import type { ItemIdentifier, NeweggMarketplace, NormalizedPriceUpdate } from "../types.js";
 import type { DirectUpdateGroup, FeedItemInput, PlatformAdapter, RequestSpec } from "./types.js";
 import { buildItemFeedEnvelope } from "./feed-envelope.js";
 import { conditionToCode } from "../schemas/condition.js";
-import { parseFlatPrice } from "./price.js";
+import { parseFlatPrice, parseFlatPriceUpdate } from "./price.js";
 import { extractBatch, identifierTypeCode, isDefinedItem, parseFlatItem } from "./normalize.js";
 import { B2B_CA_FEED_REQUEST_TYPE } from "../feeds/constants.js";
 
@@ -75,6 +75,22 @@ export function createItemAdapter(marketplace: NeweggMarketplace, prefix: string
     },
 
     parsePrice: parseFlatPrice,
+
+    priceUpdateRequest(update: NormalizedPriceUpdate): RequestSpec {
+      const body: Record<string, unknown> = {
+        Type: identifierTypeCode(update.identifier.type),
+        Value: update.identifier.value,
+      };
+      if (update.identifier.type === "upc" && update.identifier.condition) {
+        body.Condition = conditionToCode(update.identifier.condition);
+      }
+      // Price-only subset (mirrors the inventory-only subset, §6.2): NO Inventory, Active, MAP,
+      // CheckoutMAP, MSRP, shipping or LimitQuantity - omitted/null means "no change".
+      body.SellingPrice = update.sellingPrice.toFixed(2);
+      return { method: "PUT", path: inventoryAndPricePath, body };
+    },
+
+    parsePriceUpdate: parseFlatPriceUpdate,
 
     buildFeedEnvelope(items: FeedItemInput[]): unknown {
       return buildItemFeedEnvelope(items);
