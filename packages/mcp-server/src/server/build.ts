@@ -31,6 +31,8 @@ import {
   ordersGetStatusTool,
   ordersGetTool,
   ordersListTool,
+  createPricingPreviewTool,
+  pricingApplyTool,
   pricingGetTool,
   serviceStatusTool,
   type Logger,
@@ -116,6 +118,10 @@ export function enabledToolNames(config: McpServerConfig): string[] {
   names.push(TOOL_NAMES.listingPreviewCreate);
   if (config.allowWrites) {
     names.push(TOOL_NAMES.listingApplyCreate);
+  }
+  // Price updates: BOTH the preview and the apply tool exist only with writes enabled.
+  if (config.allowWrites) {
+    names.push(TOOL_NAMES.pricingPreviewUpdate, TOOL_NAMES.pricingApplyUpdate);
   }
   return names;
 }
@@ -249,6 +255,10 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   registerToolDefinition(server, createListingPreviewTool(config), ctx);
   if (config.allowWrites) {
     registerToolDefinition(server, listingApplyTool, ctx);
+  }
+  if (config.allowWrites) {
+    registerToolDefinition(server, createPricingPreviewTool(config), ctx);
+    registerToolDefinition(server, pricingApplyTool, ctx);
   }
 
   registerResources(server, ctx, enabledToolNames(config));

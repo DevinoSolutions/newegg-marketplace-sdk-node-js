@@ -36,6 +36,7 @@ export {
   type ConsumeResult,
   type InventoryPreviewRecord,
   type ListingPreviewRecord,
+  type PricePreviewRecord,
   type PreviewRecord,
   type PreviewStore,
 } from "./preview-store/index.js";

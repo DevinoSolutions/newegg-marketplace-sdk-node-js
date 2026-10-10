@@ -29,6 +29,11 @@ export interface McpLimits {
   readonly maxItemsPerOperation: number;
   readonly previewTtlSeconds: number;
   readonly allowZeroQuantity: boolean;
+  /**
+   * Largest absolute percent change a single price update may make versus the item's current
+   * price; a bigger move is blocked at preview time (fat-finger guard). Default 50.
+   */
+  readonly maxPriceChangePercent: number;
   /** Uppercased warehouse codes; empty means "all warehouses allowed". */
   readonly allowedWarehouses: string[];
   /** Normalized marketplace codes; empty means "all marketplaces allowed". */
@@ -148,6 +153,23 @@ function intEnv(name: string, fallback: number, check: (n: number) => boolean, h
     });
 }
 
+/** Optional finite number with a default; the parsed value must satisfy `check`. */
+function numberEnv(name: string, fallback: number, check: (n: number) => boolean, hint: string) {
+  return z
+    .string()
+    .optional()
+    .transform((raw, ctx) => {
+      const trimmed = raw?.trim();
+      if (trimmed === undefined || trimmed === "") return fallback;
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed) || !check(parsed)) {
+        ctx.addIssue({ code: "custom", message: `${name} must be ${hint}.` });
+        return z.NEVER;
+      }
+      return parsed;
+    });
+}
+
 /** Optional boolean accepting only "true"/"false" (case-insensitive); default `fallback`. */
 function boolEnv(name: string, fallback: boolean) {
   return z
@@ -253,6 +275,12 @@ const envSchema = z.object({
     "a positive integer",
   ),
   NEWEGG_MCP_ALLOW_ZERO_QUANTITY: boolEnv("NEWEGG_MCP_ALLOW_ZERO_QUANTITY", true),
+  NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT: numberEnv(
+    "NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT",
+    50,
+    (n) => n > 0 && n <= 10_000,
+    "a number greater than 0 and at most 10000",
+  ),
   NEWEGG_MCP_ALLOWED_WAREHOUSES: csvEnv({ uppercase: true }),
   NEWEGG_MCP_HTTP_HOST: z
     .string()
@@ -309,6 +337,7 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     maxItemsPerOperation: parsed.NEWEGG_MCP_MAX_ITEMS_PER_OPERATION,
     previewTtlSeconds: parsed.NEWEGG_MCP_PREVIEW_TTL_SECONDS,
     allowZeroQuantity: parsed.NEWEGG_MCP_ALLOW_ZERO_QUANTITY,
+    maxPriceChangePercent: parsed.NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT,
     allowedWarehouses: parsed.NEWEGG_MCP_ALLOWED_WAREHOUSES,
     allowedMarketplaces,
   };

@@ -172,11 +172,18 @@ const price = await client.pricing.get({
 console.log(price.prices); // US: one entry per destination country; B2B/CA: one entry
 ```
 
-`client.pricing` is read-only (Get Item Price): selling price, MSRP/MAP, free-shipping flag,
-promotion locks, and the active flag. B2B/CA responses carry no currency, so it is inferred from
-the marketplace and flagged `currencyInferred`. `getMany` fans out single reads (1–100
-identifiers) because the batch-price pages are not documented readably. The matching MCP tool is
-`newegg_pricing_get`.
+`client.pricing.get/tryGet/getMany` are reads (Get Item Price): selling price, MSRP/MAP,
+free-shipping flag, promotion locks, and the active flag. B2B/CA responses carry no currency, so
+it is inferred from the marketplace and flagged `currencyInferred`. `getMany` fans out single
+reads (1–100 identifiers) because the batch-price pages are not documented readably. The matching
+MCP tool is `newegg_pricing_get`.
+
+`client.pricing.previewUpdate(updates)` (read-only) risk-checks selling-price changes, and
+`client.pricing.update(updates)` **writes** them: price only (never MAP, MSRP, shipping or
+activation), absolute, validated (> 0, ≤ 2 decimals, never rounded), and read back so a silently
+ignored update on a deactivated item shows as `unverified` instead of success. The MCP pair
+`newegg_pricing_preview_update` / `newegg_pricing_apply_update` exists only with
+`NEWEGG_MCP_ALLOW_WRITES=true`. The US write path follows the docs but is not live-verified.
 
 ---
 
