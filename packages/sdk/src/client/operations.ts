@@ -3,6 +3,8 @@ export const Operation = {
   GetItem: "inventory.getItem",
   GetMany: "inventory.getMany",
   UpdateDirect: "inventory.update",
+  // Get Item Price (§15) — a READ on every platform; 10,000/hr budget.
+  PriceGet: "pricing.get",
   FeedSubmit: "feed.submit",
   FeedStatus: "feed.status",
   FeedResult: "feed.result",

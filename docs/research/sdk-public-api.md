@@ -47,6 +47,7 @@ export interface NeweggClientConfig {
 export interface NeweggClient {
   readonly marketplace: NeweggMarketplace;
   readonly inventory: InventoryApi;
+  readonly pricing: PricingApi; // read-only Get Item Price (contracts §15); never mutates
   readonly feeds: FeedsApi;
   readonly service: ServiceApi;
   readonly orders: OrdersApi; // order reads (list / get / status) + writes (ship / cancel / confirm / remove)
@@ -222,6 +223,74 @@ export interface InventoryApi {
     updates: InventoryUpdate[],
     options?: UpdateManyOptions,
   ): Promise<InventoryUpdateResult>;
+}
+
+// ----------------------------------------------------------------------------
+// pricing reads (Get Item Price — contracts §15; READ-only)
+// ----------------------------------------------------------------------------
+export type PricePromotion =
+  "priceLock" | "promotionCode" | "autoAddToCart" | "combo" | "volumeDiscount";
+
+export interface GetPriceInput {
+  identifier: ItemIdentifier;
+  countries?: string[]; // US only: uppercase ISO alpha-3 filter; ignored on B2B/CAN
+}
+export interface GetPriceManyInput {
+  identifiers: ItemIdentifier[]; // 1–100 (SDK policy); duplicates are read once
+  countries?: string[]; // US only
+}
+export interface GetPriceManyOptions extends RequestOptions {
+  concurrency?: number; // bounded parallelism of the per-item reads; default 4
+}
+
+export interface PriceEntry {
+  countryCode?: string; // US only (ISO alpha-3)
+  currency?: string; // US: from Newegg. B2B/CAN: inferred (b2b USD, ca CAD) — see currencyInferred
+  currencyInferred: boolean;
+  active?: boolean;
+  msrp?: number; // documented but absent from sample payloads (contracts §15.2 ASSUMPTION)
+  map?: number; // 0/absent = none; ignored when checkoutMap
+  checkoutMap?: boolean;
+  sellingPrice?: number;
+  freeShipping?: boolean; // EnableFreeShipping
+  promotions: PricePromotion[]; // OnPromotion codes 1–5 ("0"/unknown codes yield nothing)
+  limitQuantity?: number; // per-customer 48 h cap, max 500
+}
+export interface ItemPriceSnapshot {
+  marketplace: NeweggMarketplace;
+  itemNumber?: string;
+  sellerPartNumber?: string;
+  shippedByNewegg?: boolean; // B2B/CAN only (ShipByNewegg)
+  prices: PriceEntry[]; // US: one per destination country; B2B/CAN: exactly one
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown; // only when includeRaw
+}
+export interface PriceReadFailure {
+  identifier: ItemIdentifier;
+  errorCode?: string;
+  httpStatus?: number;
+  message: string;
+}
+export interface PriceBatchSnapshot {
+  marketplace: NeweggMarketplace;
+  items: ItemPriceSnapshot[]; // request order, de-duplicated
+  bySellerPartNumber: ReadonlyMap<string, ItemPriceSnapshot>;
+  byItemNumber: ReadonlyMap<string, ItemPriceSnapshot>;
+  missingIdentifiers: ItemIdentifier[]; // CT026 / CT010
+  failures: PriceReadFailure[]; // any other per-item error; the rest of the batch still returns
+  totalCount: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+export interface PricingApi {
+  get(input: GetPriceInput, options?: RequestOptions): Promise<ItemPriceSnapshot>;
+  tryGet(input: GetPriceInput, options?: RequestOptions): Promise<ItemPriceSnapshot | undefined>; // undefined on CT026/CT010
+  // Fans out single Get Item Price reads (the batch-price pages are unreadable — contracts §15.4).
+  // Auth/authorization errors, exhausted rate limits and aborts still throw.
+  getMany(input: GetPriceManyInput, options?: GetPriceManyOptions): Promise<PriceBatchSnapshot>;
 }
 
 // ----------------------------------------------------------------------------
@@ -961,6 +1030,15 @@ export interface RecordedCall {
     `schemas/wire.ts`). `buyBox` is `offers[0]` under a documented **ASSUMPTION**, and
     `shippingCharge` is raw (`0.01` ≠ paid shipping). Construction never throws: `b2b` fails at
     call time with `UnsupportedMarketplaceOperationError`.
+13. **Pricing (reads)**: `pricing.get`/`tryGet`/`getMany` never mutate — Get Item Price is a READ on
+    every platform even though US sends it as `PUT` (the same URL is a price WRITE on `POST`) and
+    B2B/CAN as `POST` (contracts §15). The platform split (path, verb, country list, flat vs
+    `PriceList` response) lives in `platform/`. Wire numbers/flags (strings or numbers, `"0"/"1"`),
+    single-vs-array `Price` rows and a missing `OnPromotion` are normalized, never thrown on.
+    B2B/CAN carry no `Currency`: it is inferred (`b2b` USD, `ca` CAD) and flagged
+    `currencyInferred: true`. `getMany` is a client-side fan-out (batch-price pages unreadable,
+    §15.4); inputs are validated with strict Zod v4 schemas (1–100 identifiers, uppercase alpha-3
+    `countries`) before any HTTP call.
 
 ```
 

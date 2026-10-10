@@ -2,6 +2,7 @@ import type {
   ItemCondition,
   ItemIdentifier,
   NeweggMarketplace,
+  PricePromotion,
   WarehouseInventory,
 } from "../types.js";
 
@@ -30,6 +31,29 @@ export interface ParsedItem {
   active?: boolean;
   totalAvailableQuantity: number;
   warehouses: WarehouseInventory[];
+}
+
+/** One normalized price record (a US destination country, or the B2B/CAN item itself). */
+export interface ParsedPriceEntry {
+  countryCode?: string;
+  currency?: string;
+  active?: boolean;
+  msrp?: number;
+  map?: number;
+  checkoutMap?: boolean;
+  sellingPrice?: number;
+  freeShipping?: boolean;
+  promotions: PricePromotion[];
+  limitQuantity?: number;
+}
+
+/** Normalized Get Item Price result (before the API attaches marketplace/correlation). */
+export interface ParsedPrice {
+  itemNumber?: string;
+  sellerPartNumber?: string;
+  /** B2B/CAN only (`ShipByNewegg`). */
+  shippedByNewegg?: boolean;
+  entries: ParsedPriceEntry[];
 }
 
 /** A batch of direct-update entries sharing one identifier (US groups multiple warehouses). */
@@ -66,6 +90,10 @@ export interface PlatformAdapter {
   parseBatch(json: unknown): { items: ParsedItem[]; totalCount?: number };
 
   directUpdateRequest(group: DirectUpdateGroup): RequestSpec;
+
+  /** Get Item Price — a READ on every platform despite the PUT/POST verbs (contracts §15). */
+  getPriceRequest(identifier: ItemIdentifier, countries: string[] | undefined): RequestSpec;
+  parsePrice(json: unknown): ParsedPrice | undefined;
 
   buildFeedEnvelope(items: FeedItemInput[]): unknown;
 }

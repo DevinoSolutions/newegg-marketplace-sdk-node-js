@@ -6,6 +6,7 @@ export const TOOL_NAMES = {
   inventoryGet: "newegg_inventory_get",
   inventoryPreviewUpdate: "newegg_inventory_preview_update",
   inventoryApplyUpdate: "newegg_inventory_apply_update",
+  pricingGet: "newegg_pricing_get",
   feedStatus: "newegg_feed_status",
   feedResult: "newegg_feed_result",
   serviceStatus: "newegg_service_status",

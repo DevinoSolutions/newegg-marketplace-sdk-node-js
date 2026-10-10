@@ -31,6 +31,7 @@ import {
   ordersGetStatusTool,
   ordersGetTool,
   ordersListTool,
+  pricingGetTool,
   serviceStatusTool,
   type Logger,
   type ToolContext,
@@ -104,6 +105,8 @@ export function enabledToolNames(config: McpServerConfig): string[] {
   if (config.allowWrites) {
     names.push(TOOL_NAMES.inventoryApplyUpdate);
   }
+  // Price reads (Get Item Price) are read-only and never write-gated.
+  names.push(TOOL_NAMES.pricingGet);
   names.push(TOOL_NAMES.feedStatus, TOOL_NAMES.feedResult, TOOL_NAMES.serviceStatus);
   // Order reads are always available (never write-gated).
   names.push(TOOL_NAMES.ordersList, TOOL_NAMES.ordersGet, TOOL_NAMES.ordersGetStatus);
@@ -234,6 +237,7 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   if (config.allowWrites) {
     registerToolDefinition(server, inventoryApplyTool, ctx);
   }
+  registerToolDefinition(server, pricingGetTool, ctx);
   registerToolDefinition(server, feedStatusTool, ctx);
   registerToolDefinition(server, feedResultTool, ctx);
   registerToolDefinition(server, serviceStatusTool, ctx);

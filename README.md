@@ -162,6 +162,22 @@ Snapshots normalize Newegg's platform-specific, mixed-type wire shapes into a si
 `totalAvailableQuantity`, a per-`location` `warehouses[]` breakdown with normalized
 `fulfillment` (`"seller"` / `"newegg"`), and `active` (B2B/CA only).
 
+## Reading prices
+
+```ts
+const price = await client.pricing.get({
+  identifier: { type: "sellerPartNumber", value: "EXAMPLE-SKU" },
+  countries: ["USA"], // US only; ignored on B2B/CA
+});
+console.log(price.prices); // US: one entry per destination country; B2B/CA: one entry
+```
+
+`client.pricing` is read-only (Get Item Price): selling price, MSRP/MAP, free-shipping flag,
+promotion locks, and the active flag. B2B/CA responses carry no currency, so it is inferred from
+the marketplace and flagged `currencyInferred`. `getMany` fans out single reads (1–100
+identifiers) because the batch-price pages are not documented readably. The matching MCP tool is
+`newegg_pricing_get`.
+
 ---
 
 ## MCP server — stdio

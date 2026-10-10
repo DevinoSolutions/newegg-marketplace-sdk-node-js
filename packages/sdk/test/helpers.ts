@@ -54,6 +54,9 @@ export const paths = {
   itemInventory: /contentmgmt\/item\/inventory\?/,
   itemInventoryList: /contentmgmt\/item\/inventorylist\?/,
   itemInventoryAndPrice: /contentmgmt\/item\/inventoryandprice\?/,
+  // Get Item Price (a READ; §15). The US path is READ-on-PUT / WRITE-on-POST.
+  usPrice: /international\/price\?/,
+  itemPrice: /contentmgmt\/item\/price\?/,
   feedSubmit: "datafeedmgmt/feeds/submitfeed",
   feedStatus: "datafeedmgmt/feeds/status",
   feedResult: "datafeedmgmt/feeds/result/",
@@ -97,6 +100,64 @@ export const ITEM_SINGLE_ITEM = {
   FulfillmentOption: "1",
   AvailableQuantity: 71,
   WarehouseAllocation: { Warehouse: [{ WarehouseCode: "35", Quantity: "3" }] },
+};
+
+/** §15.1 US Get Item Price sample (everything a string; the IRL row omits OnPromotion). */
+export const US_PRICE_SAMPLE = {
+  SellerID: "A006",
+  ItemNumber: "9SIA0060884598",
+  SellerPartNumber: "A006testitem201201021459",
+  PriceList: {
+    Price: [
+      {
+        CountryCode: "USA",
+        Currency: "USD",
+        Active: "0",
+        MAP: "25.99",
+        CheckoutMAP: "0",
+        SellingPrice: "20.92",
+        EnableFreeShipping: "1",
+        OnPromotion: "1,5",
+        LimitQuantity: "2",
+      },
+      {
+        CountryCode: "IND",
+        Currency: "INR",
+        Active: "1",
+        MAP: "25.99",
+        CheckoutMAP: "0",
+        SellingPrice: "389.92",
+        EnableFreeShipping: "0",
+        OnPromotion: "1,5",
+        LimitQuantity: "2",
+      },
+      {
+        CountryCode: "IRL",
+        Currency: "EUR",
+        Active: "0",
+        MAP: "25.99",
+        CheckoutMAP: "0",
+        SellingPrice: "19.92",
+        EnableFreeShipping: "0",
+        LimitQuantity: "2",
+      },
+    ],
+  },
+};
+
+/** §15.2 B2B/CAN Get Item Price sample (note the mixed string/number types). */
+export const ITEM_PRICE_SAMPLE = {
+  Active: "0",
+  ItemNumber: "9SIA0060884598",
+  SellerID: "A006",
+  SellerPartNumber: "A006testitem201201021459",
+  ShipByNewegg: "1",
+  EnableFreeShipping: "1",
+  MAP: 25.99,
+  CheckoutMAP: 0,
+  OnPromotion: "1,5",
+  SellingPrice: 20.92,
+  LimitQuantity: 1,
 };
 
 /** Builds a successful feed-submit response body with the given request id. */
