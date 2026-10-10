@@ -53,6 +53,8 @@ export interface NeweggClient {
   readonly feeds: FeedsApi;
   readonly service: ServiceApi;
   readonly orders: OrdersApi; // order reads (list / get / status) + writes (ship / cancel / confirm / remove)
+  readonly rma: RmaApi; // READ-only RMA lookups (Get RMA Information, contracts §18)
+  readonly refunds: RefundsApi; // READ-only courtesy refund lookups (info + request status, §18)
   readonly catalog: CatalogApi; // read-only catalog resolution (Item Lookup Report, contracts §12)
   readonly reports: ReportsApi; // read-only settlement / daily inventory / daily price reports (contracts §17)
   readonly listings: ListingsApi; // WRITE: existing-item listing creation (ITEM_DATA&v2 feed, contracts §13)
@@ -849,7 +851,10 @@ export interface ReportWaitOptions {
   correlationId?: string;
   signal?: AbortSignal;
   includeRaw?: boolean;
-  timeoutMs?: number; // poll budget, default 120_000
+  // poll budget: default 300_000 for settlementSummary / settlementTransactions (a Settlement
+  // Summary took ~170 s live, contracts §17), 120_000 for dailyInventory / dailyPrice; an
+  // explicit value always wins. On timeout, ReportTimeoutError.requestId lets you continue.
+  timeoutMs?: number;
   pollIntervalMs?: number; // default 2_000, x1.5 per poll
   maxPollIntervalMs?: number; // default 15_000
   maxPages?: number; // paged reports, 100 rows/page, default 50
@@ -1097,6 +1102,192 @@ export interface ReportsApi {
 // carries readonly requestId — continue with status/waitForRequest, never resubmit (100/hour).
 export class ReportTimeoutError extends NeweggError {
   readonly requestId: string;
+}
+
+// ----------------------------------------------------------------------------
+// RMA and courtesy refunds (Service Management READS — contracts §18)
+// ----------------------------------------------------------------------------
+// Get RMA Information (PUT, 1000/hr), Get Courtesy Refund Information (PUT, 30/min) and Get
+// Courtesy Refund Request Status (PUT, 10,000/hr) - READS despite the verb. Submit / Edit /
+// Process / Reject RMA and Issue Courtesy Refund are WRITES and are NOT part of this surface
+// (the live read-only guard forbids them). Amounts are USD (us, b2b) or CAD (ca): see `currency`.
+export type RmaCurrency = "USD" | "CAD";
+export type RmaStatus =
+  "open" | "received" | "rejected" | "voided" | "closed" | "processing" | "unknown";
+export type RmaType = "replacement" | "refund" | "unknown";
+export type RmaReason =
+  | "itemDamaged"
+  | "defective"
+  | "incompatible"
+  | "noLongerNeeded"
+  | "notAsDescribed"
+  | "orderedWrongItem"
+  | "sentWrongItem"
+  | "unsatisfied"
+  | "other"
+  | "unknown";
+export interface ListRmasInput {
+  keyword?: {
+    type: "rmaNumber" | "orderNumber" | "customerName" | "sellerRmaNumber";
+    value: string;
+  };
+  status?: Exclude<RmaStatus, "unknown">;
+  type?: "replacement" | "refund";
+  processedBy?: "seller" | "newegg";
+  dateFrom?: Date | string; // Pacific; a Date is rendered "YYYY-MM-DD HH:mm:ss", a string is sent verbatim
+  dateTo?: Date | string;
+  page?: number; // 1-based, default 1
+  pageSize?: number; // 1-100, default 100 (invalid values throw NeweggValidationError, never clamped)
+  version?: string; // us 307|309|320, b2b/ca 305|309|320; default "320"; others throw
+}
+export interface RmaItem {
+  sellerPartNumber?: string;
+  mfrPartNumber?: string;
+  neweggItemNumber?: string;
+  description?: string;
+  unitPrice?: number;
+  returnQuantity?: number;
+  returnUnitPrice?: number;
+  refundShippingPrice?: number;
+  shippedBy?: "seller" | "newegg";
+  reason: RmaReason;
+  reasonCode?: number;
+  reasonDescription?: string;
+  unopened?: boolean;
+  memo?: string; // unopened / memo: USA and CAN only
+}
+export interface Rma {
+  rmaNumber: string;
+  type: RmaType;
+  typeDescription?: string;
+  sellerRmaNumber?: string;
+  replacementOrderNumber?: string;
+  issueUser?: string;
+  rmaDate?: { raw: string; iso?: string };
+  status: RmaStatus;
+  statusDescription?: string;
+  shipMethod?: number;
+  shipMethodDescription?: string;
+  orderNumber?: string;
+  orderDate?: { raw: string; iso?: string };
+  invoiceNumber?: string;
+  orderAmount?: number;
+  availableRefundAmount?: number;
+  priorRefundAmount?: number;
+  processedBy?: "seller" | "newegg";
+  receiveDate?: { raw: string; iso?: string };
+  note?: string;
+  customer?: RmaCustomer; // PII (name, phone, masked e-mail, ship-to) - the MCP tools never return it
+  returnLabel?: {
+    trackingNumber?: string;
+    trackingUrl?: string;
+    estimatedCost?: number;
+    paidBy?: string;
+  };
+  items: RmaItem[];
+}
+export interface RmasPage {
+  marketplace: NeweggMarketplace;
+  rmas: Rma[];
+  currency: RmaCurrency;
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPageCount: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export interface RmaApi {
+  list(input?: ListRmasInput, options?: RequestOptions): Promise<RmasPage>; // empty page, not an error, when none
+  get(rmaNumber: string | number, options?: RequestOptions): Promise<Rma>; // NeweggApiError when none; digits only
+  tryGet(rmaNumber: string | number, options?: RequestOptions): Promise<Rma | undefined>;
+}
+
+export type CourtesyRefundStatus = "open" | "closed" | "void" | "unknown";
+export type CourtesyRefundReason =
+  | "negativeCustomerFeedback"
+  | "pricingError"
+  | "wrongItemInformation"
+  | "shippingDelay"
+  | "packageNotReceived"
+  | "customerCourtesy"
+  | "unknown";
+export interface CourtesyRefund {
+  courtesyRefundId: string;
+  orderNumber?: string;
+  orderAmount?: number;
+  invoiceNumber?: string;
+  refundAmount?: number;
+  reason: CourtesyRefundReason;
+  reasonCode?: number;
+  reasonDescription?: string;
+  noteToCustomer?: string;
+  status: CourtesyRefundStatus;
+  issuedByNewegg?: boolean;
+  createdBy?: string;
+  createdDate?: { raw: string; iso?: string };
+  editedBy?: string;
+  editedDate?: { raw: string; iso?: string };
+}
+export interface ListCourtesyRefundsInput {
+  keyword?: { type: "courtesyRefundId" | "orderNumber" | "customerName"; value: string };
+  status?: "open" | "closed" | "void";
+  dateFrom?: Date | string;
+  dateTo?: Date | string;
+  page?: number;
+  pageSize?: number; // as ListRmasInput
+}
+export interface CourtesyRefundsPage {
+  marketplace: NeweggMarketplace;
+  refunds: CourtesyRefund[];
+  currency: RmaCurrency;
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPageCount: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export type CourtesyRefundRequestState =
+  "submitted" | "inProgress" | "finished" | "failed" | "cancelled" | "unknown";
+export interface CourtesyRefundRequestStatus {
+  requestId: string;
+  requestType?: string;
+  requestDate?: { raw: string; iso?: string };
+  state: CourtesyRefundRequestState;
+  stateRaw?: string;
+  processMemo?: string; // failure detail when state is "failed"
+  refund?: CourtesyRefund; // present once "finished"
+}
+export interface ListCourtesyRefundRequestsInput {
+  requestIds?: string[]; // when set Newegg ignores every other criterion
+  status?: Exclude<CourtesyRefundRequestState, "unknown">;
+  dateFrom?: Date | string;
+  dateTo?: Date | string;
+  maxCount?: number; // 1-100, default 100
+}
+export interface CourtesyRefundRequestsResult {
+  marketplace: NeweggMarketplace;
+  requests: CourtesyRefundRequestStatus[];
+  currency: RmaCurrency;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export interface RefundsApi {
+  list(input?: ListCourtesyRefundsInput, options?: RequestOptions): Promise<CourtesyRefundsPage>; // 30 req/min
+  get(courtesyRefundId: string, options?: RequestOptions): Promise<CourtesyRefund>;
+  tryGet(courtesyRefundId: string, options?: RequestOptions): Promise<CourtesyRefund | undefined>;
+  listRequests(
+    input?: ListCourtesyRefundRequestsInput,
+    options?: RequestOptions,
+  ): Promise<CourtesyRefundRequestsResult>;
+  getRequestStatus(
+    requestId: string,
+    options?: RequestOptions,
+  ): Promise<CourtesyRefundRequestStatus>;
 }
 
 // ----------------------------------------------------------------------------

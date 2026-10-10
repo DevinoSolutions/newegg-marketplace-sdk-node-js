@@ -31,6 +31,7 @@ import {
   UnsupportedMarketplaceOperationError,
 } from "../errors/index.js";
 import { Operation } from "../client/operations.js";
+import { REPORT_SETTLEMENT_TIMEOUT_MS } from "../reportmgmt/constants.js";
 import { toTimestamp } from "../platform/dates.js";
 import { getReportsPlatform, type FileReportRequest } from "../platform/reports.js";
 import { parseDelimited } from "../reportmgmt/csv.js";
@@ -167,7 +168,11 @@ class ReportsCore {
     return toStatus(await this.lifecycle.status(requestId, options));
   }
 
-  async waitFinished(requestId: string, options: ReportWaitOptions): Promise<void> {
+  async waitFinished(
+    requestId: string,
+    options: ReportWaitOptions,
+    defaultTimeoutMs?: number,
+  ): Promise<void> {
     requireRequestId(requestId);
     const correlationId = options.correlationId ?? randomUUID();
     await waitUntilFinished(
@@ -188,7 +193,9 @@ class ReportsCore {
             { requestId: id, correlationId },
           ),
       },
-      options,
+      defaultTimeoutMs !== undefined && options.timeoutMs === undefined
+        ? { ...options, timeoutMs: defaultTimeoutMs }
+        : options,
     );
   }
 }
@@ -201,6 +208,8 @@ interface PagedSpec<Input, Row> {
   buildSubmit(input: Input): { body: unknown; query?: Record<string, string> };
   parsePage(json: unknown): ParsedPage<Row>;
   defaultResultQuery?: Record<string, string>;
+  /** Per-type default wait budget (ms) used when the caller passes no `timeoutMs`. */
+  defaultWaitTimeoutMs?: number;
 }
 
 class PagedReportApi<Input, Row> {
@@ -240,7 +249,7 @@ class PagedReportApi<Input, Row> {
   ): Promise<CollectedReport<Row>> {
     const correlationId = options.correlationId ?? randomUUID();
     const shared = { ...options, correlationId };
-    await this.core.waitFinished(requestId, shared);
+    await this.core.waitFinished(requestId, shared, this.spec.defaultWaitTimeoutMs);
     const maxPages = Math.max(1, options.maxPages ?? REPORT_DEFAULT_MAX_PAGES);
     const rows: Row[] = [];
     let totalCount = 0;
@@ -481,6 +490,7 @@ export class ReportsApiImpl implements ReportsApi {
         }),
         parsePage: parseSettlementSummaryPage,
         defaultResultQuery: { version: SETTLEMENT_SUMMARY_DEFAULT_VERSION },
+        defaultWaitTimeoutMs: REPORT_SETTLEMENT_TIMEOUT_MS,
       },
     );
     this.settlementTransactions = new PagedReportApi<
@@ -492,6 +502,7 @@ export class ReportsApiImpl implements ReportsApi {
         body: buildSettlementTransactionsSubmit(validateSettlementTransactionsInput(input)),
       }),
       parsePage: parseSettlementTransactionsPage,
+      defaultWaitTimeoutMs: REPORT_SETTLEMENT_TIMEOUT_MS,
     });
     this.dailyInventory = new FileReportApiImpl<DailyInventoryInput, DailyInventoryRow>(core, {
       resolve: () => platform.dailyInventory,

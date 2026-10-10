@@ -36,6 +36,10 @@ import {
   ordersGetStatusTool,
   ordersGetTool,
   ordersListTool,
+  refundListTool,
+  refundStatusTool,
+  rmaGetTool,
+  rmaListTool,
   createPricingPreviewTool,
   pricingApplyTool,
   pricingGetTool,
@@ -117,6 +121,8 @@ export function enabledToolNames(config: McpServerConfig): string[] {
   names.push(TOOL_NAMES.feedStatus, TOOL_NAMES.feedResult, TOOL_NAMES.serviceStatus);
   // Order reads are always available (never write-gated).
   names.push(TOOL_NAMES.ordersList, TOOL_NAMES.ordersGet, TOOL_NAMES.ordersGetStatus);
+  // RMA / courtesy refund reads (contracts §18) are always available (never write-gated).
+  names.push(TOOL_NAMES.rmaList, TOOL_NAMES.rmaGet, TOOL_NAMES.refundList, TOOL_NAMES.refundStatus);
   // Catalog resolution is read-only (report submission mutates nothing; contracts §12.4).
   names.push(TOOL_NAMES.catalogResolve, TOOL_NAMES.catalogLookupStatus);
   // Reports (settlement / daily inventory / daily price) are read-only report jobs (contracts §17).
@@ -263,6 +269,10 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   registerToolDefinition(server, ordersListTool, ctx);
   registerToolDefinition(server, ordersGetTool, ctx);
   registerToolDefinition(server, ordersGetStatusTool, ctx);
+  registerToolDefinition(server, rmaListTool, ctx);
+  registerToolDefinition(server, rmaGetTool, ctx);
+  registerToolDefinition(server, refundListTool, ctx);
+  registerToolDefinition(server, refundStatusTool, ctx);
   registerToolDefinition(server, catalogResolveTool, ctx);
   registerToolDefinition(server, catalogLookupStatusTool, ctx);
   registerToolDefinition(server, reportsSettlementSummaryTool, ctx);

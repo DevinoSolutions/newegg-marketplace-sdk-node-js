@@ -2024,7 +2024,7 @@ caps) or through the caller's `reportFileDownloader`, and keeps the URL out of t
 ### 17.6 Order List and RMA List reports (documented, not implemented)
 
 Contracted for completeness; not wrapped because Get Order Information (§10) already covers orders and
-RMA/returns are a separate domain on the roadmap.
+RMAs are read directly through Get RMA Information (§18).
 
 - **Order List** — submit `OperationType: "OrderListReportRequest"`, criteria `OrderReportCriteria`
   `{ RequestType: "ORDER_LIST_REPORT", KeywordsType (0 all · 1 OrderNumber · 2 InvoiceNumber · 3 CustomerName
@@ -2058,7 +2058,9 @@ SellerRMANumber), KeywordsValue, Status (0 all · 1 Open · 2 Received · 3 Reje
 | `dailyPrice.…`                                                              | §17.5 (file; US only — B2B/CAN throw `UnsupportedMarketplaceOperationError`) |
 | `status(requestId)`                                                         | §12.2 (report-type independent)                                              |
 
-`waitFor*` polls with `pollIntervalMs` (2 s) ×1.5 per poll up to 15 s inside a 120 s budget, then throws
+`waitFor*` polls with `pollIntervalMs` (2 s) ×1.5 per poll up to 15 s inside a time budget - **300 s for
+the two settlement reports, 120 s for the daily file reports** (changed 2026-10-10: a Settlement Summary
+took about 170 s live, see below; an explicit `timeoutMs` always wins) - then throws
 `ReportTimeoutError` carrying the `requestId` (continue with `waitForRequest(requestId)`; never resubmit —
 100/hour). A CANCELLED report throws a non-retryable `ReportTimeoutError`. Paged reports are fetched up to
 `maxPages` (default 50 → 5,000 rows) and flagged `truncated` beyond it; file reports keep at most `maxRows`
@@ -2074,9 +2076,11 @@ settlement results (the parser accepts both); the FTP download itself (see below
 **Live verification (2026-10-10, US seller account, read-only; no account values recorded).**
 
 - Settlement Summary: `YYYY-MM-DD` dates, `version=313` and a 60-day range were all accepted on US. The
-  report took about 170 s from SUBMITTED to FINISHED, so the SDK's 120 s default wait can time out on a
-  real account: pass a larger `timeoutMs` or continue with `waitForRequest(requestId)` (the MCP tools
-  return `pending` + `requestId` for the same reason). The paged result parsed (`PageSize` 100) and the
+  report took about 170 s from SUBMITTED to FINISHED, which exceeded the SDK's original 120 s default.
+  The settlement reports (summary and transactions) now default to a 300 s wait budget
+  (`REPORT_SETTLEMENT_TIMEOUT_MS`); a slower report still throws `ReportTimeoutError` with the
+  `requestId` to continue with `waitForRequest(requestId)` (the MCP tools bound their own wait with
+  `waitSeconds`, max 115, and return `pending` + `requestId`). The paged result parsed (`PageSize` 100) and the
   documented amount fields mapped.
 - Daily Inventory (US, `INTERNATIONAL_INVENTORY_REPORT`): submit accepted, but the report was still
   `IN_PROGRESS` after more than 5 minutes. Calling `result` before FINISHED returns HTTP 400 `CE012`
@@ -2084,3 +2088,210 @@ settlement results (the parser accepts both); the FTP download itself (see below
   and a local fake FTP server only (**ASSUMPTION**: passive FTP to the documented `ftp03.newegg.com` URL).
 - Status polling shares one 500/hour budget: aggressive probing hit HTTP 429 on `status`. The SDK backs
   off 1.5x up to 15 s.
+
+## 18. Service Management — RMA and courtesy refunds
+
+Extracted 2026-10-10 from the official RMA Management pages, all under
+`https://developer.newegg.com/newegg_marketplace_api/rma_management/` (the index and every sub-page were
+last updated 2018-10-15). The section lists eight functions, all stated as available on all three
+platforms. The wire domain is `servicemgmt/` (the standard prefix applies: none on Newegg.com, `b2b/`,
+`can/`). Every example below uses fictional identifiers; the docs' own sample data is not reproduced.
+
+| Function                           | Page (`rma_management/…`)             | Verb | Path (after prefix)                        | `OperationType`                  | Class     |
+| ---------------------------------- | ------------------------------------- | ---- | ------------------------------------------ | -------------------------------- | --------- |
+| Get RMA Information                | `get_rma_information/`                | PUT  | `servicemgmt/rma/rmainfo`                  | `GetRMAInfoRequest`              | **READ**  |
+| Get Courtesy Refund Information    | `get_courtesy_refund_information/`    | PUT  | `servicemgmt/courtesyrefund/info`          | `GetCourtesyRefundInfo`          | **READ**  |
+| Get Courtesy Refund Request Status | `get_courtesy_refund_request_status/` | PUT  | `servicemgmt/courtesyrefund/requeststatus` | `GetCourtesyRefundStatusRequest` | **READ**  |
+| Submit RMA                         | `submit_rma/`                         | POST | `servicemgmt/rma/newrma`                   | `IssueRMARequest`                | **WRITE** |
+| Edit RMA                           | `edit_rma/`                           | POST | `servicemgmt/rma/updaterma`                | `EditRMARequest`                 | **WRITE** |
+| Process RMA (receive)              | `process_rma/`                        | POST | `servicemgmt/rma/updaterma`                | `ReceiveRMARequest`              | **WRITE** |
+| Reject RMA                         | `reject_rma/`                         | POST | `servicemgmt/rma/updaterma`                | `RejectRMARequest`               | **WRITE** |
+| Issue Courtesy Refund              | `issue_courtesy_refund/`              | POST | `servicemgmt/courtesyrefund/new`           | `IssueCourtesyRefund`            | **WRITE** |
+
+Classification follows what each page says it does. The three reads are `PUT` with a request body - like
+order info (§10) and Get Item Price (§15), the verb does not imply a write. The five writes create or
+change RMAs / refunds (Issue Courtesy Refund is an asynchronous "request" that Get Courtesy Refund Request
+Status then reports on; the index page warns a courtesy refund does NOT refund the commission). **Only the
+three reads are implemented** (`client.rma`, `client.refunds`); the writes are recorded here for the record
+and are forbidden in the live suite by `npm run check:live-readonly` (their endpoints, `OperationType`s and
+prospective SDK method names are all pre-armed). Throttles on the write pages: Submit RMA 100/hour; Edit /
+Process / Reject RMA and Issue Courtesy Refund 1,000/hour. Write `version`: 307 on Newegg.com, 305 on
+Neweggbusiness.com / Newegg.ca (Issue Courtesy Refund has no `version`). The write bodies were not
+transcribed; do that from the pages when one is implemented.
+
+Common to the reads:
+
+- Auth, headers and the lowercase-URL rule are §1/§2; the request carries `sellerid` (original case) and,
+  for Get RMA Information only, `version`. Request and response formats: XML or JSON; the SDK sends JSON.
+- Request body is `{ OperationType, RequestBody: { … } }`. The optional `IssueUser` (a registered Seller
+  Portal e-mail; defaults to the seller id) is **not sent** by the SDK. In every JSON sample the wire values
+  are **strings** (`"PageIndex": "1"`, `"Status": "0"`); the SDK sends strings.
+- Dates are Pacific time. The docs defer to "Acceptable Date Format"; the samples use `YYYY-MM-DD` and
+  `YYYY-MM-DD HH:mm:ss`. **ASSUMPTION:** both forms are accepted on every criteria field; the SDK sends a
+  string verbatim and renders a `Date` as Pacific `YYYY-MM-DD HH:mm:ss`.
+- Currency: USD on Newegg.com and Neweggbusiness.com, CAD on Newegg.ca - every amount on every page.
+- Error bodies: JSON array `[{"Code":"CE001","Message":"SellerID cannot be null or empty"}]` or the XML
+  `<Errors><Error><Code>…` form (§1); `errors/parse-upstream.ts` normalizes both, plus plain text. The pages
+  list only `CE001` and defer HTTP errors to the shared "Failed Response Error Code List". 429 follows §3.
+- Responses carry the `NeweggAPIResponse` wrapper in the samples; the SDK accepts it or its absence, and
+  throws `NeweggApiError` on `IsSuccess=false`.
+- Lists are the usual object-OR-array quirk: `RMAInfoList > RMAInfo`, `RMATransactionList > RMATransaction`,
+  `ReturnShippingLabel > Label`, `CourtesyRefundInfoList > CourtesyrefundInfo` (sic casing on the info page;
+  the status page uses `CourtesyRefundInfo` - the SDK reads both), `ResponseList > ResponseInfo`.
+
+### 18.1 Get RMA Information (READ)
+
+`PUT {prefix}servicemgmt/rma/rmainfo?sellerid={sellerid}&version={version}` - **1,000 requests/hour**.
+
+`version`: Newegg.com **307 · 309 · 320**; Neweggbusiness.com and Newegg.ca **305 · 309 · 320**. 309 adds
+the seller's own RMA number and the replacement order number; 320 adds the return shipping label fields.
+`SellerRMANumber` is returned from 307 (US) / 305 (B2B, CAN). The SDK defaults to **320** (newest on all
+three) and rejects a version outside the platform's documented set before sending (`platform/rma.ts`).
+
+Request body:
+
+```json
+{
+  "OperationType": "GetRMAInfoRequest",
+  "RequestBody": {
+    "PageInfo": { "PageIndex": "1", "PageSize": "10" },
+    "KeywordsType": "1",
+    "KeywordsValue": "<rma number>",
+    "Status": "0",
+    "RMADateFrom": "2026-09-01",
+    "RMADateTo": "2026-09-30",
+    "RMAType": "0",
+    "ProcessedBy": "0"
+  }
+}
+```
+
+All criteria are optional. `PageSize` max 100. The field table says `PageSize` defaults to 1 and `PageIndex`
+"defaults to 100 if blank" - a doc slip (the two are swapped); the SDK always sends both explicitly (default
+page 1, size 100). `PageInfo` nesting is from the samples; the field table lists `PageIndex`/`PageSize`
+flat (**ASSUMPTION:** the nested form is the working one - both samples send it). Filters: `KeywordsType`
+1 RMANumber · 2 OrderNumber · 3 CustomerName · 4 SellerRMANumber (omit = no keyword); `Status` 0 all
+(default) · 1 Open · 2 Received · 3 Rejected · 4 Voided · 5 Closed · 6 Processing (Received RMAs are not
+visible in Seller Portal); `RMAType` 0 all · 1 Replacement · 2 Refund; `ProcessedBy` 0 all · 1 Seller ·
+2 Newegg. The page states no maximum date range (**ASSUMPTION:** none enforced).
+
+Response (`OperationType` is `GetRMAInfo` in the samples; the field table says `IssueRMAResponse` - a
+copy-paste slip, the SDK ignores it): `ResponseBody.PageInfo { TotalCount, TotalPageCount, PageIndex,
+PageSize }` and `RMAInfoList > RMAInfo[]`, each with:
+
+- Identity: `RMANumber`, `RMAType` (1 Replacement · 2 Refund) + `RMATypeDescription`, `SellerRMANumber`
+  (alphanumeric ≤ 50), `ReplacementOrderNumber` (replacement RMAs, version ≥ 309), `IssueUser`, `RMADate`,
+  `RMAStatus` (1 Open · 2 Received · 3 Rejected · 4 Voided · 5 Closed · 6 Processing) +
+  `RMAStatusDescription`, `RMAProcessedBy` ("Newegg" | "Seller"), `RMAReceiveDate`, `RMANote`.
+- Replacement shipping: `RMAShipMethod` 1-13 (Super Saver … Newegg Premier Next Day) + description; blank
+  for refund RMAs.
+- Order link and money: `OrderNumber`, `OrderDate`, `InvoiceNumber`, `OrderAmount`, `AvailableRefundAmount`
+  (order total minus refunds including this RMA), `PriorRefundAmount`.
+- Customer (**PII**): `CustomerName`, `CustomerPhoneNumber`, `CustomerEmailAddress` (Newegg's masked relay),
+  `ShipToAddress1/2`, `ShipToCityName`, `ShipToStateCode`, `ShipToZipCode`, `ShipToCountryCode`,
+  `ShipToLastName`, `ShipToFirstName`, `ShipToCompany`.
+- Return label (version 320): `ReturnShippingLabel > Label { TrackingNumber, TrackingURL, LabelEstimateCost,
+PaidBy }` in every sample; the field table lists the four fields flat. The SDK reads the nested form first,
+  then the flat one.
+- Items, `RMATransactionList > RMATransaction[]`: `SellerPartNumber`, `MfrPartNumber`, `NeweggItemNumber`,
+  `Description`, `UnitPrice`, `ReturnQuantity`, `ReturnUnitPrice` and `RefundShippingPrice` (refund RMAs),
+  `ShippedBy` (replacement RMAs: 0 SBS · 1 SBN), `RMAReason` 1 Item damage · 2 Defective · 3 Incompatible ·
+  4 No longer needed · 5 Inaccurate description · 6 Ordered wrong item · 7 Sent wrong item · 8 Product
+  dissatisfaction · 9 Other + `RMAReasonDescription`, and (USA/CAN only) `UnOpen`, `FileUrls`, `Memo`.
+
+The samples show numbers and statuses as strings and an empty `ShippedBy`/`RMAShipMethod`; the parser treats
+every field as optional. An account with no RMAs presumably answers an empty list (**ASSUMPTION:**
+`TotalCount` `"0"` and no `RMAInfoList`; the SDK returns an empty page for a missing list and does not treat
+it as an error).
+
+### 18.2 Get Courtesy Refund Information (READ)
+
+`PUT {prefix}servicemgmt/courtesyrefund/info?sellerid={sellerid}` - **30 requests per minute per client**
+(the tightest budget in the section; the SDK has no local limiter for it, so avoid loops). No `version`.
+
+```json
+{
+  "OperationType": "GetCourtesyRefundInfo",
+  "RequestBody": {
+    "PageInfo": { "PageIndex": "1", "PageSize": "10" },
+    "KeywordsType": "0",
+    "Status": "0",
+    "DateFrom": "2026-09-01 00:00:00",
+    "DateTo": "2026-09-30 23:59:59"
+  }
+}
+```
+
+Criteria (all optional): `PageSize` max 100 (default 100), `PageIndex` default 1; `KeywordsType` 0 all
+(default; `KeywordsValue` then ignored) · 1 CourtesyRefundID · 2 OrderNumber · 3 CustomerName; `Status` 0 all
+(default) · **1 Open · 2 Void · 3 Close** (request table); `DateFrom` / `DateTo` Pacific.
+
+Response `OperationType: "GetCourtesyRefundResponse"`: `ResponseBody.PageInfo` (the JSON sample swaps
+`PageSize` and `PageIndex`; values are taken as given) and `CourtesyRefundInfoList > CourtesyrefundInfo[]`
+with `CourtesyRefundID` (a GUID), `SONumber`, `SOAmount`, `InvoiceNumber`, `RefundAmount`, `ReasonCode`
+(1 Negative customer feedback · 2 Pricing error · 3 Wrong item information · 4 Shipping delay · 5 Package not
+received · 6 Customer Courtesy) + `Reason`, `NoteToCustomer` (free text), `Status`, `IsNeweggRefund`
+("true"/"false": issued by a Newegg agent), `InUserName`, `InDate`, `EditUserName`, `EditDate`. **Status
+mismatch:** the response table lists digits **1 Open · 2 Close · 3 Void** - the reverse of the request
+filter - while every sample returns the label `"Close"`. **ASSUMPTION:** each table is right for its own
+direction; the SDK sends the request digits and accepts digits or labels in responses.
+
+### 18.3 Get Courtesy Refund Request Status (READ)
+
+`PUT {prefix}servicemgmt/courtesyrefund/requeststatus?sellerid={sellerid}` - **10,000 requests/hour**.
+
+```json
+{
+  "OperationType": "GetCourtesyRefundStatusRequest",
+  "RequestBody": {
+    "GetRequestStatus": {
+      "RequestIDList": { "RequestID": ["<request id>"] },
+      "MaxCount": "100",
+      "RequestStatus": "ALL"
+    }
+  }
+}
+```
+
+`RequestID` is documented flat in the table but sent as an id list in the samples: when present, `MaxCount`,
+`RequestStatus` and the date range are ignored. `MaxCount` default and cap 100. `RequestStatus`: `ALL`
+(default) · `SUBMITTED` · `IN_PROGRESS` · `FINISHED` · `FAILED` · `CANCELLED`. `RequestDateFrom` /
+`RequestDateTo` Pacific.
+
+Response `OperationType: "GetCourtesyRefundRequestStatusResponse"`: `ResponseBody.ResponseList >
+ResponseInfo[]` with `RequestId`, `RequestType` (`COURTESYREFUND`), `RequestDate`, `RequestStatus`,
+`ProcessMemo` (the failure detail when FAILED) and, once FINISHED, `Result > CourtesyRefundInfo` with the
+§18.2 fields (plus `Memo`). In the sample the request id equals the `CourtesyRefundID` (**ASSUMPTION:** the
+id returned by Issue Courtesy Refund identifies both).
+
+### 18.4 SDK mapping
+
+All READS, none gated; the MCP tools register unconditionally.
+
+| SDK                                   | Wire             | MCP tool               |
+| ------------------------------------- | ---------------- | ---------------------- |
+| `client.rma.list(input)`              | §18.1            | `newegg_rma_list`      |
+| `client.rma.get/tryGet(rmaNumber)`    | §18.1, keyword 1 | `newegg_rma_get`       |
+| `client.refunds.list(input)`          | §18.2            | `newegg_refund_list`   |
+| `client.refunds.get/tryGet(id)`       | §18.2, keyword 1 | -                      |
+| `client.refunds.listRequests(input)`  | §18.3            | `newegg_refund_status` |
+| `client.refunds.getRequestStatus(id)` | §18.3            | -                      |
+
+Platform differences (the `version` sets, currency) live in `packages/sdk/src/platform/rma.ts`. Numbers are
+parsed from strings, `UnOpen` from `"0"/"1"`, dates through `platform/dates.ts` (`{ raw, iso }`), and unknown
+status / reason / type codes degrade to `"unknown"` rather than throwing. `get`/`tryGet` match the returned
+record's id exactly (a keyword search could in principle return neighbours).
+
+**PII.** Get RMA Information returns the buyer's name, phone, masked e-mail and full ship-to address, plus
+free-text notes and a return-label tracking number. The SDK returns them in its typed result (the caller is
+the seller); the **MCP tools never do**: `serializeRma` / `serializeRefund` map fields explicitly and drop the
+customer block, `RMANote`, item `Memo`, `NoteToCustomer`, `IssueUser` / `InUserName` / `EditUserName` (can be
+an e-mail) and the label tracking number / URL (see `docs/mcp-security.md`).
+
+**ASSUMPTIONs (retire when verified live):** `YYYY-MM-DD` and `YYYY-MM-DD HH:mm:ss` criteria dates accepted on
+all fields; the nested `PageInfo` request form; version `320` accepted on all three platforms; the empty-RMA
+response shape; the request-vs-response courtesy `Status` tables; no date-range cap on any read; the courtesy
+refund request id equalling the refund id; the `servicemgmt` paths on B2B/CAN beyond what the pages state.
+Not live-verified: no marketplace call was made when this section was written. The optional live test
+(`rma-read.live.test.ts`, read-only) asserts shapes only with identifiers discovered at runtime and skips
+the identifier-dependent cases when the account has no RMAs.

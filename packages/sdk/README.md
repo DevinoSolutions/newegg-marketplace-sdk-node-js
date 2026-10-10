@@ -111,6 +111,14 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
   `waitForRequest` and `waitForResult` (`ReportTimeoutError` carries the `requestId` so you
   continue instead of resubmitting; 100 submissions/hour). The file URL embeds credentials and
   is never exposed or logged.
+  Settlement reports wait up to 300 s by default (a Settlement Summary took ~170 s live); the daily
+  file reports 120 s; pass `timeoutMs` to override.
+- **`client.rma`** / **`client.refunds`** - read-only Service Management lookups (contracts §18):
+  `rma.list/get/tryGet` (Get RMA Information; `version` defaults to 320) and
+  `refunds.list/get/tryGet/listRequests/getRequestStatus` (courtesy refund information and request
+  status). Submitting, editing, processing or rejecting an RMA and issuing a courtesy refund are
+  writes and are not implemented. Amounts are USD (Newegg.com, B2B) or CAD (Newegg.ca); `Rma.customer`
+  holds buyer PII that the MCP tools deliberately never surface.
 - **`client.inventory`** — `getItem`, `getMany`, `previewUpdate`, `updateItem`, `updateMany`.
   `updateMany` takes `strategy: "direct" | "feed" | "auto"` (default `auto`; feeds above
   `strategy.autoFeedThreshold` post-dedup items, default 8).

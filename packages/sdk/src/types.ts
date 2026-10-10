@@ -72,6 +72,13 @@ export interface NeweggClient {
   readonly service: ServiceApi;
   /** Read-only order lookups (list / get / status). Never mutates. */
   readonly orders: OrdersApi;
+  /** Read-only RMA lookups (Get RMA Information; contracts §18). Never mutates. */
+  readonly rma: RmaApi;
+  /**
+   * Read-only courtesy refund lookups (information and request status; contracts §18). Never
+   * mutates; issuing a courtesy refund is intentionally not implemented.
+   */
+  readonly refunds: RefundsApi;
   /** Read-only catalog resolution via the Item Lookup Report (contracts §12). Never mutates. */
   readonly catalog: CatalogApi;
   /**
@@ -1375,7 +1382,10 @@ export interface ReportWaitOptions {
   correlationId?: string;
   signal?: AbortSignal;
   includeRaw?: boolean;
-  /** Overall budget for submit + poll + fetch, ms. Default 120_000. */
+  /**
+   * Overall budget for submit + poll + fetch, ms. Default 120_000 for the file reports (daily
+   * inventory / price); 300_000 for the settlement reports, which can take ~170 s to generate.
+   */
   timeoutMs?: number;
   /** First poll delay, ms. Default 2_000. Grows 1.5x per poll up to `maxPollIntervalMs`. */
   pollIntervalMs?: number;
@@ -1722,6 +1732,286 @@ export interface ReportsApi {
   readonly dailyPrice: FileReportApi<DailyPriceInput, DailyPriceRow>;
   /** Status of any submitted report by request id (the status endpoint is report-type independent). */
   status(requestId: string, options?: RequestOptions): Promise<ReportStatus>;
+}
+
+// ----------------------------------------------------------------------------
+// RMA and courtesy refunds - READS only (contracts §18)
+// ----------------------------------------------------------------------------
+/** Currency of every RMA / refund amount: USD on Newegg.com and Neweggbusiness.com, CAD on Newegg.ca. */
+export type RmaCurrency = "USD" | "CAD";
+
+/** RMA lifecycle status (`RMAStatus` 1-6); unrecognized codes map to `"unknown"`. */
+export type RmaStatus =
+  "open" | "received" | "rejected" | "voided" | "closed" | "processing" | "unknown";
+
+/** RMA kind (`RMAType` 1 replacement / 2 refund). */
+export type RmaType = "replacement" | "refund" | "unknown";
+
+/** Who handled the RMA (`RMAProcessedBy` / the `ProcessedBy` filter). */
+export type RmaProcessedBy = "seller" | "newegg";
+
+/** Per-item RMA reason (`RMAReason` 1-9). */
+export type RmaReason =
+  | "itemDamaged"
+  | "defective"
+  | "incompatible"
+  | "noLongerNeeded"
+  | "notAsDescribed"
+  | "orderedWrongItem"
+  | "sentWrongItem"
+  | "unsatisfied"
+  | "other"
+  | "unknown";
+
+/** What {@link ListRmasInput.keyword} searches (`KeywordsType` 1-4). */
+export type RmaKeywordType = "rmaNumber" | "orderNumber" | "customerName" | "sellerRmaNumber";
+
+/** Criteria for {@link RmaApi.list}. Every field is optional; omit all to match all RMAs. */
+export interface ListRmasInput {
+  /** Keyword search (`KeywordsType` + `KeywordsValue`). */
+  keyword?: { type: RmaKeywordType; value: string };
+  /** Filter by RMA status (`Status`). Note: `"received"` RMAs are not visible in Seller Portal. */
+  status?: Exclude<RmaStatus, "unknown">;
+  /** Filter by RMA kind (`RMAType`). */
+  type?: Exclude<RmaType, "unknown">;
+  /** Filter by who processed the RMA (`ProcessedBy`). */
+  processedBy?: RmaProcessedBy;
+  /** Lower bound on RMA date. `Date` is rendered as Pacific Time; a string is sent verbatim. */
+  dateFrom?: Date | string;
+  /** Upper bound on RMA date (see {@link ListRmasInput.dateFrom}). */
+  dateTo?: Date | string;
+  /** 1-based page (default 1). */
+  page?: number;
+  /** Page size (max 100, default 100). */
+  pageSize?: number;
+  /**
+   * Response field-set `version`. Documented: 307 / 309 / 320 on Newegg.com, 305 / 309 / 320 on
+   * Neweggbusiness.com and Newegg.ca. Default `"320"` (adds seller RMA number, replacement order
+   * number and the return-shipping label); an unsupported value throws a validation error.
+   */
+  version?: string;
+}
+
+/** One line of an RMA (`RMATransaction`). */
+export interface RmaItem {
+  sellerPartNumber?: string;
+  mfrPartNumber?: string;
+  neweggItemNumber?: string;
+  description?: string;
+  unitPrice?: number;
+  returnQuantity?: number;
+  /** Refund RMAs: the refund per unit. */
+  returnUnitPrice?: number;
+  /** Refund RMAs: the refunded shipping amount. */
+  refundShippingPrice?: number;
+  /** Replacement RMAs: who ships the replacement (`ShippedBy` 0 seller / 1 Newegg). */
+  shippedBy?: "seller" | "newegg";
+  reason: RmaReason;
+  reasonCode?: number;
+  reasonDescription?: string;
+  /** Whether the item was unboxed (`UnOpen`; Newegg.com and Newegg.ca only). */
+  unopened?: boolean;
+  /** Seller-facing memo (`Memo`; Newegg.com and Newegg.ca only). */
+  memo?: string;
+}
+
+/** Return-shipping label attached to an RMA (version 320; `ReturnShippingLabel`). */
+export interface RmaReturnLabel {
+  trackingNumber?: string;
+  trackingUrl?: string;
+  estimatedCost?: number;
+  paidBy?: string;
+}
+
+/** Customer contact block of an RMA. PII: the MCP tools never surface it. */
+export interface RmaCustomer {
+  name?: string;
+  phoneNumber?: string;
+  /** Newegg's masked relay address. */
+  emailAddress?: string;
+  shipTo?: ShipToAddress;
+}
+
+/** One RMA from Get RMA Information (contracts §18.1). Amounts are in {@link RmasPage.currency}. */
+export interface Rma {
+  rmaNumber: string;
+  type: RmaType;
+  typeDescription?: string;
+  /** Seller-assigned RMA reference (versions 307 / 309 / 320 on Newegg.com; 305 / 309 / 320 elsewhere). */
+  sellerRmaNumber?: string;
+  /** Replacement RMAs only (version 309+). */
+  replacementOrderNumber?: string;
+  issueUser?: string;
+  rmaDate?: { raw: string; iso?: string };
+  status: RmaStatus;
+  statusDescription?: string;
+  /** Replacement RMAs: ship method code / label (`RMAShipMethod*`). */
+  shipMethod?: number;
+  shipMethodDescription?: string;
+  orderNumber?: string;
+  orderDate?: { raw: string; iso?: string };
+  invoiceNumber?: string;
+  orderAmount?: number;
+  /** Total order amount minus everything refunded, including this RMA. */
+  availableRefundAmount?: number;
+  priorRefundAmount?: number;
+  processedBy?: RmaProcessedBy;
+  receiveDate?: { raw: string; iso?: string };
+  note?: string;
+  customer?: RmaCustomer;
+  returnLabel?: RmaReturnLabel;
+  items: RmaItem[];
+}
+
+/** One page of {@link RmaApi.list} results. */
+export interface RmasPage {
+  marketplace: NeweggMarketplace;
+  rmas: Rma[];
+  currency: RmaCurrency;
+  /** Echoed 1-based `PageIndex`. */
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPageCount: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+/** RMA reads (Get RMA Information, 1000 req/hr). Never mutates. */
+export interface RmaApi {
+  /** Search RMAs (single page). Omit `input` to match all RMAs. */
+  list(input?: ListRmasInput, options?: RequestOptions): Promise<RmasPage>;
+  /** Fetch one RMA by its Newegg RMA number. Throws {@link NeweggApiError} when none matches. */
+  get(rmaNumber: string | number, options?: RequestOptions): Promise<Rma>;
+  /** Like {@link RmaApi.get} but resolves to `undefined` when no RMA matches. */
+  tryGet(rmaNumber: string | number, options?: RequestOptions): Promise<Rma | undefined>;
+}
+
+/** Courtesy refund status (`Status`: Open / Close / Void). */
+export type CourtesyRefundStatus = "open" | "closed" | "void" | "unknown";
+
+/** Courtesy refund reason (`ReasonCode` 1-6). */
+export type CourtesyRefundReason =
+  | "negativeCustomerFeedback"
+  | "pricingError"
+  | "wrongItemInformation"
+  | "shippingDelay"
+  | "packageNotReceived"
+  | "customerCourtesy"
+  | "unknown";
+
+/** What {@link ListCourtesyRefundsInput.keyword} searches (`KeywordsType` 1-3). */
+export type CourtesyRefundKeywordType = "courtesyRefundId" | "orderNumber" | "customerName";
+
+/** Criteria for {@link RefundsApi.list}. Every field is optional. */
+export interface ListCourtesyRefundsInput {
+  keyword?: { type: CourtesyRefundKeywordType; value: string };
+  status?: Exclude<CourtesyRefundStatus, "unknown">;
+  /** Lower bound on the courtesy refund date. `Date` is rendered as Pacific Time. */
+  dateFrom?: Date | string;
+  dateTo?: Date | string;
+  /** 1-based page (default 1). */
+  page?: number;
+  /** Page size (max 100, default 100). */
+  pageSize?: number;
+}
+
+/** One courtesy refund (contracts §18.2). Amounts are in the page's {@link RmaCurrency}. */
+export interface CourtesyRefund {
+  courtesyRefundId: string;
+  orderNumber?: string;
+  orderAmount?: number;
+  invoiceNumber?: string;
+  refundAmount?: number;
+  reason: CourtesyRefundReason;
+  reasonCode?: number;
+  reasonDescription?: string;
+  noteToCustomer?: string;
+  status: CourtesyRefundStatus;
+  /** `true` when a Newegg customer-service agent issued the refund. */
+  issuedByNewegg?: boolean;
+  createdBy?: string;
+  createdDate?: { raw: string; iso?: string };
+  editedBy?: string;
+  editedDate?: { raw: string; iso?: string };
+}
+
+/** One page of {@link RefundsApi.list} results. */
+export interface CourtesyRefundsPage {
+  marketplace: NeweggMarketplace;
+  refunds: CourtesyRefund[];
+  currency: RmaCurrency;
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPageCount: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+/** Processing state of a courtesy refund REQUEST (`RequestStatus`). */
+export type CourtesyRefundRequestState =
+  "submitted" | "inProgress" | "finished" | "failed" | "cancelled" | "unknown";
+
+/** Status of one courtesy refund request (Get Courtesy Refund Request Status). */
+export interface CourtesyRefundRequestStatus {
+  requestId: string;
+  requestType?: string;
+  requestDate?: { raw: string; iso?: string };
+  state: CourtesyRefundRequestState;
+  /** The wire `RequestStatus` label as sent (e.g. `"IN_PROGRESS"`). */
+  stateRaw?: string;
+  /** Failure detail when `state` is `"failed"`. */
+  processMemo?: string;
+  /** The resulting courtesy refund once `state` is `"finished"`. */
+  refund?: CourtesyRefund;
+}
+
+/** Criteria for {@link RefundsApi.listRequests}. */
+export interface ListCourtesyRefundRequestsInput {
+  /** Look up specific request ids; when set Newegg ignores every other criterion. */
+  requestIds?: string[];
+  status?: Exclude<CourtesyRefundRequestState, "unknown">;
+  dateFrom?: Date | string;
+  dateTo?: Date | string;
+  /** Maximum records (Newegg caps it at 100). */
+  maxCount?: number;
+}
+
+/** Result of {@link RefundsApi.listRequests}. */
+export interface CourtesyRefundRequestsResult {
+  marketplace: NeweggMarketplace;
+  requests: CourtesyRefundRequestStatus[];
+  currency: RmaCurrency;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+/**
+ * Courtesy refund reads (Get Courtesy Refund Information 30 req/min; Get Courtesy Refund Request
+ * Status 10,000 req/hr). Issuing a courtesy refund is a WRITE and is deliberately not part of
+ * this API.
+ */
+export interface RefundsApi {
+  /** Search courtesy refunds (single page). Omit `input` to match all. */
+  list(input?: ListCourtesyRefundsInput, options?: RequestOptions): Promise<CourtesyRefundsPage>;
+  /** Fetch one courtesy refund by id. Throws {@link NeweggApiError} when none matches. */
+  get(courtesyRefundId: string, options?: RequestOptions): Promise<CourtesyRefund>;
+  /** Like {@link RefundsApi.get} but resolves to `undefined` when none matches. */
+  tryGet(courtesyRefundId: string, options?: RequestOptions): Promise<CourtesyRefund | undefined>;
+  /** Status of submitted courtesy refund requests, filtered by id / status / date. */
+  listRequests(
+    input?: ListCourtesyRefundRequestsInput,
+    options?: RequestOptions,
+  ): Promise<CourtesyRefundRequestsResult>;
+  /** Status of one courtesy refund request. Throws {@link NeweggApiError} when Newegg returns none. */
+  getRequestStatus(
+    requestId: string,
+    options?: RequestOptions,
+  ): Promise<CourtesyRefundRequestStatus>;
 }
 
 // ----------------------------------------------------------------------------

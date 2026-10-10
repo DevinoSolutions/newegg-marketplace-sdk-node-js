@@ -21,6 +21,11 @@ export const Operation = {
   OrderCancel: "orders.cancel",
   OrderConfirm: "orders.confirm",
   OrderRemoveItem: "orders.removeItems",
+  // Service Management READS (contracts §18): Get RMA Information 1000/hr; Get Courtesy Refund
+  // Information 30/min; Get Courtesy Refund Request Status 10,000/hr. All PUT, none mutate.
+  RmaList: "rma.list",
+  RefundList: "refunds.list",
+  RefundRequestStatus: "refunds.requestStatus",
   // Catalog resolution via the Item Lookup Report (reportmgmt, §12). Submit 100/hr;
   // status and result 500/hr each.
   CatalogLookupSubmit: "catalog.lookupSubmit",

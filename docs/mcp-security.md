@@ -29,6 +29,10 @@ Tools (underscore names, per MCP naming rules):
 | `newegg_reports_daily_inventory`         | read               | Daily Inventory report. The FTP report file is downloaded and parsed server-side; its credential-bearing URL is **never** returned or logged.                                                                                                                                                                     |
 | `newegg_reports_daily_price`             | read               | Daily Price report (Newegg.com only). Same file handling as the daily inventory tool.                                                                                                                                                                                                                             |
 | `newegg_reports_status`                  | read               | Status of a pending report by `requestId` + `reportType`; returns the rows (bounded by `limit`) once finished.                                                                                                                                                                                                    |
+| `newegg_rma_list`                        | read               | RMA search (Get RMA Information): status, type, keyword, date range, paging. Business fields only; **no customer PII** (see the RMA note below).                                                                                                                                                                  |
+| `newegg_rma_get`                         | read               | One RMA by number. Same PII-free mapping.                                                                                                                                                                                                                                                                         |
+| `newegg_refund_list`                     | read               | Courtesy refund search (Get Courtesy Refund Information; Newegg allows 30 requests/minute). No customer note or user names.                                                                                                                                                                                       |
+| `newegg_refund_status`                   | read               | Courtesy refund request status (submitted / in progress / finished / failed / cancelled) with the resulting refund. No customer note.                                                                                                                                                                             |
 | `newegg_feed_status`                     | read               | Feed status by request ID.                                                                                                                                                                                                                                                                                        |
 | `newegg_feed_result`                     | read               | Feed processing report by request ID.                                                                                                                                                                                                                                                                             |
 | `newegg_service_status`                  | read               | Newegg service-domain availability.                                                                                                                                                                                                                                                                               |
@@ -50,6 +54,19 @@ Tools (underscore names, per MCP naming rules):
 > (sales, fees, payouts) - treat that output as confidential business data, like the order
 > reads above. All report tools are read-only: submitting a report creates a report job and
 > changes nothing on the account.
+
+> **RMA and courtesy refund tools: PII handling.** Newegg's Get RMA Information response carries
+> the buyer's name, phone, masked e-mail and full ship-to address, free-text RMA / item notes,
+> the issuing user (a seller e-mail address can appear here) and the return-label tracking number.
+> Unlike the order tools above, the RMA and refund tools **never return any of it**: each field is
+> mapped explicitly (`serializeRma`, `serializeRefund`), so a new SDK field cannot leak by
+> accident, and SDK `raw` payloads are never requested. What the tools return is the business data
+> a seller needs to triage returns: RMA / order / invoice numbers, status, type, reason, quantities,
+> item SKUs and amounts (USD on Newegg.com / Neweggbusiness.com, CAD on Newegg.ca). Even so, RMA
+> and refund amounts are confidential business data. There is deliberately **no** tool to submit,
+> edit, process or reject an RMA or to issue a courtesy refund, and the live test suite is
+> forbidden from calling those endpoints (`npm run check:live-readonly`). A future write tool must
+> follow the preview/apply flow (ADR 0005) behind `NEWEGG_MCP_ALLOW_WRITES`.
 
 Resources:
 
