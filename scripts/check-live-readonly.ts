@@ -45,6 +45,17 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /listings\s*\.\s*create\s*\(/, why: "listings.create (write)" },
   { re: /BatchItemCreation/, why: "item-creation feed MessageType (write)" },
   { re: /ITEM_DATA/, why: "item-creation feed request type (write)" },
+  // Price updates (contracts §16) — WRITE surface. The price READS (pricing.get / tryGet /
+  // getMany = Get Item Price) are deliberately NOT matched. The SDK call, the wire endpoints (the
+  // US price URL is read-on-PUT / write-on-POST; B2B/CAN inventoryandprice is a PUT write) and the
+  // write-body markers are all listed, so neither `client.pricing.update(...)` nor a hand-built
+  // price body can land in a live test.
+  { re: /pricing\s*\??\.\s*update\s*\(/, why: "pricing.update (price write)" },
+  { re: /priceUpdateRequest|parsePriceUpdate|PriceUpdate/, why: "price-update write surface" },
+  { re: /inventoryandprice/i, why: "inventoryandprice endpoint (price/inventory write)" },
+  { re: /international\/price/i, why: "US international price endpoint (write on POST)" },
+  { re: /["'`]?PriceList["'`]?\s*:/, why: "raw price-write body (PriceList)" },
+  { re: /["'`]?SellingPrice["'`]?\s*:/, why: "raw price-write body (SellingPrice)" },
 ];
 
 let files: string[] = [];

@@ -1,4 +1,4 @@
-import type { ParsedPrice, ParsedPriceEntry } from "./types.js";
+import type { ParsedPrice, ParsedPriceEntry, ParsedPriceUpdate } from "./types.js";
 import type { PricePromotion } from "../types.js";
 import { asArray, asBoolean, asNumber, asString, getField, isRecord } from "../schemas/wire.js";
 
@@ -58,6 +58,33 @@ export function parseUsPrice(json: unknown): ParsedPrice | undefined {
   }
   const rows = Array.isArray(priceList) ? priceList : asArray(getField(priceList, "Price"));
   return { itemNumber, sellerPartNumber, entries: rows.filter(isRecord).map(parseEntry) };
+}
+
+/** US Update Item Price echoes the `PriceList` back; pick the row for the updated country. */
+export function parseUsPriceUpdate(
+  json: unknown,
+  countryCode: string | undefined,
+): ParsedPriceUpdate {
+  const itemNumber = asString(getField(json, "ItemNumber"));
+  const sellerPartNumber = asString(getField(json, "SellerPartNumber"));
+  const priceList = getField(json, "PriceList");
+  const rows = Array.isArray(priceList) ? priceList : asArray(getField(priceList, "Price"));
+  const row = rows.find((entry) => asString(getField(entry, "CountryCode")) === countryCode);
+  return { itemNumber, sellerPartNumber, sellingPrice: asNumber(getField(row, "SellingPrice")) };
+}
+
+/**
+ * B2B/CAN Update Inventory and Price: the result sits under `UpdateInventoryAndPriceResult`
+ * (contracts §6.2) or flat; `Result` is 1 success / 0 failure.
+ */
+export function parseFlatPriceUpdate(json: unknown): ParsedPriceUpdate {
+  const body = getField(json, "UpdateInventoryAndPriceResult") ?? json;
+  return {
+    itemNumber: asString(getField(body, "ItemNumber")),
+    sellerPartNumber: asString(getField(body, "SellerPartNumber")),
+    success: asBoolean(getField(body, "Result")),
+    sellingPrice: asNumber(getField(body, "SellingPrice")),
+  };
 }
 
 /** B2B/CAN Get Item Price: one flat record (no country list, no `Currency`). */

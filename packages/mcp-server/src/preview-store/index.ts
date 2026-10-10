@@ -12,6 +12,7 @@ import type {
   NormalizedInventoryUpdate,
   InventoryUpdateStrategy,
   NormalizedCreateListing,
+  NormalizedPriceUpdate,
 } from "@devino/newegg-marketplace-sdk";
 
 /** Fields common to every stored, ready-to-apply operation. */
@@ -38,8 +39,17 @@ export interface ListingPreviewRecord extends PreviewRecordBase {
   readonly items: NormalizedCreateListing[];
 }
 
+/**
+ * A stored selling-price update (contracts §16). Only previewed-eligible (non-blocked) updates
+ * are stored, and the prices here are authoritative at apply time.
+ */
+export interface PricePreviewRecord extends PreviewRecordBase {
+  readonly kind: "priceUpdate";
+  readonly normalizedUpdates: NormalizedPriceUpdate[];
+}
+
 /** A stored, ready-to-apply operation, discriminated by `kind`. */
-export type PreviewRecord = InventoryPreviewRecord | ListingPreviewRecord;
+export type PreviewRecord = InventoryPreviewRecord | ListingPreviewRecord | PricePreviewRecord;
 
 /** Result of an atomic consume — distinguishes the three failure modes ADR 0005 requires. */
 export type ConsumeResult =

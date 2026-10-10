@@ -5,6 +5,8 @@ export const Operation = {
   UpdateDirect: "inventory.update",
   // Get Item Price (§15) — a READ on every platform; 10,000/hr budget.
   PriceGet: "pricing.get",
+  // Price WRITE (§16): own 10,000/hr budget; absolute assignments, so retry-safe (ADR 0004).
+  PriceUpdate: "pricing.update",
   FeedSubmit: "feed.submit",
   FeedStatus: "feed.status",
   FeedResult: "feed.result",

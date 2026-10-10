@@ -21,6 +21,17 @@ export const GET_PRICE_MANY_MAX_IDENTIFIERS = 100;
 /** Default bounded concurrency for the per-item reads of `getMany`. */
 export const DEFAULT_PRICE_READ_CONCURRENCY = 4;
 
+/** Highest selling price Newegg accepts (CT007 "out of the 0-99999.99 range"; contracts §16). */
+export const PRICE_UPDATE_MAX_SELLING_PRICE = 99999.99;
+
+/** Maximum price assignments per `update`/`previewUpdate` call (SDK policy, one request each). */
+export const PRICE_UPDATE_MAX_ITEMS = 100;
+
+/** Default bounded concurrency for price WRITES - deliberately lower than reads. */
+export const DEFAULT_PRICE_WRITE_CONCURRENCY = 2;
+
+/** Read-back tolerance when comparing a requested price with the observed one (half a cent). */
+export const PRICE_COMPARE_EPSILON = 0.005;
 /**
  * Currency inferred for B2B/CAN price records, whose Get Item Price response carries none.
  * Source: the Inventory And Price Feed (B2B and CAN) page's `Currency` field — default "CAD"

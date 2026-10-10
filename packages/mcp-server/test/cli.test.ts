@@ -32,6 +32,7 @@ describe("loadMcpConfigFromEnv", () => {
     expect(config.limits.maxItemsPerOperation).toBe(500);
     expect(config.limits.previewTtlSeconds).toBe(600);
     expect(config.limits.allowZeroQuantity).toBe(true);
+    expect(config.limits.maxPriceChangePercent).toBe(50);
     expect(config.limits.allowedWarehouses).toEqual([]);
     expect(config.http.host).toBe("127.0.0.1");
     expect(config.http.port).toBe(3919);

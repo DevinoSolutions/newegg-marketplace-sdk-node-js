@@ -47,7 +47,7 @@ export interface NeweggClientConfig {
 export interface NeweggClient {
   readonly marketplace: NeweggMarketplace;
   readonly inventory: InventoryApi;
-  readonly pricing: PricingApi; // read-only Get Item Price (contracts §15); never mutates
+  readonly pricing: PricingApi; // Get Item Price reads (contracts §15) + gated price writes (§16)
   readonly feeds: FeedsApi;
   readonly service: ServiceApi;
   readonly orders: OrdersApi; // order reads (list / get / status) + writes (ship / cancel / confirm / remove)
@@ -291,6 +291,84 @@ export interface PricingApi {
   // Fans out single Get Item Price reads (the batch-price pages are unreadable — contracts §15.4).
   // Auth/authorization errors, exhausted rate limits and aborts still throw.
   getMany(input: GetPriceManyInput, options?: GetPriceManyOptions): Promise<PriceBatchSnapshot>;
+  // Price WRITES (contracts §16) — see the types below. previewUpdate only reads.
+  previewUpdate(
+    updates: PriceUpdate | PriceUpdate[],
+    options?: PreviewPriceOptions,
+  ): Promise<PriceUpdatePreview>;
+  update(
+    updates: PriceUpdate | PriceUpdate[],
+    options?: UpdatePricesOptions,
+  ): Promise<PriceUpdateResult>; // WRITE
+}
+
+// pricing writes (contracts §16) — WRITE surface; only SellingPrice is ever sent
+export interface PriceUpdate {
+  identifier: ItemIdentifier;
+  sellingPrice: number; // absolute; > 0, <= 99999.99, max 2 decimals (never rounded or clamped)
+  countryCode?: string; // US only, REQUIRED there (uppercase alpha-3); rejected on B2B/CA
+  currency?: string; // US only, REQUIRED there (ISO 4217, must match the country); rejected on B2B/CA
+  metadata?: Record<string, string>; // never sent to Newegg
+}
+export interface NormalizedPriceUpdate extends PriceUpdate {
+  inputIndex: number;
+}
+export interface PreviewPriceOptions extends RequestOptions {
+  includeCurrentPrice?: boolean;
+} // default true
+export type PriceChangeStatus = "ok" | "warning" | "blocked" | "unchecked";
+export interface PriceChange {
+  inputIndex: number;
+  identifier: ItemIdentifier;
+  countryCode?: string;
+  currency?: string;
+  newSellingPrice: number;
+  currentSellingPrice?: number;
+  changePercent?: number;
+  active?: boolean;
+  map?: number;
+  msrp?: number;
+  checkoutMap?: boolean;
+  promotions: PricePromotion[];
+  status: PriceChangeStatus;
+  blockers: string[];
+  warnings: string[];
+}
+export interface PriceUpdatePreview {
+  marketplace: NeweggMarketplace;
+  normalizedUpdates: NormalizedPriceUpdate[]; // post-validation, post-dedup (last-write-wins)
+  deduplicated: Array<{ keptInputIndex: number; droppedInputIndexes: number[] }>;
+  changes: PriceChange[];
+  warnings: string[];
+  correlationId: string;
+}
+export interface UpdatePricesOptions extends RequestOptions {
+  verify?: boolean; // read each price back after the write; default true
+  concurrency?: number; // default 2
+}
+export type PriceOutcomeStatus = "verified" | "accepted" | "unverified" | "unknown" | "failed";
+export interface PriceUpdateOutcome {
+  inputIndex: number;
+  identifier: ItemIdentifier;
+  countryCode?: string;
+  requestedSellingPrice: number;
+  status: PriceOutcomeStatus;
+  observedSellingPrice?: number;
+  errorCode?: string;
+  message?: string;
+}
+export interface PriceUpdateResult {
+  operationId: string;
+  correlationId: string;
+  marketplace: NeweggMarketplace;
+  submittedItemCount: number;
+  appliedItemCount: number; // verified + accepted
+  failedItemCount: number;
+  unresolvedItemCount: number; // unverified + unknown
+  deduplicatedItemCount: number;
+  items: PriceUpdateOutcome[];
+  warnings: string[];
+  rateLimit?: RateLimitInfo;
 }
 
 // ----------------------------------------------------------------------------
@@ -1039,6 +1117,18 @@ export interface RecordedCall {
     `currencyInferred: true`. `getMany` is a client-side fan-out (batch-price pages unreadable,
     §15.4); inputs are validated with strict Zod v4 schemas (1–100 identifiers, uppercase alpha-3
     `countries`) before any HTTP call.
+14. **Pricing (writes)**: `pricing.update` is the only price mutation. It sends ONLY the selling
+    price (B2B/CA: `PUT …/inventoryandprice` with `{Type,Value,[Condition],SellingPrice}`; US:
+    `POST …/international/price` with one `PriceList.Price` row) — never MAP, MSRP, shipping,
+    `Active` or inventory. Prices are validated (>0, ≤99999.99, ≤2 decimals, never rounded;
+    country/currency required on US, rejected elsewhere), de-duplicated last-write-wins, and
+    written one request per item (≤100 per call, concurrency 2). A price assignment is absolute,
+    so it is idempotent and ADR 0004's direct-operation retry applies; an ambiguous failure that
+    survives retries is read back and reported per item as `verified` or `unknown`, never thrown.
+    By default every write is read back (`verified`/`unverified`): Newegg silently ignores price
+    updates to deactivated items while reporting success (contracts §6.2). `previewUpdate` only
+    reads and returns blockers/warnings; the SDK's `update` does not enforce them — the MCP
+    tools do (ADR 0005). The US write path is an unverified ASSUMPTION (contracts §16.4).
 
 ```
 

@@ -34,6 +34,7 @@ export function buildCapabilities(
       maxItemsPerOperation: config.limits.maxItemsPerOperation,
       previewTtlSeconds: config.limits.previewTtlSeconds,
       allowZeroQuantity: config.limits.allowZeroQuantity,
+      maxPriceChangePercent: config.limits.maxPriceChangePercent,
       allowedWarehouses: config.limits.allowedWarehouses,
       allowedMarketplaces: config.limits.allowedMarketplaces,
     },
@@ -60,6 +61,7 @@ export function buildPublicConfiguration(
       maxItemsPerOperation: config.limits.maxItemsPerOperation,
       previewTtlSeconds: config.limits.previewTtlSeconds,
       allowZeroQuantity: config.limits.allowZeroQuantity,
+      maxPriceChangePercent: config.limits.maxPriceChangePercent,
     },
     batchLimits: {
       feedMaxRecords: INVENTORY_FEED_MAX_RECORDS,
