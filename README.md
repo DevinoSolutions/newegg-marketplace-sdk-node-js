@@ -185,6 +185,35 @@ ignored update on a deactivated item shows as `unverified` instead of success. T
 `newegg_pricing_preview_update` / `newegg_pricing_apply_update` exists only with
 `NEWEGG_MCP_ALLOW_WRITES=true`. The US write path follows the docs but is not live-verified.
 
+## Reports (settlement, daily inventory, daily price)
+
+```ts
+const summary = await client.reports.settlementSummary.waitForResult({
+  dateFrom: "2026-09-01", // Pacific Time; a Date is rendered as its Pacific calendar date
+  dateTo: "2026-09-30",
+});
+console.log(summary.rows[0]?.totalSettlement); // numbers, not strings; absent = not reported
+
+const lines = await client.reports.settlementTransactions.waitForResult({
+  settlementDateFrom: "2026-09-01",
+  settlementDateTo: "2026-09-30",
+  transactionType: "order",
+});
+
+const stock = await client.reports.dailyInventory.waitForResult({}); // FTP file, parsed for you
+console.log(stock.totalRows, stock.rows[0]?.inventory);
+```
+
+Reports are asynchronous Newegg jobs (submit → poll → result; 100 submissions/hour). Report
+submission is a `POST` that creates a report job only - it changes nothing on the account, so
+the reports API and its MCP tools (`newegg_reports_settlement_summary`,
+`newegg_reports_settlement_transactions`, `newegg_reports_daily_inventory`,
+`newegg_reports_daily_price`, `newegg_reports_status`) are always available and read-only. If a
+wait times out, `ReportTimeoutError.requestId` lets you continue with `waitForRequest`. The
+daily reports return an FTP URL with embedded credentials; the SDK downloads the file itself and
+never exposes or logs that URL. Daily Price exists on Newegg.com only; on B2B/CA use the Daily
+Inventory report, which carries price and activation columns. Details: contracts §17.
+
 ---
 
 ## MCP server — stdio
