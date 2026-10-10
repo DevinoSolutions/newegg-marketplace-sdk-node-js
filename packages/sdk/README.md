@@ -104,6 +104,13 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
 ## What you get
 
 - **`client.pricing`** — read-only `get`, `tryGet`, `getMany` (Get Item Price; never mutates).
+- **`client.reports`** — read-only Reports Management reports (a report submission creates a
+  report job and mutates nothing): `settlementSummary` and `settlementTransactions` (paged JSON),
+  `dailyInventory` (all platforms) and `dailyPrice` (Newegg.com only), whose result is an FTP
+  file the SDK downloads and parses for you. Each has `submit`, `status`, `result`,
+  `waitForRequest` and `waitForResult` (`ReportTimeoutError` carries the `requestId` so you
+  continue instead of resubmitting; 100 submissions/hour). The file URL embeds credentials and
+  is never exposed or logged.
 - **`client.inventory`** — `getItem`, `getMany`, `previewUpdate`, `updateItem`, `updateMany`.
   `updateMany` takes `strategy: "direct" | "feed" | "auto"` (default `auto`; feeds above
   `strategy.autoFeedThreshold` post-dedup items, default 8).

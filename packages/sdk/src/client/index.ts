@@ -8,6 +8,7 @@ import { InventoryApiImpl } from "../inventory/api.js";
 import { ListingsApiImpl } from "../listings/api.js";
 import { OrdersApiImpl } from "../orders/api.js";
 import { PricingApiImpl } from "../pricing/api.js";
+import { ReportsApiImpl } from "../reports/api.js";
 import { ServiceApiImpl } from "../service/api.js";
 import { createStorefrontApi } from "../storefront/api.js";
 import { resolveConfig } from "./config.js";
@@ -37,6 +38,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
   const service = new ServiceApiImpl(http);
   const orders = new OrdersApiImpl(http);
   const catalog = new CatalogApiImpl(http);
+  const reports = new ReportsApiImpl(http);
   const listings = new ListingsApiImpl(http);
   // UNOFFICIAL public storefront (contracts §14): a different origin, unauthenticated, so it
   // deliberately bypasses NeweggHttpClient (no seller credentials, no rate-limit budget) and
@@ -56,6 +58,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
     service,
     orders,
     catalog,
+    reports,
     listings,
     storefront,
     async verifyCredentials(options) {

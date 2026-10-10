@@ -4,15 +4,25 @@
  * objects where arrays are documented (`ResponseList`, `ItemList`), XML-era wrapper nodes
  * (`ResponseInfo`, `Item`), and inconsistent key casing (`RequestId` vs `RequestID`).
  */
-import type { CatalogLookupInput, CatalogLookupState, CatalogMatch } from "../types.js";
-import { NeweggApiError } from "../errors/index.js";
+import type { CatalogLookupInput, CatalogMatch } from "../types.js";
 import { codeToCondition, conditionToCode } from "../schemas/condition.js";
-import { asArray, asNumber, asString, getField, getPath, isRecord } from "../schemas/wire.js";
+import { asArray, asNumber, asString, getField, isRecord } from "../schemas/wire.js";
 import {
-  ITEM_LOOKUP_OPERATION_TYPE,
-  ITEM_LOOKUP_PAGE_SIZE,
-  REPORT_STATUS_OPERATION_TYPE,
-} from "./constants.js";
+  buildStatusRequest,
+  parseStatusResponse,
+  parseSubmitResponse as parseSubmit,
+} from "../reportmgmt/lifecycle.js";
+import { ITEM_LOOKUP_OPERATION_TYPE, ITEM_LOOKUP_PAGE_SIZE } from "./constants.js";
+
+// The status request/response shapes are report-type independent (§12.2) and live in the shared
+// reportmgmt lifecycle; re-exported so the catalog's parse surface is unchanged.
+export { buildStatusRequest, parseStatusResponse };
+
+/** Extracts the request id from an Item Lookup submit response (§12.1). */
+export function parseSubmitResponse(json: unknown): { requestId: string } {
+  const { requestId } = parseSubmit(json, "item lookup", "catalog.lookupSubmit");
+  return { requestId };
+}
 
 /** A lookup input that actually goes on the wire (neweggItemNumber never does). */
 export type WireLookupInput = Exclude<CatalogLookupInput, { neweggItemNumber: string }>;
@@ -43,16 +53,6 @@ export function buildLookupSubmitRequest(
   };
 }
 
-/** Builds the report-status body (§12.2 — note the `GetRequestStatus` wrapper). */
-export function buildStatusRequest(requestId: string): Record<string, unknown> {
-  return {
-    OperationType: REPORT_STATUS_OPERATION_TYPE,
-    RequestBody: {
-      GetRequestStatus: { RequestIDList: { RequestID: requestId }, MaxCount: 100 },
-    },
-  };
-}
-
 /** Builds the paged result body (§12.3). */
 export function buildLookupResultRequest(
   requestId: string,
@@ -65,50 +65,6 @@ export function buildLookupResultRequest(
       PageInfo: { PageIndex: pageIndex, PageSize: ITEM_LOOKUP_PAGE_SIZE },
     },
   };
-}
-
-function requestIdOf(entry: unknown): string | undefined {
-  return asString(getField(entry, "RequestId")) ?? asString(getField(entry, "RequestID"));
-}
-
-/** Unwraps `ResponseBody.ResponseList` into entries, tolerating the XML-shaped
- * `ResponseList: { ResponseInfo: {...} }` nesting alongside the JSON array form. */
-function responseListEntries(json: unknown): unknown[] {
-  const list = getPath(json, ["ResponseBody", "ResponseList"]);
-  const inner = getField(list, "ResponseInfo");
-  return asArray(inner !== undefined ? inner : list);
-}
-
-/** Extracts the request id from a submit response (§12.1: nested in `ResponseList`). */
-export function parseSubmitResponse(json: unknown): { requestId: string } {
-  for (const entry of responseListEntries(json)) {
-    const requestId = requestIdOf(entry);
-    if (requestId !== undefined && requestId !== "") return { requestId };
-  }
-  throw new NeweggApiError("Newegg returned no request id for the item lookup submission.", {
-    details: { operation: "catalog.lookupSubmit" },
-  });
-}
-
-const STATUS_MAP: Record<string, CatalogLookupState> = {
-  SUBMITTED: "submitted",
-  IN_PROGRESS: "inProgress",
-  FINISHED: "finished",
-  CANCELLED: "cancelled",
-};
-
-/** Maps a status response (§12.2) to the state union for the given request id. */
-export function parseStatusResponse(
-  json: unknown,
-  requestId: string,
-): { status: CatalogLookupState; statusRaw?: string } {
-  const entries = responseListEntries(json);
-  // Prefer the entry matching our request id; fall back to the first (we ask for one id).
-  const entry = entries.find((e) => requestIdOf(e) === requestId) ?? entries[0];
-  const raw = asString(getField(entry, "RequestStatus"));
-  if (raw === undefined) return { status: "unknown" };
-  const mapped = STATUS_MAP[raw.trim().toUpperCase()];
-  return mapped !== undefined ? { status: mapped } : { status: "unknown", statusRaw: raw };
 }
 
 /** Parses one result page (§12.3). Rows without a `NeweggItemNumber` are miss echoes

@@ -1685,3 +1685,402 @@ and stores only the eligible updates under the single-use `previewId` (ADR 0005)
 **ASSUMPTIONs to retire when a write is ever authorized and run:** US omission semantics (§16.1),
 the US write response shape, `CT029` on the B2B/CAN endpoint, and whether the B2B/CAN echoed
 `SellingPrice` reflects a deactivated item's real price.
+
+## 17. Reports Management — Settlement, Daily Inventory and Daily Price reports (reads)
+
+Extracted 2026-10-10 from the official Reports Management pages (all under
+`https://developer.newegg.com/newegg_marketplace_api/reports_management/`; the `submit_report_request/`
+index page was last updated 2018-10-15, `get_report_result/` 2021-10-28):
+
+| Report                        | Submit page (`submit_report_request/…`)           | Result page (`get_report_result/…`)   |
+| ----------------------------- | ------------------------------------------------- | ------------------------------------- |
+| Settlement Summary            | `submit_settlement_summary_report/`               | `get_settlement_summary_report/`      |
+| Settlement Transaction        | `submit_settlement_transaction_report/`           | `get_settlement_transaction_report/`  |
+| Daily Inventory (Newegg.com)  | `submit_daily_inventory_report/`                  | `get_daily_inventory_report/`         |
+| Daily Inventory (B2B and CAN) | `submit_daily_inventory_report_b2b_can/`          | `get_daily_inventory_report_b2b_can/` |
+| Daily Price (Newegg.com only) | `submit_daily_price_report/`                      | `get_daily_price_report/`             |
+| Order List (not implemented)  | `submit_order_list_report/`                       | `get_order_list_report/`              |
+| RMA List (not implemented)    | `submit_rma_list_report/`                         | `get_rma_list_report/`                |
+| Status (all report types)     | `https://…/reports_management/get_report_status/` | —                                     |
+
+The lifecycle is §12's: `POST reportmgmt/report/submitrequest` (100/hour) → `PUT
+reportmgmt/report/status` (500/hour) → `PUT reportmgmt/report/result` (500/hour), on every platform
+via the standard prefix. **Classification: all READS** (owner-approved in §12; a report submission
+creates a report job and mutates nothing). The SDK shares one implementation of the lifecycle between
+the Item Lookup report and these (`packages/sdk/src/reportmgmt/`).
+
+Common to every type:
+
+- Submit body is `{ OperationType, RequestBody: { <Criteria>: { RequestType, … } } }`. The optional
+  `IssueUser` (a registered Seller Portal email; defaults to the seller id) is **not sent** by the SDK.
+- The submit response is §12.1's: `ResponseBody.ResponseList[0].{RequestId, RequestType, RequestDate,
+RequestStatus: "SUBMITTED"}` (object-or-array; XML wraps `ResponseInfo`). The docs' field tables
+  misspell the status field `RequestSatus`; every sample uses `RequestStatus` (the SDK reads both).
+- Status is §12.2's. `RequestType` values documented for status filtering: `ALL`, `ORDER_LIST_REPORT`,
+  `SETTLEMENT_SUMMARY_REPORT`, `SETTLEMENT_TRASACTION_REPORT` (sic — the status page's spelling; the
+  submit page and the SDK use `SETTLEMENT_TRANSACTION_REPORT`), `DAILY_INVENTORY_REPORT`,
+  `RMA_LIST_REPORT`, `ITEM_LOOKUP`, `INTERNATIONAL_INVENTORY_REPORT`, `INTERNATIONAL_PRICE_REPORT`,
+  `CAPROP65_REPORT`, `ITEM_BASIC_INFO_REPORT` (+ `PREMIER_ITEM_REPORT` in responses). Status values:
+  `SUBMITTED | IN_PROGRESS | FINISHED | CANCELLED`. `RP004`–`RP007` are the status date-filter errors.
+- The submit pages share one copy-pasted error table: `RP010` invalid order number, `RP018` invalid
+  settlement date, `RP019` request id null/empty, `RP020` missing settlement criteria, `RP021` more than
+  1,000 lookup items, `RP022` Daily Inventory multi-warehouse. Most do not apply to the report they
+  appear under (RP022 even contradicts the Daily Inventory sample, which submits two warehouses). Treat
+  the codes as hints and surface `Message`.
+- All dates are Pacific Time. Samples use `YYYY-MM-DD` (`2011-12-01`) and `M/D/YYYY` (`2/23/2012`); the
+  docs defer to an "Acceptable Date Format" page that was not fetched (**ASSUMPTION**: `YYYY-MM-DD` and
+  `M/D/YYYY[ H:mm:ss]` are accepted; the SDK sends the caller's string, or a `Date` rendered as its
+  Pacific `YYYY-MM-DD`).
+- Throttling: submit 100/hour, status 500/hour, result 500/hour per seller (no per-minute figure is
+  listed); 429 `[{"Code":"429",…}]` and the `X-RateLimit-*` headers follow §3. The submit budget is
+  shared by every report type (and the §12 lookup).
+- Error bodies: JSON array `[{"Code":"CE001","Message":"SellerID cannot be null or empty"}]` or the XML
+  `<Errors><Error><Code>…` form (§1); `errors/parse-upstream.ts` normalizes both.
+
+### 17.1 Which reports are paged-inline and which are files
+
+| Report                 | Result delivery                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------ |
+| Settlement Summary     | inline JSON, **paged** (`PageInfo`, max 100 rows/page)                               |
+| Settlement Transaction | inline JSON, **paged** (max 100 rows/page)                                           |
+| Order List             | inline JSON, paged (max 100/page; `OrderInfoList`, §10.1-like)                       |
+| RMA List               | inline JSON, paged (max 100/page; `RMAInfoList`)                                     |
+| Daily Inventory        | **file** — `ResponseBody.ReportFileURL` (FTP, embedded credentials)                  |
+| Daily Price            | **file** — `ResponseBody.ReportFileURL` (FTP, embedded credentials)                  |
+| Item Basic Information | **file** — same `ReportFileURL` shape (live-verified on CAN 2026-09-01; not wrapped) |
+
+### 17.2 Settlement Summary report
+
+Submit — `POST {prefix}reportmgmt/report/submitrequest?sellerid={sellerid}` (all three platforms):
+
+```json
+{
+  "OperationType": "SettlementSummaryReportRequest",
+  "RequestBody": {
+    "SettlementSummaryReportCriteria": {
+      "RequestType": "SETTLEMENT_SUMMARY_REPORT",
+      "DateFrom": "2011-12-01",
+      "DateTo": "2011-12-30"
+    }
+  }
+}
+```
+
+`DateFrom` and `DateTo` are both required (Pacific). The page states **no maximum range**
+(**ASSUMPTION**: none is enforced). Response `OperationType`: `SettlementSummaryReportResponse`,
+`RequestType`: `SETTLEMENT_SUMMARY_REPORT`.
+
+Result — `PUT {prefix}reportmgmt/report/result?sellerid={sellerid}[&version={version}]` (500/hour):
+
+```json
+{
+  "OperationType": "SettlementSummaryReportRequest",
+  "RequestBody": { "RequestID": "<id>", "PageInfo": { "PageSize": "10", "PageIndex": "1" } }
+}
+```
+
+`PageSize` max 100. Response `OperationType`: `GetSettlementSummaryInfoResponse`. The documented
+sample is wrapped in `NeweggAPIResponse` (the parser accepts wrapped and unwrapped forms):
+
+```json
+{
+  "NeweggAPIResponse": {
+    "IsSuccess": "true",
+    "SellerID": "A09D",
+    "OperationType": "GetSettlementSummaryInfoResponse",
+    "ResponseBody": {
+      "PageInfo": { "TotalCount": "1", "TotalPageCount": "1", "PageSize": "10", "PageIndex": "1" },
+      "RequestID": "2PQBZMZTL3DYF",
+      "RequestDate": "2/21/2012 15:12:55",
+      "SettlementSummaryList": [
+        {
+          "SettlementDate": "2/21/2012 12:00:00",
+          "SettlementDateFrom": "8/5/2011 12:00:00",
+          "SettlementDateTo": "2/21/2012 12:00:00",
+          "SettlementID": "0",
+          "ItemPrice": "71.00",
+          "Shipping": "31.95",
+          "TotalOrderAmount": "102.95",
+          "TotalRefunds": "-184.51",
+          "TotalNeweggFee": "-638.63",
+          "TotalSettlement": "-720.19",
+          "ReservedBalance": "12.22"
+        }
+      ]
+    }
+  }
+}
+```
+
+(abbreviated; the values are the docs' placeholders, not account data). Row fields by group — every
+amount is a **string**, USD on Newegg.com / Neweggbusiness.com and CAD on Newegg.ca:
+
+- Order amounts: `SettlementDate`, `SettlementDateFrom`, `SettlementDateTo`, `SettlementID`, `ItemPrice`,
+  `Shipping`, `TaxDuty`, `GSTTotal`, `HSTTotal`, `GSTAndHST`, `PSTTotal`, `PSTAndQST`, `EHFTotal`,
+  `Other`, `RecyclingFeeTotal`, `TotalOrderAmount`.
+- Refunds: `Refunds`, `ChargeBack`, `MiscellaneousAdjustment`, `CourtesyRefund`, `TotalRefunds`.
+- Newegg fees: `NeweggCommissionFee`, `NeweggTransactionFee`, `NeweggRefundCommissionFee`,
+  `NeweggMonthlyFee`, `NeweggStorageFee`, `NeweggRMABuyoutFee`, `NeweggServiceFeeTax`,
+  `NeweggPremierFee`, `NeweggShippingLabelFee`, `CreditCardPayment`, `FulfillmentByNeweggFee`,
+  `MultiChannelFee`, `AdjustmentFee`, `MerchandisingFee`, `TotalNeweggFee`.
+- Totals: `TotalSettlement`, `SalesTaxFeeCollectedFromCustomer`, `SalesTaxFeesLiabilityShiftToNewegg`,
+  `ReservedBalance`, `PreviousReservedBalance`; also `CheckNumber` (the BFUS sample shows `[]`) and `Memo`.
+
+**`version` query (result request) — field sets by platform:**
+
+| Version | Platform | Change                                                                                                                                                                                                                            |
+| ------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 306     | B2B      | adds `RecyclingFeeTotal`                                                                                                                                                                                                          |
+| 307     | all      | adds `NeweggShippingLabelFee`, `NeweggPremierFee`                                                                                                                                                                                 |
+| 308     | US       | removes `Other`, `MiscellaneousAdjustment`, `NeweggTransactionFee`, `NeweggRMABuyoutFee`; adds `TaxDuty`, `CourtesyRefund`, `CreditCardPayment`, `FulfillmentByNeweggFee`, `MultiChannelFee`, `AdjustmentFee`, `MerchandisingFee` |
+| 308     | B2B      | same removals; adds `CourtesyRefund`, `CreditCardPayment`, `FulfillmentByNeweggFee`, `MultiChannelFee`, `AdjustmentFee`, `MerchandisingFee`                                                                                       |
+| 308     | CAN      | removes `GSTTotal`, `HSTTotal`, `PSTTotal` and the same four as US; adds `GSTAndHST`, `PSTAndQST` and the six B2B additions                                                                                                       |
+| 309     | US       | adds `RecyclingFeeTotal`                                                                                                                                                                                                          |
+| 310     | all      | adds `ReservedBalance`, `PreviousReservedBalance`                                                                                                                                                                                 |
+| 313     | all      | adds `SalesTaxFeeCollectedFromCustomer`, `SalesTaxFeesLiabilityShiftToNewegg`                                                                                                                                                     |
+
+Quirks: the JSON sample misspells the key `SalerTaxFeeCollectedFromCustomer` and omits commas; it also
+mixes fields from different versions; the CAN URL on the page is mistyped (`sellerid={sellerid}={version}`).
+The SDK defaults `version` to **313** (newest field set — **ASSUMPTION**: accepted on all three
+platforms) and lets the caller override it. An absent field means "not reported", never zero.
+
+### 17.3 Settlement Transaction report
+
+Submit (all platforms, 100/hour):
+
+```json
+{
+  "OperationType": "SettlementTransactionReportRequest",
+  "RequestBody": {
+    "SettlementTransactionReportCriteria": {
+      "RequestType": "SETTLEMENT_TRANSACTION_REPORT",
+      "TransactionType": "1",
+      "SettlementDateFrom": "2011-02-21",
+      "SettlementDateTo": "2012-02-22",
+      "SettlementDate": "2/23/2012"
+    }
+  }
+}
+```
+
+All criteria are optional **but** Newegg answers `RP020` unless `SettlementID`, `SettlementDate`, **or**
+both `SettlementDateFrom` and `SettlementDateTo` is present — the SDK enforces this before sending.
+Other criteria: `OrderNumber` (integer) and `TransactionType` (integer, default `0` = all; the sample sends
+the string `"1"`). The page states no maximum range. Response `OperationType`:
+`SettlementTransactionReportResponse`.
+
+`TransactionType`: 0 All · 1 Order · 2 Refund · 3 Credit request · 4 Chargeback · 5 Monthly fee ·
+6 Fulfill by Newegg fee · 7 Multi-channel fee · 8 RMA processing fee · 9 Tax & duty · 10 Storage fee ·
+11 RMA buyout fee · 12 Adjustment fee · 13 Monthly fee by credit card · 14 SBN inbound fee ·
+15 Merchandising fee · 16 Newegg Premier fee · 17 Newegg shipping label fee · 18 Return and disposal fee ·
+19 Newegg relabeling fee · 20 Recycling fee / EHF · 21 Return shipping label fee · 22 Newegg service fee
+tax (Newegg.ca only) · 23 Print shipping label service · 24 Reserved balance · 25 Previous reserved
+balance · 26 Commission incentive refund · 27 Unsold listing fee · 28 Order processing fee · 29 Sales
+tax/fees · 30 SBN inbound incompliance charges · 31 Sponsored ads · 32 Item overage fee.
+
+Result — the same `PUT reportmgmt/report/result` request as §17.2 with
+`OperationType: "SettlementTransactionReportRequest"` (no `version` documented). Response
+`OperationType`: `GetSettlementTransactionInfoResponse`; rows live in
+`ResponseBody.SettlementTransactionInfoList` (XML: `> SettlementTransactionInfo`) beside `PageInfo`,
+`RequestID` and `RequestDate`:
+
+```json
+{
+  "NeweggAPIResponse": {
+    "IsSuccess": "true",
+    "SellerID": "A09D",
+    "OperationType": "GetSettlementTransactionInfoResponse",
+    "ResponseBody": {
+      "PageInfo": {
+        "TotalCount": "21",
+        "TotalPageCount": "21",
+        "PageSize": "10",
+        "PageIndex": "1"
+      },
+      "RequestID": "2PQDKCAQFHL3M",
+      "RequestDate": "2/23/2012 11:39:00",
+      "SettlementTransactionInfoList": [
+        {
+          "TransactionDate": "8/9/2011 12:00:00",
+          "TransactionType": "Order",
+          "OrderID": "87123017",
+          "InvoiceID": "75994476",
+          "SellerPartNumber": "A09D77897686",
+          "NeweggItemNumber": "9SIA00X0002HJ5",
+          "ItemDescription": "dfdfgsdfg",
+          "ItemCondition": "New",
+          "Amount": "10.00",
+          "Shipping": "2.00",
+          "CommissionFee": "-0.75",
+          "SettlementID": "null"
+        }
+      ]
+    },
+    "Memo": null
+  }
+}
+```
+
+`ItemCondition` is a label (New, Refurbished, Used – Like New, Used – Very Good, Used – Good,
+Used – Acceptable); amounts are USD (Newegg.com, Neweggbusiness.com) or CAD (Newegg.ca); `SettlementID` and
+`Memo` may be the literal string `"null"` or JSON null (the SDK treats both as absent).
+
+### 17.4 Daily Inventory report (file)
+
+**Newegg.com** — submit `POST reportmgmt/report/submitrequest?sellerid=&version=310`. The `version` is
+documented as required with `310` the only value: for sellers with more than 40,000 items the report is
+split into 40,000-record files **zipped into one package**.
+
+```json
+{
+  "OperationType": "InternationalInventoryReportRequest",
+  "RequestBody": {
+    "DailyInventoryReportCriteria": {
+      "FulfillType": "0",
+      "WarehouseList": { "WarehouseLocation": ["USA", "AUS"] },
+      "RequestType": "INTERNATIONAL_INVENTORY_REPORT",
+      "FileType": "XLS"
+    }
+  }
+}
+```
+
+`FulfillType`: `0` all (default) · `1` Fulfill by Seller · `2` Fulfill by Newegg. `WarehouseLocation`: 3-letter
+ISO code(s), blank = all (each region allows one SBS warehouse). `FileType`: `TXT` (default) · `CSV` ·
+`XLS`. Response `OperationType`: `InternationalInventoryReportResponse`, `RequestType`:
+`INTERNATIONAL_INVENTORY_REPORT`.
+
+**Neweggbusiness.com / Newegg.ca** — the same endpoint under `b2b/` / `can/`, `version=310`,
+`OperationType: "DailyInventoryReportRequest"`, criteria `{ FulfillType, RequestType:
+"DAILY_INVENTORY_REPORT", FileType }` (no warehouse list: the single default warehouse). Response
+`OperationType`: `DailyInventoryReportResponse`.
+
+Result — `PUT {prefix}reportmgmt/report/result?sellerid=` with `{ "OperationType":
+"<InternationalInventoryReportRequest | DailyInventoryReportRequest>", "RequestBody": { "RequestID": "<id>" } }`
+(no paging). The B2B/CAN page shows its request URL **without** the `b2b`/`can` segment — treated as a doc
+slip; the SDK uses the platform prefix. The response has an odd `NeweggAPIResponse` wrapper and `sellerID`
+casing:
+
+```json
+{
+  "NeweggAPIResponse": {
+    "IsSuccess": "true",
+    "sellerID": "A006",
+    "OperationType": "InternationalInventoryReportResponse",
+    "ResponseBody": {
+      "RequestID": "2PQC13C7UYDPQ",
+      "RequestType": "INTERNATIONAL_INVENTORY_REPORT",
+      "RequestDate": "2/21/2012 15:32:57",
+      "ReportFileURL": "ftp://<user>:<password>@ftp03.newegg.com/InternationalInventoryReport_2PQC13C7UYDPQ.xls"
+    },
+    "Memo": null
+  }
+}
+```
+
+The B2B/CAN result `OperationType` is written `DailyinventoryReportResponse` (sic).
+
+File columns. **US:** `Seller Part #`, `NE Item #`, `Warehouse Location`, `Fulfillment Option` ("Seller
+Only"), `Inventory`. **B2B/CAN:** `Seller Part #`, `NE Item #`, `Currency` (blank = USD on the US
+marketplace / CAD on Canada), `MSRP` (0.00–99999.00), `Support MSRP for all seller`, `MAP`, `Checkout MAP`,
+`Selling Price`, `Inventory`, `Fulfillment Option` (`Newegg` | `Seller`), `Shipping` (`default` | `free`),
+`Activation Mark`, `Memo`. The pages do not state the TXT delimiter or encoding (**ASSUMPTION**: TXT is
+tab-delimited with a header row and CSV is RFC 4180; the SDK detects the delimiter from the header line and
+requests `CSV` by default) and show both `.txt` and `.xls` file names within one page, so the file-name
+extension is not trustworthy.
+
+### 17.5 Daily Price report (file; Newegg.com only)
+
+Submit `POST reportmgmt/report/submitrequest?sellerid=&version=310` (the page's sample omits `version`):
+
+```json
+{
+  "OperationType": "InternationalPriceReportRequest",
+  "RequestBody": {
+    "DailyPriceReportCriteria": {
+      "CountryList": { "CountryCode": ["USA", "AUS"] },
+      "RequestType": "INTERNATIONAL_PRICE_REPORT",
+      "FileType": "XLS"
+    }
+  }
+}
+```
+
+`CountryCode`: 3-letter ISO list, blank = all; `FileType` `TXT` (default) | `CSV` | `XLS`. Response types
+`InternationalPriceReportResponse` / `INTERNATIONAL_PRICE_REPORT`. Result: `PUT …/report/result` with
+`{ "OperationType": "InternationalPriceReportRequest", "RequestBody": { "RequestID": "<id>" } }` →
+`NeweggAPIResponse.ResponseBody.ReportFileURL` as in §17.4. Columns: `Seller Part #`, `NE Item #`,
+`CountryCode`, `Currency`, `MSRP`, `MAP`, `Checkout MAP`, `Selling Price`, `Shipping` (`default` | `free`),
+`Activation Mark`, `Memo`. The page lists only the Newegg.com URL: B2B/CAN have **no** Daily Price report
+(their price columns ride on the B2B/CAN Daily Inventory report).
+
+**The `ReportFileURL` is a secret.** It is `ftp://{user}:{password}@ftp03.newegg.com/{file}` with credentials
+embedded (live-verified on the Item Basic Information report, CAN 2026-09-01). Never
+log it, put it in an error, return it from an MCP tool or store it in the repo. The SDK withholds the URL
+from every public type (`ReportFileInfo` exposes only the host and file name), redacts `user:pass@` in every
+`raw` payload (`includeRaw`), downloads over FTP itself (passive mode, host allow-list `*.newegg.com`, size
+caps) or through the caller's `reportFileDownloader`, and keeps the URL out of thrown errors.
+
+### 17.6 Order List and RMA List reports (documented, not implemented)
+
+Contracted for completeness; not wrapped because Get Order Information (§10) already covers orders and
+RMA/returns are a separate domain on the roadmap.
+
+- **Order List** — submit `OperationType: "OrderListReportRequest"`, criteria `OrderReportCriteria`
+  `{ RequestType: "ORDER_LIST_REPORT", KeywordsType (0 all · 1 OrderNumber · 2 InvoiceNumber · 3 CustomerName
+· 4 SellerPartNumber · 5 NeweggItemNumber · 6 CustomerPhoneNumber · 7 TitleDescription · 8 Manufacturer ·
+9 SellerOrderNumber), KeywordsValue, Status (0 Unshipped · 1 Partially Shipped · 2 Shipped · 3 Invoiced ·
+4 Voided · 5 Payment Pending; required), Type (0 all · 1 SBN · 2 SBS · 3 Multi-Channel), OrderDateFrom,
+OrderDateTo, VoidSoon (24 | 48), OrderDownloaded ("false" includes downloaded orders), CountryCode (US
+only), PremierOrder (0 | 1 | 2; US only) }`. Result: inline paged (100/page), response
+  `GetOrderInfoResponse`, with a required `version` query (305 B2B/CAN adds `SellerOrderNumber`; 306 US adds it
+  and B2B adds `RecyclingFeeAmount`; 307 US adds `SalesTax`/`VATTotal`/`DutyTotal`; 309 all add replacement
+  order numbers; 310 US adds `AutoRegWarranty`). Rows are §10.1's order-info shape (`OrderInfoList >
+OrderInfo`, `ItemInfoList`, `PackageInfoList`).
+- **RMA List** — submit `OperationType: "RMAListReportRequest"`, criteria `RMAListReportCriteria`
+  `{ RequestType: "RMA_LIST_REPORT", KeywordsType (0 all · 1 RMANumber · 2 OrderNumber · 3 CustomerName · 4
+SellerRMANumber), KeywordsValue, Status (0 all · 1 Open · 2 Received · 3 Rejected · 4 Voided · 5 Closed ·
+6 Processing), RMADateFrom, RMADateTo, RMAType (0 all · 1 Replacement · 2 Refund), ProcessedBy (0 all ·
+1 Seller · 2 Newegg) }`. Result: inline paged, response `GetRMAListInfoResponse`, `version` query (305
+  B2B/CAN; 306/307 US; 309 all; 320 all) selects the field set; rows in `RMAInfoList > RMAInfo` with an
+  `RMATransactionList > RMATransaction` per SKU. The page's samples disagree with its own field table
+  (nested `RefundInfo`, `ReturnShippingLabel > Label`) — verify live before implementing.
+
+### 17.7 SDK mapping
+
+`client.reports.*` — all READS, none gated; the MCP tools register unconditionally:
+
+| SDK                                                                         | Wire                                                                         |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `settlementSummary.submit/status/result/waitForRequest/waitForResult`       | §17.2 (paged inline, `version` default 313)                                  |
+| `settlementTransactions.…`                                                  | §17.3 (paged inline; the RP020 rule is enforced client-side)                 |
+| `dailyInventory.submit/status/result/download/waitForRequest/waitForResult` | §17.4 (file; US vs B2B/CAN differences live in `platform/reports.ts`)        |
+| `dailyPrice.…`                                                              | §17.5 (file; US only — B2B/CAN throw `UnsupportedMarketplaceOperationError`) |
+| `status(requestId)`                                                         | §12.2 (report-type independent)                                              |
+
+`waitFor*` polls with `pollIntervalMs` (2 s) ×1.5 per poll up to 15 s inside a 120 s budget, then throws
+`ReportTimeoutError` carrying the `requestId` (continue with `waitForRequest(requestId)`; never resubmit —
+100/hour). A CANCELLED report throws a non-retryable `ReportTimeoutError`. Paged reports are fetched up to
+`maxPages` (default 50 → 5,000 rows) and flagged `truncated` beyond it; file reports keep at most `maxRows`
+parsed rows (default 50,000) and report the full `totalRows`.
+
+**ASSUMPTIONs (retire when verified live):** `YYYY-MM-DD` / `M/D/YYYY` date acceptance; settlement-summary
+`version=313` accepted on every platform; no date-range cap on either settlement report; the TXT delimiter
+(tab) and UTF-8 encoding of the daily report files; the B2B/CAN Daily Inventory result `OperationType`
+(`DailyInventoryReportRequest`, taken from the page); that the daily reports' file arrives zipped only above
+40,000 items (the SDK reads both a bare file and a zip); whether `NeweggAPIResponse` wraps the
+settlement results (the parser accepts both); the FTP download itself (see below).
+
+**Live verification (2026-10-10, US seller account, read-only; no account values recorded).**
+
+- Settlement Summary: `YYYY-MM-DD` dates, `version=313` and a 60-day range were all accepted on US. The
+  report took about 170 s from SUBMITTED to FINISHED, so the SDK's 120 s default wait can time out on a
+  real account: pass a larger `timeoutMs` or continue with `waitForRequest(requestId)` (the MCP tools
+  return `pending` + `requestId` for the same reason). The paged result parsed (`PageSize` 100) and the
+  documented amount fields mapped.
+- Daily Inventory (US, `INTERNATIONAL_INVENTORY_REPORT`): submit accepted, but the report was still
+  `IN_PROGRESS` after more than 5 minutes. Calling `result` before FINISHED returns HTTP 400 `CE012`
+  (surfaced as `NeweggApiError`), so wait for FINISHED first. The FTP download is covered by mocked tests
+  and a local fake FTP server only (**ASSUMPTION**: passive FTP to the documented `ftp03.newegg.com` URL).
+- Status polling shares one 500/hour budget: aggressive probing hit HTTP 429 on `status`. The SDK backs
+  off 1.5x up to 15 s.

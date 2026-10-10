@@ -42,6 +42,8 @@ export interface NeweggClientConfig {
   };
   /** Optional app-level quantity ceiling; SDK never clamps silently — violation => NeweggValidationError. */
   maxQuantity?: number;
+  /** Replaces the built-in FTP downloader of the file reports (Daily Inventory / Daily Price). Receives a credential-bearing URL: a secret. */
+  reportFileDownloader?: ReportFileDownloader;
 }
 
 export interface NeweggClient {
@@ -52,6 +54,7 @@ export interface NeweggClient {
   readonly service: ServiceApi;
   readonly orders: OrdersApi; // order reads (list / get / status) + writes (ship / cancel / confirm / remove)
   readonly catalog: CatalogApi; // read-only catalog resolution (Item Lookup Report, contracts §12)
+  readonly reports: ReportsApi; // read-only settlement / daily inventory / daily price reports (contracts §17)
   readonly listings: ListingsApi; // WRITE: existing-item listing creation (ITEM_DATA&v2 feed, contracts §13)
   // UNOFFICIAL public storefront buy-box/offers reader (contracts §14). Unauthenticated,
   // read-only, no SLA — NOT part of the seller API. "us"/"ca" only; "b2b" throws
@@ -799,6 +802,300 @@ export interface CatalogApi {
 // Error (exported class, code "catalog_lookup_timeout", retryable true on timeout /
 // false on CANCELLED): carries readonly requestId.
 export class CatalogLookupTimeoutError extends NeweggError {
+  readonly requestId: string;
+}
+
+// ----------------------------------------------------------------------------
+// reports (Reports Management reads — contracts §17; READ-only, incl. report submission)
+// ----------------------------------------------------------------------------
+// Settlement Summary / Settlement Transaction (paged inline JSON) and Daily Inventory / Daily Price
+// (a file fetched over FTP). Shares the reportmgmt submit→status→result lifecycle with catalog.
+// The FTP report-file URL embeds credentials: it is NEVER exposed (not in results, errors, `raw`
+// or logs) — `ReportFileInfo` carries only host + file name, `raw` is redacted.
+export type ReportState = "submitted" | "inProgress" | "finished" | "cancelled" | "unknown"; // CatalogLookupState = ReportState
+
+// A string is sent as given (YYYY-MM-DD or a Pacific date-time); a Date is rendered as its
+// PACIFIC calendar date (YYYY-MM-DD). Invalid/impossible/inverted dates -> NeweggValidationError.
+export type ReportDateInput = string | Date;
+
+// Replaces the built-in FTP downloader (default: passive-mode FTP to *.newegg.com only, size caps).
+// Receives the credential-bearing URL — treat as a secret. NeweggClientConfig.reportFileDownloader.
+export type ReportFileDownloader = (
+  url: string,
+  options: { signal?: AbortSignal; maxBytes: number; timeoutMs: number },
+) => Promise<Uint8Array>;
+
+export interface ReportSubmission {
+  marketplace: NeweggMarketplace;
+  requestId: string;
+  requestType?: string;
+  requestDate?: { raw: string; iso?: string };
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown; // sanitized
+}
+export interface ReportStatus {
+  marketplace: NeweggMarketplace;
+  requestId: string;
+  status: ReportState;
+  statusRaw?: string;
+  requestType?: string;
+  totalCount?: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export interface ReportWaitOptions {
+  correlationId?: string;
+  signal?: AbortSignal;
+  includeRaw?: boolean;
+  timeoutMs?: number; // poll budget, default 120_000
+  pollIntervalMs?: number; // default 2_000, x1.5 per poll
+  maxPollIntervalMs?: number; // default 15_000
+  maxPages?: number; // paged reports, 100 rows/page, default 50
+  maxRows?: number; // file reports: parsed rows kept, default 50_000 (all are counted)
+}
+export interface ReportResultPage<Row> {
+  marketplace: NeweggMarketplace;
+  requestId: string;
+  rows: Row[];
+  page: number; // 1-based
+  pageSize: number;
+  totalCount: number;
+  totalPageCount: number;
+  requestDate?: { raw: string; iso?: string };
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export interface CollectedReport<Row> {
+  marketplace: NeweggMarketplace;
+  requestId: string;
+  rows: Row[];
+  totalCount: number;
+  pagesFetched: number;
+  truncated: boolean; // maxPages stopped the fetch early
+  correlationId: string;
+}
+export interface ReportResultOptions extends RequestOptions {
+  version?: string; // settlement summary only; default "313" (ASSUMPTION: accepted on all platforms)
+}
+
+export interface SettlementSummaryInput {
+  dateFrom: ReportDateInput;
+  dateTo: ReportDateInput;
+}
+// Amount fields (numbers; USD on .com/Business, CAD on .ca). Absent = not reported, never zero.
+export type SettlementSummaryAmountField =
+  | "itemPrice"
+  | "shipping"
+  | "taxDuty"
+  | "gstTotal"
+  | "hstTotal"
+  | "gstAndHst"
+  | "pstTotal"
+  | "pstAndQst"
+  | "ehfTotal"
+  | "other"
+  | "recyclingFeeTotal"
+  | "totalOrderAmount"
+  | "refunds"
+  | "chargeBack"
+  | "miscellaneousAdjustment"
+  | "courtesyRefund"
+  | "totalRefunds"
+  | "neweggCommissionFee"
+  | "neweggTransactionFee"
+  | "neweggRefundCommissionFee"
+  | "neweggMonthlyFee"
+  | "neweggStorageFee"
+  | "neweggRmaBuyoutFee"
+  | "neweggServiceFeeTax"
+  | "neweggPremierFee"
+  | "neweggShippingLabelFee"
+  | "creditCardPayment"
+  | "fulfillmentByNeweggFee"
+  | "multiChannelFee"
+  | "adjustmentFee"
+  | "merchandisingFee"
+  | "totalNeweggFee"
+  | "totalSettlement"
+  | "salesTaxFeeCollectedFromCustomer"
+  | "salesTaxFeesLiabilityShiftToNewegg"
+  | "reservedBalance"
+  | "previousReservedBalance";
+export type SettlementSummaryRow = {
+  settlementDate?: { raw: string; iso?: string };
+  settlementDateFrom?: { raw: string; iso?: string };
+  settlementDateTo?: { raw: string; iso?: string };
+  settlementId?: string;
+  checkNumber?: string;
+  memo?: string;
+  unmapped?: Record<string, string>; // wire fields this SDK version does not map
+} & { [K in SettlementSummaryAmountField]?: number };
+
+export type SettlementTransactionType =
+  | "all"
+  | "order"
+  | "refund"
+  | "creditRequest"
+  | "chargeback"
+  | "monthlyFee"
+  | "fulfillByNeweggFee"
+  | "multiChannelFee"
+  | "rmaProcessingFee"
+  | "taxAndDuty"
+  | "storageFee"
+  | "rmaBuyoutFee"
+  | "adjustmentFee"
+  | "monthlyFeeByCreditCard"
+  | "sbnInboundFee"
+  | "merchandisingFee"
+  | "premierFee"
+  | "shippingLabelFee"
+  | "returnAndDisposalFee"
+  | "relabelingFee"
+  | "recyclingFeeOrEhf"
+  | "returnShippingLabelFee"
+  | "serviceFeeTax"
+  | "printShippingLabelService"
+  | "reservedBalance"
+  | "previousReservedBalance"
+  | "commissionIncentiveRefund"
+  | "unsoldListingFee"
+  | "orderProcessingFee"
+  | "salesTaxAndFees"
+  | "sbnInboundIncomplianceCharges"
+  | "sponsoredAds"
+  | "itemOverageFee"; // wire codes 0-32, contracts §17.3
+// Newegg requires settlementId, settlementDate, or BOTH settlementDateFrom and settlementDateTo
+// (RP020); the SDK enforces it before sending (NeweggValidationError).
+export interface SettlementTransactionsInput {
+  settlementDateFrom?: ReportDateInput;
+  settlementDateTo?: ReportDateInput;
+  settlementDate?: ReportDateInput;
+  settlementId?: string | number;
+  orderNumber?: string | number;
+  transactionType?: SettlementTransactionType; // default "all"
+}
+export interface SettlementTransactionRow {
+  transactionDate?: { raw: string; iso?: string };
+  transactionType?: string;
+  orderNumber?: string;
+  invoiceNumber?: string;
+  sellerPartNumber?: string;
+  neweggItemNumber?: string;
+  itemDescription?: string;
+  itemCondition?: string;
+  amount?: number;
+  shipping?: number;
+  commissionFee?: number;
+  settlementId?: string;
+  memo?: string;
+}
+
+// (shared shape of the two paged reports below; each is exported as its own interface)
+interface PagedReportApi<Input, Row, ResultOptions = RequestOptions> {
+  submit(input: Input, options?: RequestOptions): Promise<ReportSubmission>;
+  status(requestId: string, options?: RequestOptions): Promise<ReportStatus>;
+  result(requestId: string, page?: number, options?: ResultOptions): Promise<ReportResultPage<Row>>;
+  // Poll an already-submitted report to FINISHED, then fetch every page (<= maxPages).
+  waitForRequest(requestId: string, options?: ReportWaitOptions): Promise<CollectedReport<Row>>;
+  // submit + waitForRequest. Throws ReportTimeoutError (carrying requestId) on timeout/cancel.
+  waitForResult(input: Input, options?: ReportWaitOptions): Promise<CollectedReport<Row>>;
+}
+export interface SettlementSummaryReportApi extends PagedReportApi<
+  SettlementSummaryInput,
+  SettlementSummaryRow,
+  ReportResultOptions
+> {}
+export interface SettlementTransactionReportApi extends PagedReportApi<
+  SettlementTransactionsInput,
+  SettlementTransactionRow
+> {}
+
+export type ReportTextFileType = "csv" | "txt"; // default "csv" (XLS is not parsed)
+export interface ReportFileInfo {
+  marketplace: NeweggMarketplace;
+  requestId: string;
+  available: boolean; // false when the result carried no file URL yet
+  fileName?: string;
+  host?: string; // the credential-bearing URL is withheld
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown; // user:pass@ redacted
+}
+export interface DownloadedReport<Row> {
+  marketplace: NeweggMarketplace;
+  requestId: string;
+  fileName?: string;
+  rows: Row[]; // capped at maxRows
+  totalRows: number;
+  truncated: boolean;
+  fileCount: number; // > 1 for a zip package (> 40,000 items)
+  correlationId: string;
+}
+export interface DailyInventoryInput {
+  fulfillType?: "all" | "seller" | "newegg";
+  warehouses?: string[]; // US only (3-letter ISO); rejected on b2b/ca
+  fileType?: ReportTextFileType;
+}
+// US: warehouseLocation + inventory + fulfillmentOption. B2B/CA: default warehouse with
+// currency/msrp/map/checkoutMap/sellingPrice/shipping/activationMark. Unmapped columns -> extra.
+export interface DailyInventoryRow {
+  sellerPartNumber?: string;
+  neweggItemNumber?: string;
+  warehouseLocation?: string;
+  fulfillmentOption?: string;
+  inventory?: number;
+  currency?: string;
+  msrp?: number;
+  map?: number;
+  checkoutMap?: boolean;
+  sellingPrice?: number;
+  shipping?: string;
+  activationMark?: boolean;
+  memo?: string;
+  extra?: Record<string, string>;
+}
+export interface DailyPriceInput {
+  countries?: string[]; // 3-letter ISO, default all
+  fileType?: ReportTextFileType;
+}
+export interface DailyPriceRow {
+  sellerPartNumber?: string;
+  neweggItemNumber?: string;
+  countryCode?: string;
+  currency?: string;
+  msrp?: number;
+  map?: number;
+  checkoutMap?: boolean;
+  sellingPrice?: number;
+  shipping?: string;
+  activationMark?: boolean;
+  memo?: string;
+  extra?: Record<string, string>;
+}
+export interface FileReportApi<Input, Row> {
+  submit(input: Input, options?: RequestOptions): Promise<ReportSubmission>;
+  status(requestId: string, options?: RequestOptions): Promise<ReportStatus>;
+  result(requestId: string, options?: RequestOptions): Promise<ReportFileInfo>;
+  download(requestId: string, options?: ReportWaitOptions): Promise<DownloadedReport<Row>>;
+  waitForRequest(requestId: string, options?: ReportWaitOptions): Promise<DownloadedReport<Row>>;
+  waitForResult(input: Input, options?: ReportWaitOptions): Promise<DownloadedReport<Row>>;
+}
+
+export interface ReportsApi {
+  readonly settlementSummary: SettlementSummaryReportApi; // all platforms
+  readonly settlementTransactions: SettlementTransactionReportApi; // all platforms
+  readonly dailyInventory: FileReportApi<DailyInventoryInput, DailyInventoryRow>; // all platforms (US per-warehouse; b2b/ca default warehouse)
+  readonly dailyPrice: FileReportApi<DailyPriceInput, DailyPriceRow>; // Newegg.com only; b2b/ca throw UnsupportedMarketplaceOperationError
+  status(requestId: string, options?: RequestOptions): Promise<ReportStatus>; // any report type
+}
+
+// Error (exported class, code "report_timeout", retryable true on timeout / false on CANCELLED):
+// carries readonly requestId — continue with status/waitForRequest, never resubmit (100/hour).
+export class ReportTimeoutError extends NeweggError {
   readonly requestId: string;
 }
 

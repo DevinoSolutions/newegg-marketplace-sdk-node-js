@@ -11,7 +11,6 @@ import type {
   ResolveCatalogOptions,
   ResolveCatalogResult,
 } from "../types.js";
-import type { RequestSpec } from "../platform/index.js";
 import type { NeweggHttpClient } from "../client/http.js";
 import {
   CatalogLookupTimeoutError,
@@ -19,25 +18,12 @@ import {
   NeweggValidationError,
 } from "../errors/index.js";
 import { Operation } from "../client/operations.js";
-import { rateLimitKey } from "../rate-limit/index.js";
-import { delay } from "../util.js";
-import {
-  ITEM_LOOKUP_MAX_ITEMS,
-  REPORT_RESULT_PATH,
-  REPORT_STATUS_PATH,
-  REPORT_SUBMIT_PATH,
-  RESOLVE_DEFAULT_MAX_POLL_INTERVAL_MS,
-  RESOLVE_DEFAULT_POLL_INTERVAL_MS,
-  RESOLVE_DEFAULT_TIMEOUT_MS,
-  RESOLVE_POLL_BACKOFF_FACTOR,
-} from "./constants.js";
+import { ReportLifecycle, waitUntilFinished } from "../reportmgmt/lifecycle.js";
+import { ITEM_LOOKUP_MAX_ITEMS } from "./constants.js";
 import {
   buildLookupResultRequest,
   buildLookupSubmitRequest,
-  buildStatusRequest,
   parseLookupResultResponse,
-  parseStatusResponse,
-  parseSubmitResponse,
   type WireLookupInput,
 } from "./parse.js";
 
@@ -78,13 +64,25 @@ function matchRank(match: CatalogMatch): number {
 /**
  * Catalog resolution over the async Item Lookup Report (reportmgmt, contracts §12).
  * Everything here is READ-shaped: report submission creates a report job and mutates
- * nothing on the seller account (§12 classification, owner-approved).
+ * nothing on the seller account (§12 classification, owner-approved). The submit / status /
+ * result plumbing and the poll backoff are the shared `reportmgmt` lifecycle (also used by
+ * `client.reports`); only the Item Lookup request/response shapes live in `./parse.ts`.
  */
 export class CatalogApiImpl implements CatalogApi {
   readonly #http: NeweggHttpClient;
+  readonly #lifecycle: ReportLifecycle;
 
   constructor(http: NeweggHttpClient) {
     this.#http = http;
+    this.#lifecycle = new ReportLifecycle(
+      http,
+      {
+        submit: Operation.CatalogLookupSubmit,
+        status: Operation.CatalogLookupStatus,
+        result: Operation.CatalogLookupResult,
+      },
+      "item lookup",
+    );
   }
 
   get #config() {
@@ -116,27 +114,13 @@ export class CatalogApiImpl implements CatalogApi {
         [{ path: "inputs", message: `got ${wireInputs.length} items` }],
       );
     }
-    const { marketplace, sellerId } = this.#config;
-    const correlationId = options.correlationId ?? randomUUID();
-    const spec: RequestSpec = {
-      method: "POST",
-      path: `${this.#http.adapter.prefix}${REPORT_SUBMIT_PATH}`,
-      body: buildLookupSubmitRequest(wireInputs),
-    };
-    const result = await this.#http.request(spec, {
-      operation: Operation.CatalogLookupSubmit,
-      correlationId,
-      signal: options.signal,
-      timeoutMs: options.timeoutMs,
-      rateLimitKey: rateLimitKey(marketplace, sellerId, Operation.CatalogLookupSubmit),
-    });
-    const parsed = parseSubmitResponse(result.json);
+    const outcome = await this.#lifecycle.submit(buildLookupSubmitRequest(wireInputs), options);
     return {
-      marketplace,
-      requestId: parsed.requestId,
-      correlationId,
-      rateLimit: result.rateLimit,
-      raw: options.includeRaw ? result.json : undefined,
+      marketplace: outcome.marketplace,
+      requestId: outcome.requestId,
+      correlationId: outcome.correlationId,
+      rateLimit: outcome.rateLimit,
+      raw: outcome.raw,
     };
   }
 
@@ -144,29 +128,15 @@ export class CatalogApiImpl implements CatalogApi {
     requestId: string,
     options: RequestOptions = {},
   ): Promise<CatalogLookupStatus> {
-    const { marketplace, sellerId } = this.#config;
-    const correlationId = options.correlationId ?? randomUUID();
-    const spec: RequestSpec = {
-      method: "PUT",
-      path: `${this.#http.adapter.prefix}${REPORT_STATUS_PATH}`,
-      body: buildStatusRequest(requestId),
-    };
-    const result = await this.#http.request(spec, {
-      operation: Operation.CatalogLookupStatus,
-      correlationId,
-      signal: options.signal,
-      timeoutMs: options.timeoutMs,
-      rateLimitKey: rateLimitKey(marketplace, sellerId, Operation.CatalogLookupStatus),
-    });
-    const parsed = parseStatusResponse(result.json, requestId);
+    const outcome = await this.#lifecycle.status(requestId, options);
     return {
-      marketplace,
+      marketplace: outcome.marketplace,
       requestId,
-      status: parsed.status,
-      statusRaw: parsed.statusRaw,
-      correlationId,
-      rateLimit: result.rateLimit,
-      raw: options.includeRaw ? result.json : undefined,
+      status: outcome.status,
+      statusRaw: outcome.statusRaw,
+      correlationId: outcome.correlationId,
+      rateLimit: outcome.rateLimit,
+      raw: outcome.raw,
     };
   }
 
@@ -175,32 +145,22 @@ export class CatalogApiImpl implements CatalogApi {
     page = 1,
     options: RequestOptions = {},
   ): Promise<CatalogLookupResultPage> {
-    const { marketplace, sellerId } = this.#config;
-    const correlationId = options.correlationId ?? randomUUID();
-    const spec: RequestSpec = {
-      method: "PUT",
-      path: `${this.#http.adapter.prefix}${REPORT_RESULT_PATH}`,
-      body: buildLookupResultRequest(requestId, page),
-    };
-    const result = await this.#http.request(spec, {
-      operation: Operation.CatalogLookupResult,
-      correlationId,
-      signal: options.signal,
-      timeoutMs: options.timeoutMs,
-      rateLimitKey: rateLimitKey(marketplace, sellerId, Operation.CatalogLookupResult),
-    });
-    const parsed = parseLookupResultResponse(result.json);
+    const outcome = await this.#lifecycle.result(
+      buildLookupResultRequest(requestId, page),
+      options,
+    );
+    const parsed = parseLookupResultResponse(outcome.json);
     return {
-      marketplace,
+      marketplace: outcome.marketplace,
       requestId,
       matches: parsed.matches,
       page: parsed.page,
       pageSize: parsed.pageSize,
       totalCount: parsed.totalCount,
       totalPageCount: parsed.totalPageCount,
-      correlationId,
-      rateLimit: result.rateLimit,
-      raw: options.includeRaw ? result.json : undefined,
+      correlationId: outcome.correlationId,
+      rateLimit: outcome.rateLimit,
+      raw: outcome.raw,
     };
   }
 
@@ -216,10 +176,6 @@ export class CatalogApiImpl implements CatalogApi {
     }
     const { marketplace } = this.#config;
     const correlationId = options.correlationId ?? randomUUID();
-    const timeoutMs = options.timeoutMs ?? RESOLVE_DEFAULT_TIMEOUT_MS;
-    const maxPoll = options.maxPollIntervalMs ?? RESOLVE_DEFAULT_MAX_POLL_INTERVAL_MS;
-    let pollMs = options.pollIntervalMs ?? RESOLVE_DEFAULT_POLL_INTERVAL_MS;
-    const deadline = Date.now() + timeoutMs;
 
     const wireInputs = inputs.filter((i): i is WireLookupInput => !isPassthrough(i));
     let requestId: string | undefined;
@@ -231,38 +187,41 @@ export class CatalogApiImpl implements CatalogApi {
         correlationId,
         signal: options.signal,
       });
-      requestId = submission.requestId;
+      const submittedId = submission.requestId;
+      requestId = submittedId;
 
       // Poll until FINISHED; CANCELLED and the deadline both abort with the requestId attached.
-      for (;;) {
-        const status = await this.lookupStatus(requestId, {
-          correlationId,
+      await waitUntilFinished(
+        submittedId,
+        async () =>
+          (await this.lookupStatus(submittedId, { correlationId, signal: options.signal })).status,
+        {
+          cancelled: (id) =>
+            new CatalogLookupTimeoutError(
+              "Newegg cancelled the item lookup report; resubmit to retry.",
+              { requestId: id, correlationId, retryable: false },
+            ),
+          timedOut: (id) =>
+            new CatalogLookupTimeoutError(
+              "The item lookup report did not finish within the time budget; continue with " +
+                "catalog.lookupStatus/lookupResult using requestId instead of resubmitting.",
+              { requestId: id, correlationId },
+            ),
+        },
+        {
           signal: options.signal,
-        });
-        if (status.status === "finished") break;
-        if (status.status === "cancelled") {
-          throw new CatalogLookupTimeoutError(
-            "Newegg cancelled the item lookup report; resubmit to retry.",
-            { requestId, correlationId, retryable: false },
-          );
-        }
-        if (Date.now() + pollMs > deadline) {
-          throw new CatalogLookupTimeoutError(
-            "The item lookup report did not finish within the time budget; continue with " +
-              "catalog.lookupStatus/lookupResult using requestId instead of resubmitting.",
-            { requestId, correlationId },
-          );
-        }
-        await delay(pollMs, options.signal);
-        pollMs = Math.min(maxPoll, Math.max(1, Math.round(pollMs * RESOLVE_POLL_BACKOFF_FACTOR)));
-      }
+          timeoutMs: options.timeoutMs,
+          pollIntervalMs: options.pollIntervalMs,
+          maxPollIntervalMs: options.maxPollIntervalMs,
+        },
+      );
 
       // Fetch every page.
       let page = 1;
       for (;;) {
         let result: CatalogLookupResultPage;
         try {
-          result = await this.lookupResult(requestId, page, {
+          result = await this.lookupResult(submittedId, page, {
             correlationId,
             signal: options.signal,
             includeRaw: options.includeRaw,
@@ -275,7 +234,7 @@ export class CatalogApiImpl implements CatalogApi {
           if (error instanceof NeweggApiError && error.httpStatus === 500) {
             throw new NeweggApiError(
               `Newegg failed to produce the item lookup report result (HTTP 500, ` +
-                `requestId ${requestId}). If this persists across retries the report is ` +
+                `requestId ${submittedId}). If this persists across retries the report is ` +
                 `likely poisoned: submitting two criteria that match the same catalog ` +
                 `product (for example a UPC and that product's manufacturer+MPN) breaks ` +
                 `result generation permanently. De-duplicate inputs by product and ` +
@@ -285,7 +244,7 @@ export class CatalogApiImpl implements CatalogApi {
                 neweggErrorCode: error.neweggErrorCode,
                 correlationId,
                 retryable: false,
-                details: { requestId, page, cause: error.message },
+                details: { requestId: submittedId, page, cause: error.message },
               },
             );
           }

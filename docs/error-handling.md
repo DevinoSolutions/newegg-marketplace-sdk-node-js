@@ -46,6 +46,7 @@ serialized form (behavioural requirement 7).
 | `NeweggFeedProcessingError`            | `feed_processing`               | The feed processed but Newegg reported record-level errors.                                                                                                                                     | no⁴          |
 | `NeweggFeedCancelledError`             | `feed_cancelled`                | Feed reached `CANCELLED`.                                                                                                                                                                       | no           |
 | `NeweggTimeoutError`                   | `timeout`                       | A direct request exceeded its timeout.                                                                                                                                                          | yes⁵         |
+| `ReportTimeoutError`                   | `report_timeout`                | A `client.reports` report did not finish in the wait budget (retryable; carries `requestId` — continue, don't resubmit) or Newegg cancelled it (not retryable).                                 | yes / no     |
 | `UnsupportedMarketplaceOperationError` | `unsupported_operation`         | Operation not available on the selected marketplace.                                                                                                                                            | no           |
 
 1. Retry only after honouring the reset hint (see [Rate-limit errors](#rate-limit-errors)).

@@ -15,4 +15,11 @@ export { feedResultTool } from "./feed-result.js";
 export { serviceStatusTool } from "./service-status.js";
 export { ordersListTool, ordersGetTool, ordersGetStatusTool } from "./orders.js";
 export { catalogResolveTool, catalogLookupStatusTool } from "./catalog.js";
+export {
+  reportsSettlementSummaryTool,
+  reportsSettlementTransactionsTool,
+  reportsDailyInventoryTool,
+  reportsDailyPriceTool,
+  reportsStatusTool,
+} from "./reports.js";
 export { createListingPreviewTool, listingApplyTool } from "./listings.js";
