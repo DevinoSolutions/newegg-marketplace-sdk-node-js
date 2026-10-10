@@ -20,6 +20,11 @@ import {
   TOOL_NAMES,
   catalogLookupStatusTool,
   catalogResolveTool,
+  reportsDailyInventoryTool,
+  reportsDailyPriceTool,
+  reportsSettlementSummaryTool,
+  reportsSettlementTransactionsTool,
+  reportsStatusTool,
   createInventoryPreviewTool,
   createListingPreviewTool,
   listingApplyTool,
@@ -114,6 +119,14 @@ export function enabledToolNames(config: McpServerConfig): string[] {
   names.push(TOOL_NAMES.ordersList, TOOL_NAMES.ordersGet, TOOL_NAMES.ordersGetStatus);
   // Catalog resolution is read-only (report submission mutates nothing; contracts §12.4).
   names.push(TOOL_NAMES.catalogResolve, TOOL_NAMES.catalogLookupStatus);
+  // Reports (settlement / daily inventory / daily price) are read-only report jobs (contracts §17).
+  names.push(
+    TOOL_NAMES.reportsSettlementSummary,
+    TOOL_NAMES.reportsSettlementTransactions,
+    TOOL_NAMES.reportsDailyInventory,
+    TOOL_NAMES.reportsDailyPrice,
+    TOOL_NAMES.reportsStatus,
+  );
   // Listing creation: preview is read-only; apply is write-gated.
   names.push(TOOL_NAMES.listingPreviewCreate);
   if (config.allowWrites) {
@@ -252,6 +265,11 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   registerToolDefinition(server, ordersGetStatusTool, ctx);
   registerToolDefinition(server, catalogResolveTool, ctx);
   registerToolDefinition(server, catalogLookupStatusTool, ctx);
+  registerToolDefinition(server, reportsSettlementSummaryTool, ctx);
+  registerToolDefinition(server, reportsSettlementTransactionsTool, ctx);
+  registerToolDefinition(server, reportsDailyInventoryTool, ctx);
+  registerToolDefinition(server, reportsDailyPriceTool, ctx);
+  registerToolDefinition(server, reportsStatusTool, ctx);
   registerToolDefinition(server, createListingPreviewTool(config), ctx);
   if (config.allowWrites) {
     registerToolDefinition(server, listingApplyTool, ctx);

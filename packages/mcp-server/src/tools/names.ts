@@ -17,6 +17,11 @@ export const TOOL_NAMES = {
   ordersGetStatus: "newegg_orders_get_status",
   catalogResolve: "newegg_catalog_resolve",
   catalogLookupStatus: "newegg_catalog_lookup_status",
+  reportsSettlementSummary: "newegg_reports_settlement_summary",
+  reportsSettlementTransactions: "newegg_reports_settlement_transactions",
+  reportsDailyInventory: "newegg_reports_daily_inventory",
+  reportsDailyPrice: "newegg_reports_daily_price",
+  reportsStatus: "newegg_reports_status",
   listingPreviewCreate: "newegg_listing_preview_create",
   listingApplyCreate: "newegg_listing_apply_create",
 } as const;
