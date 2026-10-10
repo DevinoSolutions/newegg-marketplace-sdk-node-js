@@ -21,6 +21,7 @@ Tools (underscore names, per MCP naming rules):
 | `newegg_inventory_get`            | read               | Current inventory for one or many identifiers.                                                                                                |
 | `newegg_inventory_preview_update` | read-only planning | Validates, normalizes, dedups, chooses direct-vs-feed, surfaces zero-quantity counts and warnings, and returns a `previewId`. Writes nothing. |
 | `newegg_inventory_apply_update`   | **write**          | Executes a stored preview by `previewId`. **Registered only when `NEWEGG_MCP_ALLOW_WRITES=true`.**                                            |
+| `newegg_pricing_get`              | read               | Current price, MAP/MSRP and promotion locks for one or many identifiers (Get Item Price). Writes nothing.                                     |
 | `newegg_feed_status`              | read               | Feed status by request ID.                                                                                                                    |
 | `newegg_feed_result`              | read               | Feed processing report by request ID.                                                                                                         |
 | `newegg_service_status`           | read               | Newegg service-domain availability.                                                                                                           |

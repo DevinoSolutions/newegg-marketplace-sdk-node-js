@@ -7,6 +7,7 @@ export { type Logger, type ToolContext, type ToolDefinition, type ToolResult } f
 export { inventoryGetTool } from "./inventory-get.js";
 export { createInventoryPreviewTool } from "./inventory-preview.js";
 export { inventoryApplyTool } from "./inventory-apply.js";
+export { pricingGetTool } from "./pricing-get.js";
 export { feedStatusTool, feedStatusInputSchema } from "./feed-status.js";
 export { feedResultTool } from "./feed-result.js";
 export { serviceStatusTool } from "./service-status.js";
