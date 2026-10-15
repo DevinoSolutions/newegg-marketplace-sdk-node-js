@@ -339,9 +339,9 @@ const propertyValuesInputSchema = z
       .min(1)
       .max(200)
       .describe("Property name from newegg_subcategory_properties, e.g. Costume_Gender."),
-    subcategoryId: subcategoryIdSchema
-      .optional()
-      .describe("Omit to read the property across every subcategory it applies to."),
+    subcategoryId: subcategoryIdSchema.describe(
+      "Subcategory the property belongs to, from newegg_subcategories_list.",
+    ),
     limit: limitSchema.describe(
       `Maximum properties returned, and maximum values returned per property (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`,
     ),
@@ -373,8 +373,10 @@ async function propertyValuesHandler(
   input: z.infer<typeof propertyValuesInputSchema>,
   ctx: ToolContext,
 ): Promise<ToolResult> {
-  const listInput: ListPropertyValuesInput = { propertyName: input.propertyName };
-  if (input.subcategoryId !== undefined) listInput.subcategoryId = input.subcategoryId;
+  const listInput: ListPropertyValuesInput = {
+    propertyName: input.propertyName,
+    subcategoryId: input.subcategoryId,
+  };
   const limit = input.limit ?? DEFAULT_LIMIT;
   try {
     const result = await ctx.client.reference.listPropertyValues(listInput);

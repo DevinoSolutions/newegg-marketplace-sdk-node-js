@@ -2302,8 +2302,8 @@ export interface SubcategoryPropertiesResult {
 export interface ListPropertyValuesInput {
   /** Property name as returned by {@link ReferenceApi.listSubcategoryProperties}. */
   propertyName: string;
-  /** Omit to read the property across every subcategory it applies to. */
-  subcategoryId?: number;
+  /** Subcategory the property belongs to; live Newegg rejects the request without it (CE003). */
+  subcategoryId: number;
 }
 
 /** A property with its allowed values (rows Newegg splits one-value-per-row are merged). */

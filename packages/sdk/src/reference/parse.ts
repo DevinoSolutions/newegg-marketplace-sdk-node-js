@@ -127,7 +127,7 @@ export function buildSubcategoryPropertyBody(subcategoryId: number): unknown {
   };
 }
 
-/** Body of Get Subcategory Property Values (`PropertyName` required, `SubcategoryID` optional). */
+/** Body of Get Subcategory Property Values (`SubcategoryID` and `PropertyName` both required, live-verified). */
 export function buildPropertyValueBody(input: ListPropertyValuesInput): unknown {
   const issues: NeweggValidationIssue[] = [];
   const name = typeof input.propertyName === "string" ? input.propertyName.trim() : "";
@@ -137,14 +137,12 @@ export function buildPropertyValueBody(input: ListPropertyValuesInput): unknown 
       message: `must be 1-${MAX_PROPERTY_NAME_LENGTH} characters without control characters`,
     });
   }
-  if (input.subcategoryId !== undefined) {
-    checkSubcategoryId(input.subcategoryId, "subcategoryId", issues);
-  }
+  checkSubcategoryId(input.subcategoryId, "subcategoryId", issues);
   throwIfInvalid("Invalid property value request.", issues);
-  const requestBody: Record<string, unknown> = {};
-  if (input.subcategoryId !== undefined) requestBody.SubcategoryID = String(input.subcategoryId);
-  requestBody.PropertyName = name;
-  return { OperationType: PROPERTY_VALUE_OPERATION_TYPE, RequestBody: requestBody };
+  return {
+    OperationType: PROPERTY_VALUE_OPERATION_TYPE,
+    RequestBody: { SubcategoryID: String(input.subcategoryId), PropertyName: name },
+  };
 }
 
 // ---------------------------------------------------------------------------

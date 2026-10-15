@@ -1487,7 +1487,7 @@ export interface SubcategoryPropertiesResult {
 
 export interface ListPropertyValuesInput {
   propertyName: string; // 1-200 chars, no control characters
-  subcategoryId?: number; // omit to read across every applicable subcategory
+  subcategoryId: number; // required: live Newegg answers CE003 without it
 }
 export interface PropertyValues extends SubcategoryProperty {
   values: string[]; // one-value-per-row wire rows are merged and de-duplicated
