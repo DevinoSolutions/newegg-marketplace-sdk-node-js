@@ -205,6 +205,32 @@ MCP tools return business fields only - never the buyer's name, phone, e-mail or
 USD on Newegg.com / Neweggbusiness.com and CAD on Newegg.ca; Get Courtesy Refund Information is
 limited to 30 requests per minute.
 
+## Seller status and category reference (read-only)
+
+```ts
+const status = await client.reference.getSellerStatus(); // active / suspended / ...
+const { industries } = await client.reference.listIndustries();
+const { subcategories } = await client.reference.listSubcategories({
+  industryCodes: ["AP"],
+  enabled: true,
+});
+const { properties } = await client.reference.listSubcategoryProperties(1045);
+const { properties: values } = await client.reference.listPropertyValues({
+  propertyName: "Costume_Gender",
+  subcategoryId: 1045,
+});
+```
+
+These are the lookups item creation needs first: which categories the seller may list in, and which
+properties and allowed values each takes (Seller Status Check, Get Industry List, Get Subcategory
+Status, Get Subcategory Properties / Property Values; contracts §19). The subcategory, property and
+value reads are `PUT` requests but only read; the SDK and the MCP tools (`newegg_seller_status`,
+`newegg_industries_list`, `newegg_subcategories_list`, `newegg_subcategory_properties`,
+`newegg_property_values`) are always available. `countryCode` on `listSubcategories` (the
+international variant) is Newegg.com only. Get Warehouse List and Get Subcategory Status v1.1 are not
+implemented (their documentation pages are unusable; see contracts §19.1). Newegg limits Get
+Subcategory Status, Properties and Property Values to 100 requests per hour, so cache the results.
+
 ## Reports (settlement, daily inventory, daily price)
 
 ```ts

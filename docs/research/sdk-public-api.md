@@ -55,6 +55,7 @@ export interface NeweggClient {
   readonly orders: OrdersApi; // order reads (list / get / status) + writes (ship / cancel / confirm / remove)
   readonly rma: RmaApi; // READ-only RMA lookups (Get RMA Information, contracts §18)
   readonly refunds: RefundsApi; // READ-only courtesy refund lookups (info + request status, §18)
+  readonly reference: ReferenceApi; // READ-only seller/category reference lookups (contracts §19)
   readonly catalog: CatalogApi; // read-only catalog resolution (Item Lookup Report, contracts §12)
   readonly reports: ReportsApi; // read-only settlement / daily inventory / daily price reports (contracts §17)
   readonly listings: ListingsApi; // WRITE: existing-item listing creation (ITEM_DATA&v2 feed, contracts §13)
@@ -1403,6 +1404,120 @@ export interface RefundsApi {
 }
 
 // ----------------------------------------------------------------------------
+// seller / category reference reads (contracts §19; READ-only, none gated)
+// ----------------------------------------------------------------------------
+// Seller Status Check, Get Industry List, Get Subcategory Status (+ the Newegg.com-only
+// international variant), Get Subcategory Properties and Property Values. Some are PUT on the wire;
+// all are reads. Get Warehouse List and Get Subcategory Status v1.1 are deliberately NOT
+// implemented (no retrievable / consistent docs page, contracts §19.1).
+export type SellerAccountStatus =
+  "active" | "suspended" | "inactive" | "terminated" | "closed" | "unknown";
+export type SellerMembership = "nonElite" | "professional" | "enterprise" | "unknown";
+
+export interface SellerFulfillmentCenter {
+  warehouseLocation?: string; // ISO alpha-3
+  shippedBy?: "seller" | "newegg"; // WarehouseType 0 / 1
+  shipToCountries: string[]; // ISO alpha-3
+}
+export interface SellerStatus {
+  marketplace: NeweggMarketplace;
+  sellerName?: string;
+  status: SellerAccountStatus;
+  statusText?: string; // Status exactly as sent
+  membership?: SellerMembership; // Newegg.com only (documented version 307)
+  fulfillmentCenters: SellerFulfillmentCenter[]; // Newegg.com only; [] elsewhere
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+export interface Industry {
+  code: string;
+  name?: string;
+}
+export interface ListIndustriesInput {
+  industryCode?: string; // omit for every industry; unknown code => DF008
+}
+export interface IndustriesResult {
+  marketplace: NeweggMarketplace;
+  industries: Industry[];
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+export interface ListSubcategoriesInput {
+  subcategoryIds?: number[]; // positive integers, <= 200
+  industryCodes?: string[]; // [A-Za-z0-9_-]{1,20}, <= 200
+  enabled?: boolean; // true = only enabled, false = only not enabled; omit for both
+  countryCode?: string; // ISO alpha-3: international variant, Newegg.com only (B2B/CA throw UnsupportedMarketplaceOperationError)
+}
+export interface SubcategoryStatus {
+  industryCode?: string;
+  industryName?: string;
+  subcategoryId: number;
+  subcategoryName?: string;
+  enabled: boolean;
+}
+export interface SubcategoriesResult {
+  marketplace: NeweggMarketplace;
+  countryCode?: string;
+  subcategories: SubcategoryStatus[]; // the full list can be thousands of rows
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+export interface SubcategoryProperty {
+  subcategoryId?: number;
+  subcategoryName?: string;
+  propertyName: string;
+  isAdvancedSearch?: boolean;
+  isGroupBy?: boolean;
+  isRequired?: boolean;
+}
+export interface SubcategoryPropertiesResult {
+  marketplace: NeweggMarketplace;
+  subcategoryId: number;
+  properties: SubcategoryProperty[];
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+export interface ListPropertyValuesInput {
+  propertyName: string; // 1-200 chars, no control characters
+  subcategoryId?: number; // omit to read across every applicable subcategory
+}
+export interface PropertyValues extends SubcategoryProperty {
+  values: string[]; // one-value-per-row wire rows are merged and de-duplicated
+}
+export interface PropertyValuesResult {
+  marketplace: NeweggMarketplace;
+  properties: PropertyValues[];
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+export interface ReferenceApi {
+  getSellerStatus(options?: RequestOptions): Promise<SellerStatus>; // 500/hr
+  listIndustries(input?: ListIndustriesInput, options?: RequestOptions): Promise<IndustriesResult>; // 10,000/hr
+  listSubcategories(
+    input?: ListSubcategoriesInput,
+    options?: RequestOptions,
+  ): Promise<SubcategoriesResult>; // 100/hr
+  listSubcategoryProperties(
+    subcategoryId: number,
+    options?: RequestOptions,
+  ): Promise<SubcategoryPropertiesResult>; // 100/hr
+  listPropertyValues(
+    input: ListPropertyValuesInput,
+    options?: RequestOptions,
+  ): Promise<PropertyValuesResult>; // 100/hr
+}
+
+// ----------------------------------------------------------------------------
 // listings (existing item creation — contracts §13; WRITE surface)
 // ----------------------------------------------------------------------------
 // create() submits an ITEM_DATA data feed with the bare `&v2` template flag (BatchItemCreation).
@@ -1729,6 +1844,18 @@ export interface RecordedCall {
     updates to deactivated items while reporting success (contracts §6.2). `previewUpdate` only
     reads and returns blockers/warnings; the SDK's `update` does not enforce them — the MCP
     tools do (ADR 0005). The US write path is an unverified ASSUMPTION (contracts §16.4).
+15. **Reference (reads)**: `reference.getSellerStatus`/`listIndustries`/`listSubcategories`/
+    `listSubcategoryProperties`/`listPropertyValues` never mutate (contracts §19); the subcategory,
+    property and property-value reads are `PUT` on the wire, which does not make them writes. The platform split (Seller Status Check's
+    `version=307` on Newegg.com only, the international subcategory variant on Newegg.com only) lives
+    in `platform/reference.ts`; `countryCode` on B2B/CAN throws
+    `UnsupportedMarketplaceOperationError` before any request. Inputs are validated before sending
+    (positive-integer ids, industry-code pattern, uppercase alpha-3 country, 1-200 character property
+    name). Wire numbers/flags (strings, `"0"/"1"`), single-vs-array lists, `""` for an empty list and
+    the Newegg.com `FufillmentCenterList` (sic) spelling are normalized, never thrown on; unknown
+    status/membership codes degrade to `"unknown"`. A `200` whose body is a bare `[{Code, Message}]`
+    list throws `NeweggApiError` rather than reading as an empty result. Get Warehouse List and Get
+    Subcategory Status v1.1 are not implemented (contracts §19.1).
 
 ```
 

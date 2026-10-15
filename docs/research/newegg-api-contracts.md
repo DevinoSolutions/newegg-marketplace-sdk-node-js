@@ -2451,3 +2451,231 @@ an e-mail) and the label tracking number / URL (see `docs/mcp-security.md`).
   The section was written from the docs alone, then checked on CAN with the live test (above). That test
   (`rma-read.live.test.ts`, read-only) asserts shapes only with identifiers discovered at runtime, and skips
   the identifier-dependent cases when the account has no RMAs.
+
+## 19. Seller Management — seller status and category reference reads
+
+Extracted 2026-10-15 from the official Seller Management pages, all under
+`https://developer.newegg.com/newegg_marketplace_api/seller_management/` (the index lists nine functions;
+the pages were last updated 2018-10-15, Seller Status Check 2020-12-30). The wire domain is `sellermgmt/`
+(the standard prefix applies: none on Newegg.com, `b2b/`, `can/`). These are the reference lookups an
+item-creation flow needs before it can build an `ITEM_DATA` feed (§13): which categories the seller may
+list in, and which properties and allowed values each category takes. Every example below uses fictional
+identifiers; the docs' own sample data is not reproduced beyond generic category names.
+
+### 19.1 Operation inventory and classification
+
+| Function                                 | Page (`seller_management/…`)                        | Platforms    | Verb | Path (after prefix)                     | Class    | In SDK |
+| ---------------------------------------- | --------------------------------------------------- | ------------ | ---- | --------------------------------------- | -------- | ------ |
+| Seller Status Check                      | `seller_status_check/`                              | US, B2B, CAN | GET  | `sellermgmt/seller/accountstatus`       | **READ** | yes    |
+| Get Industry List                        | `get_industry_list/`                                | US, B2B, CAN | GET  | `sellermgmt/seller/industry`            | **READ** | yes    |
+| Get Subcategory Status                   | `get_subcategory_status/`                           | US, B2B, CAN | PUT  | `sellermgmt/seller/subcategory`         | **READ** | yes    |
+| Get Subcategory Status for Int'l Country | `get_subcategory_status_for_international_country/` | US only      | PUT  | `sellermgmt/seller/subcategory/V2`      | **READ** | yes    |
+| Get Subcategory Properties               | `get_subcategory_properties/`                       | US, B2B, CAN | PUT  | `sellermgmt/seller/subcategoryproperty` | **READ** | yes    |
+| Get Subcategory Property Values          | `get_subcategory_property_values/`                  | US, B2B, CAN | PUT  | `sellermgmt/seller/propertyvalue`       | **READ** | yes    |
+| Get Warehouse List                       | `get-warehouse-list/` (see below)                   | -            | -    | -                                       | READ     | **no** |
+| Get Subcategory Status v1.1              | `get-subcategory-status-v1-1/` (see below)          | -            | -    | -                                       | READ     | **no** |
+| Download Feed Schema                     | `download_feed_schema/`                             | -            | -    | not fetched                             | READ     | no     |
+
+Classification follows what each page says it does ("Get…", "Seller Status Check"); none changes seller
+data. The four `PUT`s carry a request body and, like order info (§10), Get Item Price (§15) and the RMA
+reads (§18), the verb does not imply a write.
+
+**Left out, with the reason:**
+
+- **Get Warehouse List.** The Seller Management index describes a function that "lists seller-fulfilled
+  warehouses … location, status, and shipping destination" (Newegg.com only), but its page slug
+  `seller_management/get-warehouse-list/` answers `301` to
+  `sbn_shipped_by_newegg_management/get-warehouse-list/` (verified 2026-10-15), which documents a different
+  function: Newegg's own SBN inbound warehouses (`PUT {prefix}sbnmgmt/inboundshipment/warehouse`, body
+  `{ OperationType: "GetWarehouseRequest", RequestBody: { WarehouseCode } }`, US and B2B only, 1,000/min),
+  whose JSON example `GET`s a different URL (`…/inboundshipment/shipmentlist`), so even its verb and path
+  are inconsistent on the page. The seller-fulfilled variant has no retrievable page and the SBN one is
+  internally contradictory, so neither is implemented. Seller Status Check (§19.2) already returns the
+  seller's fulfillment-center countries and ship-to destinations.
+- **Get Subcategory Status v1.1.** The index lists it ("search by category ID and website catalog name") and
+  links `…/get-subcategory-status-v1-1/`, which answers `404` (2026-10-15, with and without the trailing
+  slash). With no page there is no wire shape to contract; add it once the page is retrievable.
+- **Download Feed Schema** is a read of the feed XSDs, not part of this PR's scope (not fetched).
+
+Common to the five implemented reads:
+
+- Auth, headers and the lowercase-URL rule are §1/§2; every request carries `sellerid` (original case).
+  Request and response formats: XML or JSON; the SDK sends JSON. `GET`s have no body.
+- `PUT` bodies are `{ OperationType, RequestBody: { … } }`. In every JSON sample the wire values are
+  **strings** (`"SubcategoryID": "397"`, `"Enabled": "1"`); the SDK sends strings.
+- Responses carry the `NeweggAPIResponse` wrapper in the XML samples and `{ IsSuccess, OperationType,
+SellerID, ResponseBody }` in the JSON ones; `IsSuccess` is the string `"true"` in most JSON samples and
+  the boolean `true` in Seller Status Check. The SDK accepts either wrapper form, either `IsSuccess`
+  type, and throws `NeweggApiError` on `IsSuccess=false`.
+- Lists are the usual object-OR-array quirk, and an empty list must be expected as `""` (§18.1, verified
+  live there): `IndustryList > Industry`, `SubcategoryList > Subcategory`,
+  `SubcategoryPropertyList > SubcategoryProperty`, `PropertyInfoList > PropertyInfo`,
+  `PropertyValueList > PropertyValue`, `FufillmentCenterList > FufillmentCenter` (sic) and
+  `ShippingDestinationList > ShipToCountry`. In the JSON samples these are arrays, and the two string
+  lists (`ShippingDestinationList`, `PropertyValueList`) are arrays of bare strings.
+- Error bodies: JSON array `[{"Code":"DF008","Message":"Invalid industry code ABC"}]` or the XML
+  `<Errors><Error><Code>…` form (§1); `errors/parse-upstream.ts` normalizes both, plus plain text. The pages
+  list `DF008` (invalid industry code; Get Industry List and Get Subcategory Status) and `DF009` (invalid
+  subcategory ID; Get Subcategory Properties / Property Values) and defer HTTP errors to the shared
+  "Failed Response Error Code List". 429 follows §3. The SDK additionally throws `NeweggApiError` if a
+  `200` body is itself a bare error list, so an error can never read as an empty result.
+
+### 19.2 Seller Status Check (READ)
+
+`GET {prefix}sellermgmt/seller/accountstatus?sellerid={sellerid}[&version=307]` - **500 requests/hour**.
+
+`version` (required, only value **307**) is documented for **Newegg.com only**; the B2B and CAN URLs carry
+no `version`. The page says the 307-marked response fields - `Membership`, `WarehouseLocation`,
+`WarehouseType`, `ShipToCountry` - are "available version: 307". The SDK sends `version=307` on US only
+(`platform/reference.ts`).
+
+Response (JSON sample; XML nests the same under `NeweggAPIResponse > ResponseBody`):
+
+```json
+{
+  "IsSuccess": true,
+  "OperationType": "GetSellerAccountStatusResponse",
+  "SellerID": "A006",
+  "ResponseBody": {
+    "Membership": 0,
+    "FufillmentCenterList": [
+      { "WarehouseLocation": "TUR", "WarehouseType": 0, "ShippingDestinationList": ["TUR", "USA"] },
+      { "WarehouseLocation": "USA", "WarehouseType": 1, "ShippingDestinationList": ["AUS", "USA"] }
+    ],
+    "SellerName": "Test_MKTPLS",
+    "Status": "Active"
+  }
+}
+```
+
+| Field                  | Notes                                                                                        |
+| ---------------------- | -------------------------------------------------------------------------------------------- |
+| `SellerName`           | Store name (a CDATA string in XML).                                                          |
+| `Status`               | `Active` · `Suspended` · `InActive` · `Terminated` · `Closed`. Anything else -> `"unknown"`. |
+| `Membership`           | Integer: 0 Non-Elite · 1 Professional · 2 Enterprise. Others -> `"unknown"`; absent -> none. |
+| `WarehouseLocation`    | ISO alpha-3 country of the fulfillment center.                                               |
+| `WarehouseType`        | Integer: 0 Ship by Seller (SBS) · 1 Ship by Newegg (SBN).                                    |
+| `ShippingDestination…` | ISO alpha-3 destination countries of that center.                                            |
+
+The container is spelled `FufillmentCenterList` / `FufillmentCenter` (sic) in every sample; the SDK also
+reads the correct spelling. **ASSUMPTION:** B2B and CAN answer with the same envelope but without the
+version-307 fields (the pages show only the Newegg.com sample), so an absent `Membership` /
+`FufillmentCenterList` yields `membership: undefined` and `fulfillmentCenters: []`, never an error.
+
+### 19.3 Get Industry List (READ)
+
+`GET {prefix}sellermgmt/seller/industry?sellerid={sellerid}[&industrycode={code}]` - **10,000
+requests/hour**. `industrycode` is optional; omitted, every industry is returned. An unknown code is
+answered with `DF008`. (The page's request samples show the URL without `industrycode`, its Resource URL
+with it; the SDK adds the lowercase `industrycode` query only when filtering.)
+
+Response `OperationType: "GetSellerIndustryResponse"`, `ResponseBody.IndustryList > Industry[]` with
+`IndustryCode` and `IndustryName`.
+
+### 19.4 Get Subcategory Status (READ) and its international variant
+
+`PUT {prefix}sellermgmt/seller/subcategory?sellerid={sellerid}` - **100 requests/hour**. Whether a
+subcategory is enabled for the seller. **International variant (Newegg.com only):**
+`PUT sellermgmt/seller/subcategory/V2?sellerid={sellerid}` adds a required `CountryCode` (ISO alpha-3) and
+echoes it in the response; the page spells the path segment `V2` although it also states URLs are
+lowercase - **ASSUMPTION:** the documented `V2` casing is what the server expects. The SDK selects the V2
+URL when the caller passes `countryCode` and throws `UnsupportedMarketplaceOperationError` (before sending)
+on B2B/CAN.
+
+Request body. The field tables list `SubcategoryID`, `IndustryCode` and `Enabled` flat, but every XML and
+JSON sample nests them under `RequestBody > GetItemSubcategory` with list wrappers; the SDK follows the
+samples:
+
+```json
+{
+  "OperationType": "GetSellerSubcategoryRequest",
+  "RequestBody": {
+    "CountryCode": "USA",
+    "GetItemSubcategory": {
+      "SubcategoryIDList": { "SubcategoryID": "397" },
+      "IndustryCodeList": { "IndustryCode": "CH" },
+      "Enabled": "1"
+    }
+  }
+}
+```
+
+`Enabled`: `0` not enabled · `1` enabled; left out, both are returned. **ASSUMPTIONS:** several ids or
+industry codes are sent as a JSON array under the single wrapper key (`{"SubcategoryID": ["1","2"]}`; the XML
+equivalent repeats the element) - the samples only show one value; and with no filters the SDK sends an
+empty `GetItemSubcategory: {}` (the pages do not say whether the object may be absent or empty).
+
+Response `OperationType: "GetSellerSubcategoryResponse"`, `ResponseBody.SubcategoryList > Subcategory[]`
+with `IndustryCode`, `IndustryName`, `SubcategoryID` (integer, a string in JSON), `SubcategoryName` and
+`Enabled` (`"0"`/`"1"`); the V2 response adds `ResponseBody.CountryCode`. The unfiltered list covers every
+Newegg subcategory and can be large (the MCP tool caps it, §19.7).
+
+### 19.5 Get Subcategory Properties (READ)
+
+`PUT {prefix}sellermgmt/seller/subcategoryproperty?sellerid={sellerid}` - **100 requests/hour**.
+
+```json
+{
+  "OperationType": "GetSellerSubcategoryPropertyRequest",
+  "RequestBody": { "SubcategoryID": "1045" }
+}
+```
+
+`SubcategoryID` is required and "obtained using the Get Subcategory Status request". Response
+`OperationType: "GetSellerSubcategoryPropertyResponse"`, `ResponseBody.SubcategoryPropertyList >
+SubcategoryProperty[]` with `SubcategoryID`, `SubcategoryName`, `PropertyName`, and the `0`/`1` flags
+`IsAdvancedSearch` (shown in advanced-search navigation), `IsGroupBy` and `IsRequired`. An invalid id is
+answered with `DF009`.
+
+### 19.6 Get Subcategory Property Values (READ)
+
+`PUT {prefix}sellermgmt/seller/propertyvalue?sellerid={sellerid}` - **100 requests/hour**.
+
+```json
+{
+  "OperationType": "GetSellerPropertyValueRequest",
+  "RequestBody": { "SubcategoryID": "1045", "PropertyName": "Costume_Gender" }
+}
+```
+
+`PropertyName` is required ("obtained using the Get Subcategory Properties request"); `SubcategoryID` is
+optional and, left blank, "returns the property information for all applied subcategories". Response
+`OperationType: "GetSellerPropertyValueResponse"`, `ResponseBody.PropertyInfoList > PropertyInfo[]` with the
+§19.5 property fields plus `PropertyValueList`. **The samples emit one `PropertyInfo` per value**, each with a
+one-element `PropertyValueList` (`["Male"]`, then `["Female"]`, …) - so the same property repeats once per
+value. The SDK merges rows with the same (subcategory, property) into one entry with all its values,
+de-duplicated, in first-seen order. A property with no value list (free text) yields `values: []`.
+
+### 19.7 SDK mapping
+
+All READS, none gated; the MCP tools register unconditionally.
+
+| SDK                                              | Wire  | MCP tool                        |
+| ------------------------------------------------ | ----- | ------------------------------- |
+| `client.reference.getSellerStatus()`             | §19.2 | `newegg_seller_status`          |
+| `client.reference.listIndustries(input)`         | §19.3 | `newegg_industries_list`        |
+| `client.reference.listSubcategories(input)`      | §19.4 | `newegg_subcategories_list`     |
+| `client.reference.listSubcategoryProperties(id)` | §19.5 | `newegg_subcategory_properties` |
+| `client.reference.listPropertyValues(input)`     | §19.6 | `newegg_property_values`        |
+
+Platform differences (the `version` query, the Newegg.com-only international variant) live in
+`packages/sdk/src/platform/reference.ts`. Numbers are parsed from strings, flags from `"0"/"1"`, and unknown
+`Status` / `Membership` / `WarehouseType` codes degrade rather than throw. Inputs are validated before any
+request (positive-integer ids, industry codes `[A-Za-z0-9_-]{1,20}`, uppercase alpha-3 country, property
+name 1-200 characters without control characters). Rate limits are Newegg's, enforced server-side (§3); the
+SDK keeps one local rate-limit key per operation and honours the response headers.
+
+The MCP tools map fields explicitly (no `raw`). The subcategory, property and value lists can run to
+thousands of rows, so those tools take a `limit` (default 200, max 1,000) and report the full `totalCount`
+(`valueCount` per property for values) and `truncated`; the SDK itself returns everything. Nothing in these
+responses is buyer data; `SellerName` is the seller's own store name.
+
+**Not verified live.** This section was written from the docs alone; no live test was added (the live
+suite stays read-only and this PR adds none). **ASSUMPTIONs (retire when verified live):**
+
+- The B2B and CAN response shapes (§19.2) and that all five paths exist under `b2b/` and `can/` as the
+  pages' Resource URLs state.
+- The `V2` path casing, multi-value filter lists and the empty `GetItemSubcategory` object (§19.4).
+- That `IsSuccess=false` / error lists arrive with the HTTP statuses §1 describes rather than as `200`
+  (the SDK handles both).
+- That the 500/hour, 10,000/hour and 100/hour limits stated on the pages are the live ones (§3).
