@@ -2497,7 +2497,7 @@ reads (§18), the verb does not imply a write.
   slash). With no page there is no wire shape to contract; add it once the page is retrievable.
 - **Download Feed Schema** is a read of the feed XSDs, not part of this PR's scope (not fetched).
 
-**Live-verified 2026-10-15** against the real seller account on CAN (`can/`), B2B (`b2b/`) and
+**Live-verified 2026-10-15** against a real seller account on CAN (`can/`), B2B (`b2b/`) and
 Newegg.com with the same credentials, read-only, by calling every read through the SDK. The per-read
 sections below record what the wire actually does; anything not exercised is still marked
 **ASSUMPTION**. Observations common to all five reads:
@@ -2577,16 +2577,16 @@ The container is spelled `FufillmentCenterList` / `FufillmentCenter` (sic) in ev
 reads the correct spelling. **Live-verified (CAN, B2B, Newegg.com, 2026-10-15):**
 CAN and B2B answer the same envelope without the version-307 fields - `{ SellerName, Status: "Active" }`
 only, no `Membership`, no `FufillmentCenterList` - so `membership: undefined` and `fulfillmentCenters: []`,
-never an error. Newegg.com (`version=307`) adds `Membership: 0` and `FufillmentCenterList: []` for an
-account with no fulfillment centers. The populated `FufillmentCenterList` item shape
+never an error. Newegg.com (`version=307`) adds `Membership` (observed as `0`) and, for an account with
+no fulfillment centers, `FufillmentCenterList: []`. The populated `FufillmentCenterList` item shape
 (`WarehouseLocation`, `WarehouseType`, `ShippingDestinationList`) is still **ASSUMPTION** (taken from the
-page's sample; the live account has no centers to show it).
+page's sample; an account without centers cannot show it).
 
 ### 19.3 Get Industry List (READ)
 
 `GET {prefix}sellermgmt/seller/industry?sellerid={sellerid}[&industrycode={code}]` - **10,000
-requests/hour**. `industrycode` is optional; omitted, every industry is returned (33 on the live account,
-the same on CAN and Newegg.com). Live: filtering by a real code returns just that industry; an unknown code
+requests/hour**. `industrycode` is optional; omitted, every industry is returned (33 observed, the same on
+CAN and Newegg.com). Live: filtering by a real code returns just that industry; an unknown code
 is answered `200` with `IndustryList: []`, **not** `DF008` as the page says, so the SDK returns an empty
 list rather than throwing. (The page's request samples show the URL without `industrycode`, its Resource URL
 with it; the SDK adds the lowercase `industrycode` query only when filtering.)
@@ -2626,10 +2626,10 @@ samples:
 `Enabled`: `0` not enabled · `1` enabled; left out, both are returned. **Live-verified (CAN, 2026-10-15):**
 several ids or industry codes sent as a JSON array under the single wrapper key
 (`{"SubcategoryID": ["3","5"]}`, `{"IndustryCode": ["CH","CP"]}`) are accepted and return the union; and
-with no filters the SDK's empty `GetItemSubcategory: {}` is accepted and returns every subcategory (1,539
-rows across 33 industries, about 1,500 of them enabled on CAN). `Enabled: "1"` filters as documented. The
-same calls work on B2B (single-id filter exercised) and Newegg.com, where this account has every
-subcategory `Enabled: 0`.
+with no filters the SDK's empty `GetItemSubcategory: {}` is accepted and returns every subcategory (about 1.5k
+rows across 33 industries on CAN; the catalogue is the same size on Newegg.com). `Enabled: "1"` filters as
+documented. The same calls work on B2B (single-id filter exercised) and Newegg.com, where an account may
+report every subcategory `Enabled: 0` (seen 2026-10-15).
 
 Response `OperationType: "GetSellerSubcategoryResponse"`, `ResponseBody.SubcategoryList > Subcategory[]`
 with `IndustryCode`, `IndustryName`, `SubcategoryID` (integer, a string in JSON), `SubcategoryName` and
@@ -2719,12 +2719,14 @@ with the pages' per-hour figures (see §19.1).
 
 **Still ASSUMPTION:**
 
-- The populated `FufillmentCenterList` item shape (the live account has no fulfillment centers) and the
-  `Membership` value mapping beyond `0`.
+- The populated `FufillmentCenterList` item shape (not seen: the account probed had no fulfillment
+  centers) and the `Membership` value mapping beyond `0`.
 - That `DF008` is returned for an unknown industry code in the Get Subcategory Status filter (only the Get
   Industry List filter was probed, and it did not raise it).
 - `IsSuccess=false` bodies on an HTTP `200` (not observed; the SDK handles both).
 - That the 500/hour, 10,000/hour and 100/hour limits stated on the pages are the live ones (§3); the live
   headers say 100 / 2,000 / 20 with an undocumented window.
-- B2B Get Subcategory Properties / Property Values were exercised only through the live test's shape
-  assertions, not inspected field by field.
+- Get Subcategory Properties / Property Values on B2B and Newegg.com were exercised only through the live
+  test's shape assertions (non-empty property list, a value row with an array of values), not inspected
+  field by field. On Newegg.com the probed account reported every subcategory disabled, so those two reads
+  ran against a disabled subcategory; the field-by-field checks above are CAN only.

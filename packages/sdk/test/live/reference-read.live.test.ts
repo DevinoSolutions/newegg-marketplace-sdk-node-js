@@ -27,7 +27,7 @@ describe.skipIf(!liveEnabled)("live (read-only): reference reads", () => {
   };
 
   it("getSellerStatus returns the store name and a known status", async () => {
-    const status = await client.reference.getSellerStatus({ includeRaw: true });
+    const status = await client.reference.getSellerStatus();
     expect(status.marketplace).toBe(marketplace());
     expect(status.sellerName).toEqual(expect.any(String));
     expect(status.status).not.toBe("unknown");

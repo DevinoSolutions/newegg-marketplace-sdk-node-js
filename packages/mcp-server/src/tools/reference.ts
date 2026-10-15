@@ -414,9 +414,11 @@ export const propertyValuesTool: ToolDefinition<
   title: "List Newegg property values",
   description:
     "Get Subcategory Property Values: the allowed values of one item property, per subcategory. " +
-    "Properties are capped at `limit` (totalCount and truncated reported) and values per property too (valueCount and truncated per property). The " +
-    "request budget is shared with the other subcategory reads and the live header reports less " +
-    "than the docs state (contracts §19.1). Read-only.",
+    "Output is capped at `limit` (default 200, max 1000): properties (totalCount and truncated " +
+    "reported) and the values of each property (valueCount and truncated per property). The full " +
+    "lists are available through the SDK (client.reference.listPropertyValues). The request " +
+    "budget is shared with the other subcategory reads and the live header reports less than " +
+    "the docs state (contracts §19.1). Read-only.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: propertyValuesInputSchema,
   outputSchema: propertyValuesOutputSchema,
