@@ -71,6 +71,14 @@ export const paths = {
   rmaInfo: /servicemgmt\/rma\/rmainfo\?/,
   courtesyRefundInfo: /servicemgmt\/courtesyrefund\/info\?/,
   courtesyRefundStatus: /servicemgmt\/courtesyrefund\/requeststatus\?/,
+  // Seller / category reference READS (§19). Trailing `?` keeps subcategory vs subcategoryproperty
+  // vs the V2 international variant apart; none of these can match a write endpoint.
+  sellerStatus: /sellermgmt\/seller\/accountstatus\?/,
+  industry: /sellermgmt\/seller\/industry\?/,
+  subcategoryStatus: /sellermgmt\/seller\/subcategory\?/,
+  subcategoryStatusIntl: /sellermgmt\/seller\/subcategory\/V2\?/,
+  subcategoryProperty: /sellermgmt\/seller\/subcategoryproperty\?/,
+  propertyValue: /sellermgmt\/seller\/propertyvalue\?/,
   reportSubmit: /reportmgmt\/report\/submitrequest\?/,
   reportStatus: /reportmgmt\/report\/status\?/,
   reportResult: /reportmgmt\/report\/result\?/,

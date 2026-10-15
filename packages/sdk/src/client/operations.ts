@@ -26,6 +26,14 @@ export const Operation = {
   RmaList: "rma.list",
   RefundList: "refunds.list",
   RefundRequestStatus: "refunds.requestStatus",
+  // Seller / category reference READS (contracts §19). Seller Status Check 500/hr; Get Industry
+  // List 10,000/hr; Get Subcategory Status (both variants), Properties and Property Values
+  // 100/hr each. Subcategory status shares one key across its two variants.
+  SellerStatus: "reference.sellerStatus",
+  IndustryList: "reference.industries",
+  SubcategoryStatus: "reference.subcategories",
+  SubcategoryProperties: "reference.subcategoryProperties",
+  PropertyValues: "reference.propertyValues",
   // Catalog resolution via the Item Lookup Report (reportmgmt, §12). Submit 100/hr;
   // status and result 500/hr each.
   CatalogLookupSubmit: "catalog.lookupSubmit",
