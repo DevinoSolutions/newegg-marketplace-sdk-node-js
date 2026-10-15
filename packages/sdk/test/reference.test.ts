@@ -4,6 +4,7 @@ import {
   NeweggRateLimitError,
   NeweggValidationError,
   UnsupportedMarketplaceOperationError,
+  type ListPropertyValuesInput,
   type NeweggMarketplace,
 } from "../src/index.js";
 import type { MockRoute } from "../src/testing/index.js";
@@ -605,10 +606,13 @@ describe("reference.listPropertyValues", () => {
         ),
       })),
     );
-    const result = await client.reference.listPropertyValues({ propertyName: "Costume_Gender" });
+    const result = await client.reference.listPropertyValues({
+      propertyName: "Costume_Gender",
+      subcategoryId: 1045,
+    });
     expect(calls[0]!.bodyJson).toEqual({
       OperationType: "GetSellerPropertyValueRequest",
-      RequestBody: { PropertyName: "Costume_Gender" },
+      RequestBody: { SubcategoryID: "1045", PropertyName: "Costume_Gender" },
     });
     expect(result.properties.map((p) => [p.subcategoryId, p.values])).toEqual([
       [1045, ["Male"]],
@@ -622,23 +626,28 @@ describe("reference.listPropertyValues", () => {
       "ca",
       route("PUT", paths.propertyValue, () => ({ status: 200, body })),
     );
-    expect((await client.reference.listPropertyValues({ propertyName: "X" })).properties).toEqual(
-      [],
-    );
+    expect(
+      (await client.reference.listPropertyValues({ propertyName: "X", subcategoryId: 1 }))
+        .properties,
+    ).toEqual([]);
     body = wrapped(
       { PropertyInfoList: [{ SubcategoryID: "1", PropertyName: "Free_Text" }] },
       "GetSellerPropertyValueResponse",
     );
-    const result = await client.reference.listPropertyValues({ propertyName: "Free_Text" });
+    const result = await client.reference.listPropertyValues({
+      propertyName: "Free_Text",
+      subcategoryId: 1,
+    });
     expect(result.properties).toMatchObject([{ propertyName: "Free_Text", values: [] }]);
   });
 
-  it.each([
-    [{ propertyName: "" }],
-    [{ propertyName: "   " }],
-    [{ propertyName: "a\u0000b" }],
-    [{ propertyName: "x".repeat(201) }],
+  it.each<[ListPropertyValuesInput]>([
+    [{ propertyName: "", subcategoryId: 1 }],
+    [{ propertyName: "   ", subcategoryId: 1 }],
+    [{ propertyName: "a\u0000b", subcategoryId: 1 }],
+    [{ propertyName: "x".repeat(201), subcategoryId: 1 }],
     [{ propertyName: "ok", subcategoryId: 0 }],
+    [{ propertyName: "ok" } as unknown as ListPropertyValuesInput],
   ])("rejects invalid input %j before sending", async (input) => {
     const { client, calls } = makeClient("ca", []);
     await expect(client.reference.listPropertyValues(input)).rejects.toBeInstanceOf(
@@ -658,8 +667,149 @@ describe("reference.listPropertyValues", () => {
           body: wrapped({ PropertyInfoList: [] }, "GetSellerPropertyValueResponse"),
         })),
       );
-      await client.reference.listPropertyValues({ propertyName: "X" });
+      await client.reference.listPropertyValues({ propertyName: "X", subcategoryId: 1 });
       expect(calls[0]!.url.pathname).toBe(`/marketplace/${prefix}sellermgmt/seller/propertyvalue`);
     },
   );
+});
+
+/**
+ * Shapes observed on the live CAN/B2B/Newegg.com account (2026-10-15), re-created with fictional
+ * data: JSON numbers (not strings) for ids and flags, an extra `PropertyID` field, a boolean
+ * `IsSuccess`, and an account with no fulfillment centers (the list is absent or `[]`).
+ */
+describe("reference reads: live-observed shapes", () => {
+  const live = (responseBody: unknown, operationType: string) => ({
+    IsSuccess: true,
+    OperationType: operationType,
+    SellerID: "A006",
+    ResponseBody: responseBody,
+  });
+
+  it("maps a seller status without membership details or fulfillment centers", async () => {
+    const { client } = makeClient(
+      "ca",
+      route("GET", paths.sellerStatus, () => ({
+        status: 200,
+        body: live(
+          { SellerName: "Test_Store", Status: "Active", FufillmentCenterList: [] },
+          "GetSellerAccountStatusResponse",
+        ),
+      })),
+    );
+    expect(await client.reference.getSellerStatus()).toMatchObject({
+      sellerName: "Test_Store",
+      status: "active",
+      membership: undefined,
+      fulfillmentCenters: [],
+    });
+  });
+
+  it("maps numeric ids and flags and ignores PropertyID on subcategories and properties", async () => {
+    const subcategories = makeClient(
+      "ca",
+      route("PUT", paths.subcategoryStatus, () => ({
+        status: 200,
+        body: live(
+          {
+            SubcategoryList: [
+              {
+                IndustryCode: "XX",
+                IndustryName: "Test Industry",
+                SubcategoryID: 7,
+                SubcategoryName: "Test Things",
+                Enabled: 1,
+              },
+              { IndustryCode: "XX", SubcategoryID: 8, SubcategoryName: "Off Things", Enabled: 0 },
+            ],
+          },
+          "GetSellerSubcategoryResponse",
+        ),
+      })),
+    );
+    const listed = await subcategories.client.reference.listSubcategories({ enabled: true });
+    expect(listed.subcategories.map((s) => [s.subcategoryId, s.enabled])).toEqual([
+      [7, true],
+      [8, false],
+    ]);
+
+    const properties = makeClient(
+      "ca",
+      route("PUT", paths.subcategoryProperty, () => ({
+        status: 200,
+        body: live(
+          {
+            SubcategoryPropertyList: [
+              {
+                PropertyID: 530,
+                SubcategoryID: 7,
+                SubcategoryName: "TestThings",
+                PropertyName: "ThingSeries",
+                IsAdvancedSearch: 0,
+                IsGroupBy: 0,
+                IsRequired: 1,
+              },
+            ],
+          },
+          "GetSellerSubcategoryPropertyResponse",
+        ),
+      })),
+    );
+    const props = await properties.client.reference.listSubcategoryProperties(7);
+    expect(props.properties).toEqual([
+      {
+        subcategoryId: 7,
+        subcategoryName: "TestThings",
+        propertyName: "ThingSeries",
+        isAdvancedSearch: false,
+        isGroupBy: false,
+        isRequired: true,
+      },
+    ]);
+  });
+
+  it("returns a property's whole value list from one row, and none when the list is empty", async () => {
+    const row = (values: string[]) => ({
+      PropertyInfoList: [
+        {
+          SubcategoryID: 7,
+          SubcategoryName: "TestThings",
+          PropertyName: "ThingSeries",
+          IsAdvancedSearch: 0,
+          IsGroupBy: 0,
+          IsRequired: 0,
+          PropertyValueList: values,
+        },
+      ],
+    });
+    let responseBody: unknown = row(["Alpha", "Beta", "Gamma"]);
+    const { client } = makeClient(
+      "ca",
+      route("PUT", paths.propertyValue, () => ({
+        status: 200,
+        body: live(responseBody, "GetSellerPropertyValueResponse"),
+      })),
+    );
+    const input = { propertyName: "ThingSeries", subcategoryId: 7 };
+    expect((await client.reference.listPropertyValues(input)).properties).toMatchObject([
+      { propertyName: "ThingSeries", values: ["Alpha", "Beta", "Gamma"] },
+    ]);
+    responseBody = row([]);
+    expect((await client.reference.listPropertyValues(input)).properties).toMatchObject([
+      { propertyName: "ThingSeries", values: [] },
+    ]);
+  });
+
+  it("surfaces a 400 DF009 error list for an unknown subcategory as NeweggApiError", async () => {
+    const { client } = makeClient(
+      "ca",
+      route("PUT", paths.subcategoryProperty, () => ({
+        status: 400,
+        body: [{ Code: "DF009", Message: "Invalid subcategory ID [999999999]." }],
+      })),
+    );
+    await expect(client.reference.listSubcategoryProperties(999999999)).rejects.toBeInstanceOf(
+      NeweggApiError,
+    );
+  });
 });

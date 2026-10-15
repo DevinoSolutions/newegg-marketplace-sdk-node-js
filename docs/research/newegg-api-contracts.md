@@ -2497,6 +2497,21 @@ reads (§18), the verb does not imply a write.
   slash). With no page there is no wire shape to contract; add it once the page is retrievable.
 - **Download Feed Schema** is a read of the feed XSDs, not part of this PR's scope (not fetched).
 
+**Live-verified 2026-10-15** against a real seller account on CAN (`can/`), B2B (`b2b/`) and
+Newegg.com with the same credentials, read-only, by calling every read through the SDK. The per-read
+sections below record what the wire actually does; anything not exercised is still marked
+**ASSUMPTION**. Observations common to all five reads:
+
+- Responses are bare JSON `{ IsSuccess, OperationType, SellerID, ResponseBody }` (no `NeweggAPIResponse`
+  wrapper) with `IsSuccess` the boolean `true`. Ids, flags and `Membership` are JSON **numbers**
+  (`"SubcategoryID": 3`, `"Enabled": 1`, `"IsRequired": 0`), not the strings the XML-derived samples
+  suggest; the parsers accept both.
+- An empty list is the JSON array `[]` (not `""`) on all five.
+- Rate-limit headers (surfaced as `rateLimit`) reported a limit of 100 for Seller Status Check, 2,000 for
+  Get Industry List and 20 for the four `PUT`s (shared across them), on all three platforms. These differ
+  from the per-hour numbers on the pages (500 / 10,000 / 100); the header's window is not documented, so
+  treat the headers, not the pages, as the effective budget and keep probes small.
+
 Common to the five implemented reads:
 
 - Auth, headers and the lowercase-URL rule are §1/§2; every request carries `sellerid` (original case).
@@ -2515,7 +2530,8 @@ SellerID, ResponseBody }` in the JSON ones; `IsSuccess` is the string `"true"` i
   lists (`ShippingDestinationList`, `PropertyValueList`) are arrays of bare strings.
 - Error bodies: JSON array `[{"Code":"DF008","Message":"Invalid industry code ABC"}]` or the XML
   `<Errors><Error><Code>…` form (§1); `errors/parse-upstream.ts` normalizes both, plus plain text. The pages
-  list `DF008` (invalid industry code; Get Industry List and Get Subcategory Status) and `DF009` (invalid
+  list `DF008` (invalid industry code; Get Industry List and Get Subcategory Status; see §19.3: not
+  reproduced live, live returns 200 with an empty list) and `DF009` (invalid
   subcategory ID; Get Subcategory Properties / Property Values) and defer HTTP errors to the shared
   "Failed Response Error Code List". 429 follows §3. The SDK additionally throws `NeweggApiError` if a
   `200` body is itself a bare error list, so an error can never read as an empty result.
@@ -2558,15 +2574,21 @@ Response (JSON sample; XML nests the same under `NeweggAPIResponse > ResponseBod
 | `ShippingDestination…` | ISO alpha-3 destination countries of that center.                                            |
 
 The container is spelled `FufillmentCenterList` / `FufillmentCenter` (sic) in every sample; the SDK also
-reads the correct spelling. **ASSUMPTION:** B2B and CAN answer with the same envelope but without the
-version-307 fields (the pages show only the Newegg.com sample), so an absent `Membership` /
-`FufillmentCenterList` yields `membership: undefined` and `fulfillmentCenters: []`, never an error.
+reads the correct spelling. **Live-verified (CAN, B2B, Newegg.com, 2026-10-15):**
+CAN and B2B answer the same envelope without the version-307 fields - `{ SellerName, Status: "Active" }`
+only, no `Membership`, no `FufillmentCenterList` - so `membership: undefined` and `fulfillmentCenters: []`,
+never an error. Newegg.com (`version=307`) adds `Membership` (observed as `0`) and, for an account with
+no fulfillment centers, `FufillmentCenterList: []`. The populated `FufillmentCenterList` item shape
+(`WarehouseLocation`, `WarehouseType`, `ShippingDestinationList`) is still **ASSUMPTION** (taken from the
+page's sample; an account without centers cannot show it).
 
 ### 19.3 Get Industry List (READ)
 
 `GET {prefix}sellermgmt/seller/industry?sellerid={sellerid}[&industrycode={code}]` - **10,000
-requests/hour**. `industrycode` is optional; omitted, every industry is returned. An unknown code is
-answered with `DF008`. (The page's request samples show the URL without `industrycode`, its Resource URL
+requests/hour**. `industrycode` is optional; omitted, every industry is returned (33 observed, the same on
+CAN and Newegg.com). Live: filtering by a real code returns just that industry; an unknown code
+is answered `200` with `IndustryList: []`, **not** `DF008` as the page says, so the SDK returns an empty
+list rather than throwing. (The page's request samples show the URL without `industrycode`, its Resource URL
 with it; the SDK adds the lowercase `industrycode` query only when filtering.)
 
 Response `OperationType: "GetSellerIndustryResponse"`, `ResponseBody.IndustryList > Industry[]` with
@@ -2578,7 +2600,8 @@ Response `OperationType: "GetSellerIndustryResponse"`, `ResponseBody.IndustryLis
 subcategory is enabled for the seller. **International variant (Newegg.com only):**
 `PUT sellermgmt/seller/subcategory/V2?sellerid={sellerid}` adds a required `CountryCode` (ISO alpha-3) and
 echoes it in the response; the page spells the path segment `V2` although it also states URLs are
-lowercase - **ASSUMPTION:** the documented `V2` casing is what the server expects. The SDK selects the V2
+lowercase - **live-verified (Newegg.com, 2026-10-15):** the `V2` casing is accepted and the response echoes
+`CountryCode: "USA"` beside `SubcategoryList`. The SDK selects the V2
 URL when the caller passes `countryCode` and throws `UnsupportedMarketplaceOperationError` (before sending)
 on B2B/CAN.
 
@@ -2600,14 +2623,17 @@ samples:
 }
 ```
 
-`Enabled`: `0` not enabled · `1` enabled; left out, both are returned. **ASSUMPTIONS:** several ids or
-industry codes are sent as a JSON array under the single wrapper key (`{"SubcategoryID": ["1","2"]}`; the XML
-equivalent repeats the element) - the samples only show one value; and with no filters the SDK sends an
-empty `GetItemSubcategory: {}` (the pages do not say whether the object may be absent or empty).
+`Enabled`: `0` not enabled · `1` enabled; left out, both are returned. **Live-verified (CAN, 2026-10-15):**
+several ids or industry codes sent as a JSON array under the single wrapper key
+(`{"SubcategoryID": ["3","5"]}`, `{"IndustryCode": ["CH","CP"]}`) are accepted and return the union; and
+with no filters the SDK's empty `GetItemSubcategory: {}` is accepted and returns every subcategory (about 1.5k
+rows across 33 industries on CAN; the catalogue is the same size on Newegg.com). `Enabled: "1"` filters as
+documented. The same calls work on B2B (single-id filter exercised) and Newegg.com, where an account may
+report every subcategory `Enabled: 0` (seen 2026-10-15).
 
 Response `OperationType: "GetSellerSubcategoryResponse"`, `ResponseBody.SubcategoryList > Subcategory[]`
 with `IndustryCode`, `IndustryName`, `SubcategoryID` (integer, a string in JSON), `SubcategoryName` and
-`Enabled` (`"0"`/`"1"`; an absent or unparseable value yields `enabled: undefined`, never `false`); the V2 response adds `ResponseBody.CountryCode`. The unfiltered list covers every
+`Enabled` (`1`/`0` live, `"0"`/`"1"` in the samples; an absent or unparseable value yields `enabled: undefined`, never `false`); the V2 response adds `ResponseBody.CountryCode`. The unfiltered list covers every
 Newegg subcategory and can be large (the MCP tool caps it, §19.7).
 
 ### 19.5 Get Subcategory Properties (READ)
@@ -2625,7 +2651,12 @@ Newegg subcategory and can be large (the MCP tool caps it, §19.7).
 `OperationType: "GetSellerSubcategoryPropertyResponse"`, `ResponseBody.SubcategoryPropertyList >
 SubcategoryProperty[]` with `SubcategoryID`, `SubcategoryName`, `PropertyName`, and the `0`/`1` flags
 `IsAdvancedSearch` (shown in advanced-search navigation), `IsGroupBy` and `IsRequired`. An invalid id is
-answered with `DF009`.
+answered `400` with the JSON array `[{"Code":"DF009","Message":"Invalid subcategory ID [<id>]."}]`
+(live-verified; the SDK throws `NeweggApiError` with `neweggErrorCode: "DF009"`). **Live-verified (CAN,
+2026-10-15):** the rows add an integer `PropertyID` the pages do not list (the SDK ignores it), the flags
+are JSON numbers `0`/`1`, and `SubcategoryName` is a compacted form (`"MemoryFlashMemory"`, no spaces or
+punctuation) rather than the display name from Get Subcategory Status. Subcategories carry about 20-30
+properties; only a few are `IsRequired`.
 
 ### 19.6 Get Subcategory Property Values (READ)
 
@@ -2638,13 +2669,19 @@ answered with `DF009`.
 }
 ```
 
-`PropertyName` is required ("obtained using the Get Subcategory Properties request"); `SubcategoryID` is
-optional and, left blank, "returns the property information for all applied subcategories". Response
-`OperationType: "GetSellerPropertyValueResponse"`, `ResponseBody.PropertyInfoList > PropertyInfo[]` with the
-§19.5 property fields plus `PropertyValueList`. **The samples emit one `PropertyInfo` per value**, each with a
-one-element `PropertyValueList` (`["Male"]`, then `["Female"]`, …) - so the same property repeats once per
-value. The SDK merges rows with the same (subcategory, property) into one entry with all its values,
-de-duplicated, in first-seen order. A property with no value list (free text) yields `values: []`.
+`PropertyName` is required ("obtained using the Get Subcategory Properties request"). **Correction
+(live, 2026-10-15): `SubcategoryID` is required too.** The page calls it optional ("left blank, returns the
+property information for all applied subcategories"), but a request with only `PropertyName` is answered
+`400 CE003` ("The element 'RequestBody' has invalid child element 'PropertyName'. List of possible elements
+expected: 'SubcategoryID'."). The SDK and the `newegg_property_values` tool therefore require
+`subcategoryId` (a breaking change to `ListPropertyValuesInput`, which has not been released; the
+cross-subcategory read is not available). Response `OperationType: "GetSellerPropertyValueResponse"`,
+`ResponseBody.PropertyInfoList > PropertyInfo[]` with the §19.5 property fields plus `PropertyValueList`.
+**Live, the request returns ONE `PropertyInfo` carrying the property's whole value list** (a single row with
+a 407-element `PropertyValueList` of bare strings), not the one-row-per-value shape of the samples. The SDK
+still merges rows with the same (subcategory, property) into one entry, de-duplicated, in first-seen order,
+so both shapes work. A property with no allowed values comes back as one row with `PropertyValueList: []`
+and yields `values: []`.
 
 ### 19.7 SDK mapping
 
@@ -2670,12 +2707,26 @@ thousands of rows, so those tools take a `limit` (default 200, max 1,000) and re
 (`valueCount` per property for values) and `truncated`; the SDK itself returns everything. Nothing in these
 responses is buyer data; `SellerName` is the seller's own store name.
 
-**Not verified live.** This section was written from the docs alone; no live test was added (the live
-suite stays read-only and this PR adds none). **ASSUMPTIONs (retire when verified live):**
+**Verification status (2026-10-15).** The five reads were exercised live, read-only, on CAN, B2B and
+Newegg.com (about 55 requests in total, including the opt-in live test
+`packages/sdk/test/live/reference-read.live.test.ts`, which asserts shapes only). Retired ASSUMPTIONs: the
+CAN and B2B response shapes and that all five paths exist under `can/` and `b2b/`; the `V2` path casing;
+multi-value filter lists and the empty `GetItemSubcategory` object; and that a bad subcategory id arrives
+as HTTP `400` with a JSON error list (`DF009`; the SDK's handling of a `200` body that is itself an error
+list stays as defence in depth). Corrected: `SubcategoryID` is required on Get Subcategory Property Values,
+an unknown industry code returns an empty list rather than `DF008`, and the rate-limit headers disagree
+with the pages' per-hour figures (see §19.1).
 
-- The B2B and CAN response shapes (§19.2) and that all five paths exist under `b2b/` and `can/` as the
-  pages' Resource URLs state.
-- The `V2` path casing, multi-value filter lists and the empty `GetItemSubcategory` object (§19.4).
-- That `IsSuccess=false` / error lists arrive with the HTTP statuses §1 describes rather than as `200`
-  (the SDK handles both).
-- That the 500/hour, 10,000/hour and 100/hour limits stated on the pages are the live ones (§3).
+**Still ASSUMPTION:**
+
+- The populated `FufillmentCenterList` item shape (not seen: the account probed had no fulfillment
+  centers) and the `Membership` value mapping beyond `0`.
+- That `DF008` is returned for an unknown industry code in the Get Subcategory Status filter (only the Get
+  Industry List filter was probed, and it did not raise it).
+- `IsSuccess=false` bodies on an HTTP `200` (not observed; the SDK handles both).
+- That the 500/hour, 10,000/hour and 100/hour limits stated on the pages are the live ones (§3); the live
+  headers say 100 / 2,000 / 20 with an undocumented window.
+- Get Subcategory Properties / Property Values on B2B and Newegg.com were exercised only through the live
+  test's shape assertions (non-empty property list, a value row with an array of values), not inspected
+  field by field. On Newegg.com the probed account reported every subcategory disabled, so those two reads
+  ran against a disabled subcategory; the field-by-field checks above are CAN only.

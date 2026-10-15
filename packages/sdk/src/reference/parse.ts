@@ -127,7 +127,7 @@ export function buildSubcategoryPropertyBody(subcategoryId: number): unknown {
   };
 }
 
-/** Body of Get Subcategory Property Values (`PropertyName` required, `SubcategoryID` optional). */
+/** Body of Get Subcategory Property Values (`SubcategoryID` and `PropertyName` both required, live-verified). */
 export function buildPropertyValueBody(input: ListPropertyValuesInput): unknown {
   const issues: NeweggValidationIssue[] = [];
   const name = typeof input.propertyName === "string" ? input.propertyName.trim() : "";
@@ -137,14 +137,12 @@ export function buildPropertyValueBody(input: ListPropertyValuesInput): unknown 
       message: `must be 1-${MAX_PROPERTY_NAME_LENGTH} characters without control characters`,
     });
   }
-  if (input.subcategoryId !== undefined) {
-    checkSubcategoryId(input.subcategoryId, "subcategoryId", issues);
-  }
+  checkSubcategoryId(input.subcategoryId, "subcategoryId", issues);
   throwIfInvalid("Invalid property value request.", issues);
-  const requestBody: Record<string, unknown> = {};
-  if (input.subcategoryId !== undefined) requestBody.SubcategoryID = String(input.subcategoryId);
-  requestBody.PropertyName = name;
-  return { OperationType: PROPERTY_VALUE_OPERATION_TYPE, RequestBody: requestBody };
+  return {
+    OperationType: PROPERTY_VALUE_OPERATION_TYPE,
+    RequestBody: { SubcategoryID: String(input.subcategoryId), PropertyName: name },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -328,19 +326,21 @@ export function parseSubcategoryProperties(
  */
 export function parsePropertyValues(json: unknown, correlationId: string): PropertyValues[] {
   const body = unwrapReference(json, correlationId);
-  const merged = new Map<string, PropertyValues>();
+  const merged = new Map<string, { entry: PropertyValues; seen: Set<string> }>();
   for (const row of listItems(getField(body, "PropertyInfoList"), "PropertyInfo")) {
     const fields = parsePropertyFields(row);
     if (fields === undefined) continue;
     const key = `${fields.subcategoryId ?? ""}|${fields.propertyName}`;
-    let entry = merged.get(key);
-    if (entry === undefined) {
-      entry = { ...fields, values: [] };
-      merged.set(key, entry);
+    let slot = merged.get(key);
+    if (slot === undefined) {
+      slot = { entry: { ...fields, values: [] }, seen: new Set() };
+      merged.set(key, slot);
     }
     for (const value of stringList(getField(row, "PropertyValueList"), "PropertyValue")) {
-      if (!entry.values.includes(value)) entry.values.push(value);
+      if (slot.seen.has(value)) continue;
+      slot.seen.add(value);
+      slot.entry.values.push(value);
     }
   }
-  return [...merged.values()];
+  return [...merged.values()].map((slot) => slot.entry);
 }

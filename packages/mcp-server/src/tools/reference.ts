@@ -253,7 +253,9 @@ export const subcategoriesListTool: ToolDefinition<
     "enabled for this seller, filterable by subcategory ids, industry codes and enabled state. " +
     "On Newegg.com, countryCode checks eligibility in another country. The full list can be " +
     "large: results are capped at `limit` with totalCount and truncated reported. Subcategory " +
-    "ids feed newegg_subcategory_properties. Newegg allows 100 requests/hour. Read-only.",
+    "ids feed newegg_subcategory_properties. The request budget is shared with the other " +
+    "subcategory reads and the live header reports less than the docs state (contracts §19.1). " +
+    "Read-only.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: subcategoriesInputSchema,
   outputSchema: subcategoriesOutputSchema,
@@ -321,7 +323,8 @@ export const subcategoryPropertiesTool: ToolDefinition<
   description:
     "Get Subcategory Properties: the item properties of one Newegg subcategory (name, and " +
     "whether it is required, a group-by property, or shown in advanced search). Property names " +
-    "feed newegg_property_values. Newegg allows 100 requests/hour. Read-only.",
+    "feed newegg_property_values. The request budget is shared with the other subcategory " +
+    "reads and the live header reports less than the docs state (contracts §19.1). Read-only.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: propertiesInputSchema,
   outputSchema: propertiesOutputSchema,
@@ -339,9 +342,9 @@ const propertyValuesInputSchema = z
       .min(1)
       .max(200)
       .describe("Property name from newegg_subcategory_properties, e.g. Costume_Gender."),
-    subcategoryId: subcategoryIdSchema
-      .optional()
-      .describe("Omit to read the property across every subcategory it applies to."),
+    subcategoryId: subcategoryIdSchema.describe(
+      "Subcategory the property belongs to, from newegg_subcategories_list.",
+    ),
     limit: limitSchema.describe(
       `Maximum properties returned, and maximum values returned per property (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`,
     ),
@@ -373,8 +376,10 @@ async function propertyValuesHandler(
   input: z.infer<typeof propertyValuesInputSchema>,
   ctx: ToolContext,
 ): Promise<ToolResult> {
-  const listInput: ListPropertyValuesInput = { propertyName: input.propertyName };
-  if (input.subcategoryId !== undefined) listInput.subcategoryId = input.subcategoryId;
+  const listInput: ListPropertyValuesInput = {
+    propertyName: input.propertyName,
+    subcategoryId: input.subcategoryId,
+  };
   const limit = input.limit ?? DEFAULT_LIMIT;
   try {
     const result = await ctx.client.reference.listPropertyValues(listInput);
@@ -409,8 +414,11 @@ export const propertyValuesTool: ToolDefinition<
   title: "List Newegg property values",
   description:
     "Get Subcategory Property Values: the allowed values of one item property, per subcategory. " +
-    "Properties are capped at `limit` (totalCount and truncated reported) and values per property too (valueCount and truncated per property). Newegg " +
-    "allows 100 requests/hour. Read-only.",
+    "Output is capped at `limit` (default 200, max 1000): properties (totalCount and truncated " +
+    "reported) and the values of each property (valueCount and truncated per property). The full " +
+    "lists are available through the SDK (client.reference.listPropertyValues). The request " +
+    "budget is shared with the other subcategory reads and the live header reports less than " +
+    "the docs state (contracts §19.1). Read-only.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: propertyValuesInputSchema,
   outputSchema: propertyValuesOutputSchema,

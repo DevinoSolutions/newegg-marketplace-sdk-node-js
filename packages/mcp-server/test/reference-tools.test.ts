@@ -345,6 +345,7 @@ describe("newegg_property_values", () => {
     try {
       const res = await callTool(harness.mcp, "newegg_property_values", {
         propertyName: "Costume_Gender",
+        subcategoryId: 1001,
         limit: 2,
       });
       expect(res.isError).toBe(false);
@@ -354,6 +355,7 @@ describe("newegg_property_values", () => {
       ).toEqual([1001, 1002]);
       const all = await callTool(harness.mcp, "newegg_property_values", {
         propertyName: "Costume_Gender",
+        subcategoryId: 1001,
       });
       expect(all.json).toMatchObject({ totalCount: 3, truncated: false });
       expect(all.json.properties).toHaveLength(3);
@@ -369,12 +371,16 @@ describe("newegg_property_values", () => {
     try {
       const ok = await callTool(harness.mcp, "newegg_property_values", {
         propertyName: "  Costume_Gender  ",
+        subcategoryId: 1045,
       });
       expect(ok.isError).toBe(false);
       expect(harness.calls[0]!.bodyJson).toMatchObject({
         RequestBody: { PropertyName: "Costume_Gender" },
       });
-      const blank = await callTool(harness.mcp, "newegg_property_values", { propertyName: "   " });
+      const blank = await callTool(harness.mcp, "newegg_property_values", {
+        propertyName: "   ",
+        subcategoryId: 1045,
+      });
       expect(blank.isError).toBe(true);
       expect(harness.calls).toHaveLength(1);
     } finally {
@@ -387,9 +393,10 @@ describe("newegg_property_values", () => {
     try {
       for (const args of [
         {},
-        { propertyName: "" },
-        { propertyName: "x".repeat(201) },
-        { propertyName: "A", extra: 1 },
+        { propertyName: "", subcategoryId: 1 },
+        { propertyName: "x".repeat(201), subcategoryId: 1 },
+        { propertyName: "A", subcategoryId: 1, extra: 1 },
+        { propertyName: "A" },
       ]) {
         expect((await callTool(harness.mcp, "newegg_property_values", args)).isError).toBe(true);
       }

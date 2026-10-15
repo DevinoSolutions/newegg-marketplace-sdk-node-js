@@ -2228,7 +2228,7 @@ export interface Industry {
 
 /** Criteria for {@link ReferenceApi.listIndustries}. */
 export interface ListIndustriesInput {
-  /** Return only this industry; omit for every industry. An unknown code fails with `DF008`. */
+  /** Return only this industry; omit for every industry. An unknown code returns an empty list (live, contracts §19.3). */
   industryCode?: string;
 }
 
@@ -2302,8 +2302,8 @@ export interface SubcategoryPropertiesResult {
 export interface ListPropertyValuesInput {
   /** Property name as returned by {@link ReferenceApi.listSubcategoryProperties}. */
   propertyName: string;
-  /** Omit to read the property across every subcategory it applies to. */
-  subcategoryId?: number;
+  /** Subcategory the property belongs to; live Newegg rejects the request without it (CE003). */
+  subcategoryId: number;
 }
 
 /** A property with its allowed values (rows Newegg splits one-value-per-row are merged). */
@@ -2330,17 +2330,21 @@ export interface ReferenceApi {
   getSellerStatus(options?: RequestOptions): Promise<SellerStatus>;
   /** Get Industry List (10,000 req/hr). */
   listIndustries(input?: ListIndustriesInput, options?: RequestOptions): Promise<IndustriesResult>;
-  /** Get Subcategory Status (100 req/hr), or its international variant when `countryCode` is set. */
+  /**
+   * Get Subcategory Status, or its international variant when `countryCode` is set. The
+   * request budget is shared with the other PUT reads and the live header reports less than the
+   * docs state (contracts §19.1).
+   */
   listSubcategories(
     input?: ListSubcategoriesInput,
     options?: RequestOptions,
   ): Promise<SubcategoriesResult>;
-  /** Get Subcategory Properties (100 req/hr). */
+  /** Get Subcategory Properties. Shares the PUT-read budget (contracts §19.1). */
   listSubcategoryProperties(
     subcategoryId: number,
     options?: RequestOptions,
   ): Promise<SubcategoryPropertiesResult>;
-  /** Get Subcategory Property Values (100 req/hr). */
+  /** Get Subcategory Property Values. Shares the PUT-read budget (contracts §19.1). */
   listPropertyValues(
     input: ListPropertyValuesInput,
     options?: RequestOptions,
