@@ -8,6 +8,7 @@ import { InventoryApiImpl } from "../inventory/api.js";
 import { ListingsApiImpl } from "../listings/api.js";
 import { OrdersApiImpl } from "../orders/api.js";
 import { PricingApiImpl } from "../pricing/api.js";
+import { ReferenceApiImpl } from "../reference/api.js";
 import { RefundsApiImpl } from "../refunds/api.js";
 import { RmaApiImpl } from "../rma/api.js";
 import { ReportsApiImpl } from "../reports/api.js";
@@ -41,6 +42,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
   const orders = new OrdersApiImpl(http);
   const rma = new RmaApiImpl(http);
   const refunds = new RefundsApiImpl(http);
+  const reference = new ReferenceApiImpl(http);
   const catalog = new CatalogApiImpl(http);
   const reports = new ReportsApiImpl(http);
   const listings = new ListingsApiImpl(http);
@@ -63,6 +65,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
     orders,
     rma,
     refunds,
+    reference,
     catalog,
     reports,
     listings,
