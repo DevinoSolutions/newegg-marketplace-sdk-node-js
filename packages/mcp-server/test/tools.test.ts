@@ -27,7 +27,7 @@ async function listTools(env?: Record<string, string | undefined>): Promise<List
 }
 
 describe("tools/list", () => {
-  it("exposes exactly the 24 read tools when writes are disabled", async () => {
+  it("exposes exactly the 29 read tools when writes are disabled", async () => {
     const tools = await listTools(makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "false" }));
     const names = tools.map((tool) => tool.name).sort();
     expect(names).toEqual(
@@ -36,6 +36,7 @@ describe("tools/list", () => {
         "newegg_catalog_resolve",
         "newegg_feed_result",
         "newegg_feed_status",
+        "newegg_industries_list",
         "newegg_inventory_get",
         "newegg_inventory_preview_update",
         "newegg_listing_preview_create",
@@ -43,6 +44,7 @@ describe("tools/list", () => {
         "newegg_orders_get_status",
         "newegg_orders_list",
         "newegg_pricing_get",
+        "newegg_property_values",
         "newegg_refund_list",
         "newegg_refund_status",
         "newegg_reports_daily_inventory",
@@ -55,7 +57,10 @@ describe("tools/list", () => {
         "newegg_reports_status",
         "newegg_rma_get",
         "newegg_rma_list",
+        "newegg_seller_status",
         "newegg_service_status",
+        "newegg_subcategories_list",
+        "newegg_subcategory_properties",
       ].sort(),
     );
     expect(names).not.toContain("newegg_inventory_apply_update");
@@ -64,10 +69,10 @@ describe("tools/list", () => {
     expect(names).not.toContain("newegg_pricing_apply_update");
   });
 
-  it("adds the write tools when writes are enabled (28 tools)", async () => {
+  it("adds the write tools when writes are enabled (33 tools)", async () => {
     const tools = await listTools(makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "true" }));
     const names = tools.map((tool) => tool.name);
-    expect(names).toHaveLength(28);
+    expect(names).toHaveLength(33);
     expect(names).toContain("newegg_inventory_apply_update");
     expect(names).toContain("newegg_listing_apply_create");
     expect(names).toContain("newegg_pricing_preview_update");
