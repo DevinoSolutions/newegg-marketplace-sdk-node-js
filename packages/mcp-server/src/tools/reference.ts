@@ -201,7 +201,7 @@ const subcategoriesOutputSchema = z.object({
       industryName: z.string().optional(),
       subcategoryId: z.number(),
       subcategoryName: z.string().optional(),
-      enabled: z.boolean(),
+      enabled: z.boolean().optional(),
     }),
   ),
   totalCount: z.number(),
@@ -335,6 +335,7 @@ const propertyValuesInputSchema = z
   .strictObject({
     propertyName: z
       .string()
+      .trim()
       .min(1)
       .max(200)
       .describe("Property name from newegg_subcategory_properties, e.g. Costume_Gender."),
@@ -342,7 +343,7 @@ const propertyValuesInputSchema = z
       .optional()
       .describe("Omit to read the property across every subcategory it applies to."),
     limit: limitSchema.describe(
-      `Maximum values returned per property (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`,
+      `Maximum properties returned, and maximum values returned per property (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`,
     ),
   })
   .describe("The property whose allowed values to read.");
@@ -362,6 +363,8 @@ const propertyValuesOutputSchema = z.object({
       truncated: z.boolean(),
     }),
   ),
+  totalCount: z.number(),
+  truncated: z.boolean(),
   correlationId: z.string(),
   rateLimit: rateLimitOutputSchema.optional(),
 });
@@ -377,7 +380,7 @@ async function propertyValuesHandler(
     const result = await ctx.client.reference.listPropertyValues(listInput);
     return okResult({
       marketplace: result.marketplace,
-      properties: result.properties.map((property) => ({
+      properties: result.properties.slice(0, limit).map((property) => ({
         subcategoryId: property.subcategoryId,
         subcategoryName: property.subcategoryName,
         propertyName: property.propertyName,
@@ -388,6 +391,8 @@ async function propertyValuesHandler(
         valueCount: property.values.length,
         truncated: property.values.length > limit,
       })),
+      totalCount: result.properties.length,
+      truncated: result.properties.length > limit,
       correlationId: result.correlationId,
       rateLimit: serializeRateLimit(result.rateLimit),
     });
@@ -404,7 +409,7 @@ export const propertyValuesTool: ToolDefinition<
   title: "List Newegg property values",
   description:
     "Get Subcategory Property Values: the allowed values of one item property, per subcategory. " +
-    "Values are capped per property at `limit` with valueCount and truncated reported. Newegg " +
+    "Properties are capped at `limit` (totalCount and truncated reported) and values per property too (valueCount and truncated per property). Newegg " +
     "allows 100 requests/hour. Read-only.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: propertyValuesInputSchema,

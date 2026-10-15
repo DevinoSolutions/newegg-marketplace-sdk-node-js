@@ -288,7 +288,7 @@ export function parseSubcategories(json: unknown, correlationId: string): Parsed
       industryName: text(getField(row, "IndustryName")),
       subcategoryId,
       subcategoryName: text(getField(row, "SubcategoryName")),
-      enabled: asBoolean(getField(row, "Enabled")) ?? false,
+      enabled: asBoolean(getField(row, "Enabled")),
     });
   }
   return { countryCode: text(getField(body, "CountryCode")), subcategories };

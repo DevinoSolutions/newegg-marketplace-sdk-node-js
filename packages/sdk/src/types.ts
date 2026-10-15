@@ -2262,7 +2262,8 @@ export interface SubcategoryStatus {
   industryName?: string;
   subcategoryId: number;
   subcategoryName?: string;
-  enabled: boolean;
+  /** Undefined when Newegg sent no (or an unparseable) `Enabled`; never assumed `false`. */
+  enabled?: boolean;
 }
 
 /** Result of {@link ReferenceApi.listSubcategories}. */

@@ -1457,7 +1457,7 @@ export interface SubcategoryStatus {
   industryName?: string;
   subcategoryId: number;
   subcategoryName?: string;
-  enabled: boolean;
+  enabled?: boolean; // undefined when Newegg sent none / an unparseable value
 }
 export interface SubcategoriesResult {
   marketplace: NeweggMarketplace;

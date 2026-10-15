@@ -360,6 +360,18 @@ describe("reference.listSubcategories", () => {
     });
   });
 
+  it("leaves enabled undefined when Enabled is missing or garbled, never assuming false", async () => {
+    const rows = [
+      { SubcategoryID: "1", SubcategoryName: "A", Enabled: "1" },
+      { SubcategoryID: "2", SubcategoryName: "B" },
+      { SubcategoryID: "3", SubcategoryName: "C", Enabled: "maybe" },
+      { SubcategoryID: "4", SubcategoryName: "D", Enabled: "0" },
+    ];
+    const { client } = makeClient("ca", route("PUT", paths.subcategoryStatus, reply(rows)));
+    const result = await client.reference.listSubcategories();
+    expect(result.subcategories.map((s) => s.enabled)).toEqual([true, undefined, undefined, false]);
+  });
+
   it("reads a single-object XML-style wrapper", async () => {
     const { client } = makeClient(
       "ca",

@@ -324,10 +324,59 @@ describe("newegg_property_values", () => {
           truncated: true,
         },
       ]);
+      expect(res.json).toMatchObject({ totalCount: 1, truncated: false });
       expect(harness.calls[0]!.bodyJson).toEqual({
         OperationType: "GetSellerPropertyValueRequest",
         RequestBody: { SubcategoryID: "1045", PropertyName: "Costume_Gender" },
       });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("caps the properties array at limit too, reporting totalCount and truncated", async () => {
+    const rows = [1001, 1002, 1003].map((id) => ({
+      ...valueRows(["Red"])[0]!,
+      SubcategoryID: String(id),
+    }));
+    const harness = await startHarness({
+      routes: [route("PUT", VALUE_ROUTE, wrapped({ PropertyInfoList: rows }))],
+    });
+    try {
+      const res = await callTool(harness.mcp, "newegg_property_values", {
+        propertyName: "Costume_Gender",
+        limit: 2,
+      });
+      expect(res.isError).toBe(false);
+      expect(res.json).toMatchObject({ totalCount: 3, truncated: true });
+      expect(
+        (res.json.properties as Array<{ subcategoryId: number }>).map((p) => p.subcategoryId),
+      ).toEqual([1001, 1002]);
+      const all = await callTool(harness.mcp, "newegg_property_values", {
+        propertyName: "Costume_Gender",
+      });
+      expect(all.json).toMatchObject({ totalCount: 3, truncated: false });
+      expect(all.json.properties).toHaveLength(3);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("trims the property name before validating and sending", async () => {
+    const harness = await startHarness({
+      routes: [route("PUT", VALUE_ROUTE, wrapped({ PropertyInfoList: [] }))],
+    });
+    try {
+      const ok = await callTool(harness.mcp, "newegg_property_values", {
+        propertyName: "  Costume_Gender  ",
+      });
+      expect(ok.isError).toBe(false);
+      expect(harness.calls[0]!.bodyJson).toMatchObject({
+        RequestBody: { PropertyName: "Costume_Gender" },
+      });
+      const blank = await callTool(harness.mcp, "newegg_property_values", { propertyName: "   " });
+      expect(blank.isError).toBe(true);
+      expect(harness.calls).toHaveLength(1);
     } finally {
       await harness.close();
     }

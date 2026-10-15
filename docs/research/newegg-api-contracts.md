@@ -2607,7 +2607,7 @@ empty `GetItemSubcategory: {}` (the pages do not say whether the object may be a
 
 Response `OperationType: "GetSellerSubcategoryResponse"`, `ResponseBody.SubcategoryList > Subcategory[]`
 with `IndustryCode`, `IndustryName`, `SubcategoryID` (integer, a string in JSON), `SubcategoryName` and
-`Enabled` (`"0"`/`"1"`); the V2 response adds `ResponseBody.CountryCode`. The unfiltered list covers every
+`Enabled` (`"0"`/`"1"`; an absent or unparseable value yields `enabled: undefined`, never `false`); the V2 response adds `ResponseBody.CountryCode`. The unfiltered list covers every
 Newegg subcategory and can be large (the MCP tool caps it, §19.7).
 
 ### 19.5 Get Subcategory Properties (READ)
