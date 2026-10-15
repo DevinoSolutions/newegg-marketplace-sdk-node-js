@@ -228,8 +228,9 @@ value reads are `PUT` requests but only read; the SDK and the MCP tools (`newegg
 `newegg_industries_list`, `newegg_subcategories_list`, `newegg_subcategory_properties`,
 `newegg_property_values`) are always available. `countryCode` on `listSubcategories` (the
 international variant) is Newegg.com only. Get Warehouse List and Get Subcategory Status v1.1 are not
-implemented (their documentation pages are unusable; see contracts §19.1). Newegg limits Get
-Subcategory Status, Properties and Property Values to 100 requests per hour, so cache the results.
+implemented (their documentation pages are unusable; see contracts §19.1). Get Subcategory Status, Properties and
+Property Values share one small request budget, and the live rate-limit header reports less than
+the docs state (contracts §19.1), so cache the results.
 
 ## Reports (settlement, daily inventory, daily price)
 

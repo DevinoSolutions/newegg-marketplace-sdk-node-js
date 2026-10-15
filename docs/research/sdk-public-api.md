@@ -1436,7 +1436,7 @@ export interface Industry {
   name?: string;
 }
 export interface ListIndustriesInput {
-  industryCode?: string; // omit for every industry; unknown code => DF008
+  industryCode?: string; // omit for every industry; unknown code => empty list (contracts §19.3)
 }
 export interface IndustriesResult {
   marketplace: NeweggMarketplace;

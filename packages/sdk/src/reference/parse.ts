@@ -326,19 +326,21 @@ export function parseSubcategoryProperties(
  */
 export function parsePropertyValues(json: unknown, correlationId: string): PropertyValues[] {
   const body = unwrapReference(json, correlationId);
-  const merged = new Map<string, PropertyValues>();
+  const merged = new Map<string, { entry: PropertyValues; seen: Set<string> }>();
   for (const row of listItems(getField(body, "PropertyInfoList"), "PropertyInfo")) {
     const fields = parsePropertyFields(row);
     if (fields === undefined) continue;
     const key = `${fields.subcategoryId ?? ""}|${fields.propertyName}`;
-    let entry = merged.get(key);
-    if (entry === undefined) {
-      entry = { ...fields, values: [] };
-      merged.set(key, entry);
+    let slot = merged.get(key);
+    if (slot === undefined) {
+      slot = { entry: { ...fields, values: [] }, seen: new Set() };
+      merged.set(key, slot);
     }
     for (const value of stringList(getField(row, "PropertyValueList"), "PropertyValue")) {
-      if (!entry.values.includes(value)) entry.values.push(value);
+      if (slot.seen.has(value)) continue;
+      slot.seen.add(value);
+      slot.entry.values.push(value);
     }
   }
-  return [...merged.values()];
+  return [...merged.values()].map((slot) => slot.entry);
 }

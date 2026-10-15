@@ -2530,7 +2530,8 @@ SellerID, ResponseBody }` in the JSON ones; `IsSuccess` is the string `"true"` i
   lists (`ShippingDestinationList`, `PropertyValueList`) are arrays of bare strings.
 - Error bodies: JSON array `[{"Code":"DF008","Message":"Invalid industry code ABC"}]` or the XML
   `<Errors><Error><Code>…` form (§1); `errors/parse-upstream.ts` normalizes both, plus plain text. The pages
-  list `DF008` (invalid industry code; Get Industry List and Get Subcategory Status) and `DF009` (invalid
+  list `DF008` (invalid industry code; Get Industry List and Get Subcategory Status; see §19.3: not
+  reproduced live, live returns 200 with an empty list) and `DF009` (invalid
   subcategory ID; Get Subcategory Properties / Property Values) and defer HTTP errors to the shared
   "Failed Response Error Code List". 429 follows §3. The SDK additionally throws `NeweggApiError` if a
   `200` body is itself a bare error list, so an error can never read as an empty result.
