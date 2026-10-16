@@ -1,0 +1,52 @@
+# Dependabot version updates.
+#
+# Security updates are separate from this file's `ignore` rules: Dependabot
+# security PRs still open for vulnerable versions even when a version-update
+# ignore rule below would otherwise skip them.
+#
+# Toolchain pins (see CLAUDE.md) need owner sign-off to move, so semver-major
+# bumps of the pinned tools are ignored, and TypeScript minors too (pin ~6.0.3).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/" # npm workspaces: the root lockfile covers packages/* and examples/*
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+      production-dependencies:
+        dependency-type: production
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: zod
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@modelcontextprotocol/sdk"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: vitest
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitest/coverage-v8"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: eslint
+        update-types: ["version-update:semver-major"]
+      - dependency-name: typescript-eslint
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      github-actions:
+        patterns: ["*"]
