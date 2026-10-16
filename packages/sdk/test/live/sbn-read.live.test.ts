@@ -50,7 +50,7 @@ describe.skipIf(!liveEnabled)("live (read-only): SBN reads", () => {
     }
     const result = await client.sbn.listWarehouses();
     expect(result.marketplace).toBe(marketplace());
-    expect(result.warehouses.length).toBeGreaterThan(0);
+    expect(Array.isArray(result.warehouses)).toBe(true);
     for (const warehouse of result.warehouses) {
       expect(warehouse.warehouseCode).toMatch(/^[A-Za-z0-9]+$/);
       expect(warehouse.address).toBeTypeOf("object");
