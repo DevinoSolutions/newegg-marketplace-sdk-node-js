@@ -2443,7 +2443,7 @@ an e-mail) and the label tracking number / URL (see `docs/mcp-security.md`).
 
 - `servicemgmt/rma/rmainfo` on US (no prefix) and `b2b/` accepts version `320`, the nested `PageInfo` form and
   `YYYY-MM-DD` criteria dates (2020-01-01 to 2026-12-31). The `servicemgmt` paths on B2B are real.
-- Both RMA lists were populated (a small non-empty page on each, `rma.get` round-tripped), the courtesy
+- The RMA lists on US and B2B were populated (a small non-empty page on each, `rma.get` round-tripped), the courtesy
   refund list and the request-status list were empty on US, B2B and CAN, and the normalized currency was
   `USD` on US and B2B. The RMA count was identical on all three platforms; that was observed, not explained
   (whether the seller account shares RMAs across platforms is not established).
