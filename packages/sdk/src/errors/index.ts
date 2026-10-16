@@ -1,4 +1,5 @@
 import type { NeweggMarketplace, RateLimitInfo } from "../types.js";
+import { redactUrlCredentials, sanitizeRaw } from "./redact.js";
 
 /** Machine-readable category shared by every SDK error. */
 export type NeweggErrorCode =
@@ -27,15 +28,16 @@ export interface NeweggErrorInit {
   neweggRequestId?: string;
   correlationId?: string;
   retryable?: boolean;
-  /** Sanitized, JSON-safe. Never contains credentials. */
+  /** JSON-safe. URL credentials are redacted by the constructor. */
   details?: unknown;
   cause?: unknown;
 }
 
 /**
  * Base class for every error thrown by the SDK. All fields are JSON-safe; `toJSON`
- * never emits credential material (message strings are authored by the SDK and the
- * `details` payload is sanitized before construction).
+ * never emits credential material. As a backstop for upstream text that reaches an error by any
+ * route, the constructor strips `user:password@` from every URL in `message` and `details`
+ * (Newegg's report/label file links are `ftp://user:password@host/...`).
  */
 export class NeweggError extends Error {
   readonly code: NeweggErrorCode;
@@ -47,7 +49,10 @@ export class NeweggError extends Error {
   readonly details?: unknown;
 
   constructor(code: NeweggErrorCode, message: string, init: NeweggErrorInit = {}) {
-    super(message, init.cause !== undefined ? { cause: init.cause } : undefined);
+    super(
+      redactUrlCredentials(message),
+      init.cause !== undefined ? { cause: init.cause } : undefined,
+    );
     this.name = "NeweggError";
     this.code = code;
     this.httpStatus = init.httpStatus;
@@ -55,7 +60,7 @@ export class NeweggError extends Error {
     this.neweggRequestId = init.neweggRequestId;
     this.correlationId = init.correlationId;
     this.retryable = init.retryable ?? false;
-    this.details = init.details;
+    this.details = init.details === undefined ? undefined : sanitizeRaw(init.details);
   }
 
   toJSON(): Record<string, unknown> {

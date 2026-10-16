@@ -5,28 +5,9 @@
  */
 import { asArray, asString, getField, isRecord } from "../schemas/wire.js";
 
-const URL_WITH_CREDENTIALS = /\b([a-z][a-z0-9+.-]*):\/\/[^\s/@"'<>]*@/gi;
-
-/** Replaces the `user:password@` part of any URL inside `text` with `***@`. */
-export function redactUrlCredentials(text: string): string {
-  return text.replace(URL_WITH_CREDENTIALS, "$1://***@");
-}
-
-/**
- * Deep-copies a JSON-ish value with every string run through {@link redactUrlCredentials}.
- * Used for every `raw` payload surfaced by the reports API so `includeRaw` can never leak
- * the download URL's embedded credentials.
- */
-export function sanitizeRaw(value: unknown): unknown {
-  if (typeof value === "string") return redactUrlCredentials(value);
-  if (Array.isArray(value)) return value.map(sanitizeRaw);
-  if (isRecord(value)) {
-    const out: Record<string, unknown> = {};
-    for (const [key, inner] of Object.entries(value)) out[key] = sanitizeRaw(inner);
-    return out;
-  }
-  return value;
-}
+// The redaction helpers live in errors/ (NeweggError applies them centrally); re-exported here
+// so the report code and its tests keep their import path.
+export { redactUrlCredentials, sanitizeRaw } from "../errors/redact.js";
 
 /** Parsed description of a report file URL. */
 export interface ReportFileLocation {

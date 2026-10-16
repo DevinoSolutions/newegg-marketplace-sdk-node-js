@@ -29,6 +29,11 @@ class NeweggError extends Error {
 `SecretKey`), `apiKey`, and `secretKey` never appear in an error, its `details`, or any
 serialized form (behavioural requirement 7).
 
+Upstream error text is credential-redacted too: Newegg's report and label file links are
+`ftp://user:password@host/...`, so in the error `message`, in `details` (including the parsed
+`entries`), and in `toJSON()` any `user:password@` in a URL is replaced by `***@` (the host and
+path stay readable).
+
 ---
 
 ## Class hierarchy
