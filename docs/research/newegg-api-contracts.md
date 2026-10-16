@@ -2488,8 +2488,9 @@ reads (§18), the verb does not imply a write.
   function: Newegg's own SBN inbound warehouses (`PUT {prefix}sbnmgmt/inboundshipment/warehouse`, body
   `{ OperationType: "GetWarehouseRequest", RequestBody: { WarehouseCode } }`, US and B2B only, 1,000/min),
   whose JSON example `GET`s a different URL (`…/inboundshipment/shipmentlist`), so even its verb and path
-  are inconsistent on the page. The seller-fulfilled variant has no retrievable page and the SBN one is
-  internally contradictory, so neither is implemented. Seller Status Check (§19.2) already returns the
+  are inconsistent on the page. The seller-fulfilled variant has no retrievable page and is not implemented. The SBN
+  one is implemented as `client.sbn.listWarehouses` (§21.5), with its verb and path marked **ASSUMPTION**
+  because of that inconsistency. Seller Status Check (§19.2) already returns the
   seller's fulfillment-center countries and ship-to destinations.
 - **Get Subcategory Status v1.1.** The index lists it ("search by category ID and website catalog name") and
   links `…/get-subcategory-status-v1-1/`, which answers `404` (2026-10-15, with and without the trailing
@@ -2964,3 +2965,218 @@ operations.
 - That omitting `UnOpen` / `FileUrls` / `Memo` for reasons other than 3 / 4 / 6 / 8 is accepted.
 - The 100/hour and 1,000/hour limits on the pages (the live headers on other reads disagree with their
   pages, §19.1).
+
+## 21. SBN (Shipped by Newegg) — inbound shipment reads
+
+Extracted 2026-10-15 from the official SBN pages, all under
+`https://developer.newegg.com/newegg_marketplace_api/sbn_shipped_by_newegg_management/` (the section lists
+seven functions; every page was last updated 2018-10-15). The wire domain is `sbnmgmt/inboundshipment/`
+(the standard prefix applies: none on Newegg.com, `b2b/`). **Every page lists Newegg.com and
+Neweggbusiness.com only; Canada is not listed**, so the SDK fails on CAN with
+`UnsupportedMarketplaceOperationError` before sending (`platform/sbn.ts`, ADR 0002). Nothing here was called
+live: the shapes below are the pages' samples, which contradict themselves in places (flagged below). Every
+example uses fictional identifiers.
+
+### 21.1 Operation inventory and classification
+
+| Function                        | Page (`sbn_shipped_by_newegg_management/…`) | Verb (table)        | Path (after prefix)                                  | Rate limit | Class     | In SDK |
+| ------------------------------- | ------------------------------------------- | ------------------- | ---------------------------------------------------- | ---------- | --------- | ------ |
+| Get Inbound Shipment List       | `get_inbound_shipment_list/`                | PUT                 | `sbnmgmt/inboundshipment/shipmentlist`               | 500/hr     | **READ**  | yes    |
+| Get Inbound Shipment Status Req | `get_inbound_shipment_status_request/`      | PUT                 | `sbnmgmt/inboundshipment/shipmentstatus`             | 1,000/min  | **READ**  | yes    |
+| Get Inbound Shipment Req Result | `get_inbound_shipment_request_result/`      | GET                 | `sbnmgmt/inboundshipment/shipmentresult/{requestid}` | 500/hr     | **READ**  | yes    |
+| Get Warehouse List              | `get-warehouse-list/`                       | PUT                 | `sbnmgmt/inboundshipment/warehouse`                  | 1,000/min  | **READ**  | yes    |
+| Get Inbound Shipment Plan Sugg. | `get_inbound_shipment_plan_suggestion/`     | PUT                 | `sbnmgmt/inboundshipment/plansuggestion`             | 1,000/min  | unclear   | **no** |
+| Submit Create Inbound Shipment  | `submit_create_inbound_shipment_request/`   | POST (examples PUT) | `sbnmgmt/inboundshipment/shipmentrequest`            | 100/min    | **WRITE** | **no** |
+| Submit Void Inbound Shipment    | `submit_void_inbound_shipment_request/`     | POST (examples PUT) | `sbnmgmt/inboundshipment/shipmentrequest`            | 100/min    | **WRITE** | **no** |
+
+Classification follows what each page says it does. The three `PUT` reads carry a request body and, like
+order info (§10), Get Item Price (§15), the RMA reads (§18) and the reference reads (§19), the verb does not
+imply a write. Create and Void share one URL and one `OperationType` (`SubmitShipmentRequest`); they are
+WRITES and deliberately not implemented. They are classified in the live read-only guard
+(`scripts/check-live-readonly.ts`, `scripts/live-readonly-ast.ts`) so they stay blocked in live tests.
+
+**Skipped, with the reason:**
+
+- **Get Inbound Shipment Plan Suggestion** (`PUT …/plansuggestion`, `OperationType: GetPlanSuggestionRequest`,
+  body `PlanSuggestion > ItemList > Item { SellerPartNumber, PlannedQuantity, QuantityPerCarton? }`, errors
+  `SBN002` invalid seller part number / `SBN003` item is Shipped-by-Seller). It reads like a pure
+  computation, but the page never says it has no side effects (it is a `PUT`, its description is truncated,
+  and the request/response examples disagree with each other: quantity 32 vs 30, `NumberofCartons` missing
+  from some JSON rows, a warehouse code `12` outside the documented list). Not "clearly a read", so it is not
+  built and is blocked in the live guard until an owner-authorized probe shows it is side-effect free.
+- **Create / Void Inbound Shipment**: writes (see above).
+
+### 21.2 Get Inbound Shipment List
+
+`PUT {prefix}sbnmgmt/inboundshipment/shipmentlist?sellerid=…`. **ASSUMPTION (verb):** the Resource table and
+the XML example say `PUT`; the JSON example's request line says `GET`. The SDK sends `PUT` with a body (both
+agree a body exists). The JSON request sample nests paging; the field table lists it flat. The SDK follows
+the sample:
+
+```json
+{
+  "OperationType": "GetShipmentListRequest",
+  "RequestBody": {
+    "PageInfo": { "PageIndex": 1, "PageSize": 10 },
+    "KeywordsType": 1,
+    "KeywordsValue": "2740139",
+    "Status": 0,
+    "LastUpdateDateFrom": "2013-01-01 00:00:00",
+    "LastUpdateDateTo": "2013-07-07 00:00:00"
+  }
+}
+```
+
+| Field                             | Notes                                                                                                                                                                                                           |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PageInfo.PageIndex` / `PageSize` | Required; page size max 100. The SDK always sends both (default 1 / 100).                                                                                                                                       |
+| `KeywordsType`                    | 0 All (default) · 1 Shipment ID · 2 Newegg Item Number · 3 Seller Part Number.                                                                                                                                  |
+| `KeywordsValue`                   | String matched per `KeywordsType`.                                                                                                                                                                              |
+| `Status`                          | 0 All (default) · 1 Preparing · 2 Shipped · 3 Received · 4 Partially Received · 5 Manually closed · 6 Voided.                                                                                                   |
+| `LastUpdateDateFrom` / `To`       | Pacific time. The "Acceptable Date Format" page lists `YYYY-MM-DD HH:MM:SS`, `MM/DD/YYYY`, … and states no zone rule. Both empty = the last 30 days. The SDK renders a `Date` as `YYYY-MM-DD HH:mm:ss` Pacific. |
+
+Response (JSON sample; XML nests `ShipmentList > Shipment`, `PackageList > Package`, `ItemList > Item`):
+
+```json
+{
+  "IsSuccess": true,
+  "OperationType": "GetShipmentListResponse",
+  "SellerID": "A006",
+  "ResponseBody": {
+    "ShipmentList": [
+      {
+        "ShipmentID": "2740139",
+        "Status": "Ready to ship",
+        "CreateDate": "06/06/2013 17:02:31",
+        "LastEditDate": "06/07/2013 11:31:00",
+        "ShipFrom": "Test_Store",
+        "ShipToWarehouseCode": "14",
+        "ShipToAddress1": "…",
+        "ShipToCityName": "…",
+        "ShipToStateCode": "NJ",
+        "ShipToZipCode": "…",
+        "ShipToCountryCode": "USA",
+        "ShippingMethodCode": 1,
+        "ShippingCarrierCode": 99,
+        "OtherCarrierName": "…",
+        "PackageList": [
+          {
+            "TrackingNumber": "…",
+            "PackageWeight": 0,
+            "PackageLength": 0,
+            "PackageHeight": 0,
+            "PackageWidth": 0
+          }
+        ],
+        "ItemList": [{ "SellerPartNumber": "…", "Quantity": 36, "NumberofPackage": 2 }]
+      }
+    ]
+  }
+}
+```
+
+`Status` text values: Creating, Preparing, Ready to ship, Shipped, Partially Received, Received, Void,
+Manually closed (a shipment older than 3 months and still not received). `ShippingMethodCode`: 1 small parcel,
+2 less-than-truckload (the JSON sample shows `0`; the SDK leaves any other value undefined).
+`ShippingCarrierCode`: for method 1, 101 DHL · 102 FedEx · 103 UPS · 104 USPS · 105 Newegg partnered carrier
+(UPS) · 99 other (named in `OtherCarrierName`); method 2 only 99. Warehouse codes listed: 06 Tennessee Bulk ·
+07 California Small · 08 California Bulk Item · 10 New Jersey Bulk · 14 New Jersey Small. **The response has
+no pagination fields** (no total, no page echo): a full page may have more, so the SDK echoes the requested
+paging and callers page until a short page. The field table documents the package fields flat on the shipment;
+the SDK reads `PackageList` and falls back to the flat fields.
+
+### 21.3 Get Inbound Shipment Status Request
+
+`PUT {prefix}sbnmgmt/inboundshipment/shipmentstatus?sellerid=…`. Status of the create/void SUBMISSIONS (not
+of the shipments, which §21.2 lists). The JSON sample nests the filters (the field table lists them flat; the
+SDK follows the sample, as the Feed Status read does, §7.5):
+
+```json
+{
+  "OperationType": "GetShipmentStatusRequest",
+  "RequestBody": {
+    "GetRequestStatus": {
+      "RequestIDList": { "RequestID": ["ABC123"] },
+      "ActionCode": 1,
+      "MaxCount": 100,
+      "RequestStatus": "ALL",
+      "RequestDateFrom": "…",
+      "RequestDateTo": "…"
+    }
+  }
+}
+```
+
+`RequestID` (when set, every other filter is ignored) · `ActionCode` 0 All (default) / 1 Create / 2 Void ·
+`MaxCount` default 100, values above 100 still return 100 · `RequestStatus` ALL (default), SUBMITTED,
+IN_PROGRESS, FINISHED, CANCELLED · `RequestDateFrom`/`To` Pacific time. **ASSUMPTION:** absent filters may be
+omitted (the SDK sends only the filters given; the XML sample sends empty date elements).
+
+Response: `ResponseBody > ResponseList[]` (XML `ResponseList > ResponseInfo`) of `{ RequestId, ActionCode,
+RequestDate "MM/DD/YYYY HH:MM:SS", RequestStatus }` plus `Memo` (error detail; in the field table only). The
+key is spelled `RequestId` in the response and `RequestID` in the request; the SDK reads both.
+
+### 21.4 Get Inbound Shipment Request Result
+
+`GET {prefix}sbnmgmt/inboundshipment/shipmentresult/{requestid}?sellerid=…`, no body. Response
+(`IsSuccess` is the string `"true"` in the sample):
+
+```json
+{
+  "IsSuccess": "true",
+  "OperationType": "GetShipmentResultResponse",
+  "SellerID": "A006",
+  "ResponseBody": {
+    "RequestID": "ABC123",
+    "RequestDate": "07/14/2013 22:40:00",
+    "ProcessedDate": "07/14/2013 22:41:25",
+    "RequestStatus": "FINISHED",
+    "Shipment": {
+      "ShipmentID": 2740139,
+      "Label": [
+        { "LabelType": "ItemLabel", "LabelUrl": "ftp://…" },
+        { "LabelType": "PackageLabel", "LabelUrl": "ftp://…" },
+        { "LabelType": "PackingListLabel", "LabelUrl": "ftp://…" },
+        { "LabelType": "ShippingLabel", "LabelUrl": "ftp://…" }
+      ]
+    }
+  }
+}
+```
+
+XML wraps the labels in `Shipment > LabelURLList > Label` and carries an (empty in the sample) `ErrorList`.
+The field table spells the key `LabelURL` where the samples use `LabelUrl` (the SDK reads both) and lists
+`ErrorDescription`. The page shows no failed or in-progress example and documents only `FINISHED`.
+
+**Label URLs are treated as secrets. ASSUMPTION:** the samples show `ftp://` URLs, which for the report
+files (§17.5) embed `user:password@`. The SDK therefore never returns, logs or puts a label URL in an error:
+`SbnShipmentLabel` carries only `type`, `host` and `fileName`, `raw` is run through the report redactor, and
+the MCP tool maps the same fields. Downloading label files is out of scope for this PR (it would need the
+FTP downloader and a path check like the report files').
+**ASSUMPTION:** where `ErrorList` / `ErrorDescription` carry text it is surfaced as `errors[]`; the entry
+shape inside `ErrorList` is unknown (the SDK accepts bare strings or objects with
+`ErrorDescription` / `Description` / `Message`, optionally under `Error`).
+
+### 21.5 Get Warehouse List
+
+`PUT {prefix}sbnmgmt/inboundshipment/warehouse?sellerid=…`. This is Newegg's own SBN inbound-warehouse list
+(the page `seller_management/get-warehouse-list/` redirects to it, §19.1). **ASSUMPTION (verb and path):**
+the Resource table and the XML example say `PUT …/warehouse`; the JSON example's request line says
+`GET …/shipmentlist`, which looks like a copy-paste from §21.2 (the SDK uses the table). Body:
+`{ "OperationType": "GetWarehouseRequest", "RequestBody": { "WarehouseCode": "10" } }`. `WarehouseCode` is
+optional and **ASSUMPTION:** omitting it returns every warehouse (the page does not say; the SDK sends an
+empty `RequestBody`). Response: `ResponseBody > WarehouseList[]` (XML `WarehouseList > Warehouse`) of
+`{ WarehouseCode "10", AllowBulkItem 0|1, AllowSmallItem 0|1, ShipToAddress1/2, ShipToCityName,
+ShipToStateCode, ShipToZipCode, ShipToCountryCode }`.
+
+### 21.6 Wire quirks handled
+
+Numbers as strings or numbers (`ShipmentID` is a quoted string in the list sample and a bare number in the
+result sample); `IsSuccess` as boolean or string; single-element lists as objects with the XML inner key;
+empty lists as `""`; dates `MM/DD/YYYY HH:MM:SS` Pacific wall-clock (`platform/dates.ts`); a 200 whose body
+is a bare `[{ Code, Message }]` list becomes a `NeweggApiError`. Error bodies on non-2xx go through
+`errors/parse-upstream.ts`. The pages' "Failed Response Error Code List" is the only error reference.
+
+**ASSUMPTIONs (unverified, retire with a live read):** every verb and path above; the nested request
+shapes (§21.2, §21.3); that absent optional filters are accepted; the rate limits (the live headers on other
+reads disagree with their pages, §19.1); and that `ShippingMethodCode` takes only 1 or 2.

@@ -50,6 +50,14 @@ const WRITE_METHOD_NAMES: ReadonlySet<string> = new Set([
   "previewReject",
   "issue",
   "previewIssue",
+  // Shipped-by-Newegg inbound-shipment writes (contracts §21) - not implemented, reserved so a
+  // future method of this name forces a classification (and a live file may never name one).
+  "createShipment",
+  "previewCreateShipment",
+  "voidShipment",
+  "previewVoidShipment",
+  "createInboundShipment",
+  "voidInboundShipment",
   // Function.prototype helpers that re-bind or re-invoke a method without naming a write verb.
   "call",
   "apply",
@@ -70,6 +78,9 @@ const READ_ONLY_NAMESPACE_MEMBERS: Readonly<Record<string, readonly string[]>> =
     "listSubcategoryProperties",
     "listPropertyValues",
   ],
+  // Shipped-by-Newegg inbound-shipment READS (contracts §21), three via PUT. Create / Void Inbound
+  // Shipment are not in the SDK; their method names are in WRITE_METHOD_NAMES so they stay blocked.
+  sbn: ["listShipments", "getRequestStatus", "getRequestResult", "listWarehouses"],
   catalog: ["resolve", "submitLookup", "lookupStatus", "lookupResult"],
   reports: [
     "itemBasicInfo",

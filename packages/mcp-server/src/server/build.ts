@@ -62,6 +62,10 @@ import {
   subcategoriesListTool,
   subcategoryPropertiesTool,
   propertyValuesTool,
+  sbnShipmentsListTool,
+  sbnRequestStatusTool,
+  sbnRequestResultTool,
+  sbnWarehousesListTool,
   type Logger,
   type ToolContext,
   type ToolDefinition,
@@ -148,6 +152,13 @@ export function enabledToolNames(config: McpServerConfig): string[] {
     TOOL_NAMES.subcategoriesList,
     TOOL_NAMES.subcategoryProperties,
     TOOL_NAMES.propertyValues,
+  );
+  // Shipped-by-Newegg inbound-shipment reads (contracts §21) are always available (never write-gated).
+  names.push(
+    TOOL_NAMES.sbnShipmentsList,
+    TOOL_NAMES.sbnRequestStatus,
+    TOOL_NAMES.sbnRequestResult,
+    TOOL_NAMES.sbnWarehousesList,
   );
   // Catalog resolution is read-only (report submission mutates nothing; contracts §12.4).
   names.push(TOOL_NAMES.catalogResolve, TOOL_NAMES.catalogLookupStatus);
@@ -323,6 +334,10 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   registerToolDefinition(server, subcategoriesListTool, ctx);
   registerToolDefinition(server, subcategoryPropertiesTool, ctx);
   registerToolDefinition(server, propertyValuesTool, ctx);
+  registerToolDefinition(server, sbnShipmentsListTool, ctx);
+  registerToolDefinition(server, sbnRequestStatusTool, ctx);
+  registerToolDefinition(server, sbnRequestResultTool, ctx);
+  registerToolDefinition(server, sbnWarehousesListTool, ctx);
   registerToolDefinition(server, catalogResolveTool, ctx);
   registerToolDefinition(server, catalogLookupStatusTool, ctx);
   registerToolDefinition(server, reportsSettlementSummaryTool, ctx);

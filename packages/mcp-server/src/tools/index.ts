@@ -33,6 +33,12 @@ export {
   subcategoryPropertiesTool,
   propertyValuesTool,
 } from "./reference.js";
+export {
+  sbnShipmentsListTool,
+  sbnRequestStatusTool,
+  sbnRequestResultTool,
+  sbnWarehousesListTool,
+} from "./sbn.js";
 export { catalogResolveTool, catalogLookupStatusTool } from "./catalog.js";
 export {
   reportsSettlementSummaryTool,
