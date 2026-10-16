@@ -56,6 +56,7 @@ export interface NeweggClient {
   readonly rma: RmaApi; // RMA reads (contracts §18) + writes: submit / edit / process / reject (§20)
   readonly refunds: RefundsApi; // courtesy refund reads (§18) + issue (§20)
   readonly reference: ReferenceApi; // READ-only seller/category reference lookups (contracts §19)
+  readonly sbn: SbnApi; // READ-only Shipped-by-Newegg inbound shipment lookups (contracts §21); Newegg.com / B2B only
   readonly catalog: CatalogApi; // read-only catalog resolution (Item Lookup Report, contracts §12)
   readonly reports: ReportsApi; // read-only settlement / daily inventory / daily price reports (contracts §17)
   readonly listings: ListingsApi; // WRITE: existing-item listing creation (ITEM_DATA&v2 feed, contracts §13)
@@ -1669,6 +1670,149 @@ export interface ReferenceApi {
 }
 
 // ----------------------------------------------------------------------------
+// Shipped by Newegg (SBN) inbound-shipment reads (contracts §21; READ-only, none gated)
+// ----------------------------------------------------------------------------
+// Get Inbound Shipment List, Get Inbound Shipment Status Request, Get Inbound Shipment Request Result
+// and Get Warehouse List. Three are PUT on the wire; all are reads. Newegg.com and Newegg Business
+// only: on CAN every method throws UnsupportedMarketplaceOperationError before sending. Create / Void
+// Inbound Shipment (writes) and Get Inbound Shipment Plan Suggestion (not shown to be side-effect
+// free) are deliberately NOT implemented (contracts §21.1).
+export type SbnShipmentKeywordType = "all" | "shipmentId" | "neweggItemNumber" | "sellerPartNumber";
+export type SbnShipmentStatusFilter =
+  "all" | "preparing" | "shipped" | "received" | "partiallyReceived" | "manuallyClosed" | "voided";
+export type SbnRequestAction = "all" | "create" | "void";
+export type SbnRequestStatusFilter = "ALL" | "SUBMITTED" | "IN_PROGRESS" | "FINISHED" | "CANCELLED";
+
+export interface ListSbnShipmentsInput {
+  page?: number; // 1-based, default 1
+  pageSize?: number; // 1-100, default 100
+  keywordType?: SbnShipmentKeywordType; // default "all"
+  keyword?: string;
+  status?: SbnShipmentStatusFilter; // default "all"
+  updatedFrom?: Date | string; // Date -> Pacific wall-clock; both bounds empty = last 30 days
+  updatedTo?: Date | string;
+}
+export interface SbnAddress {
+  address1?: string;
+  address2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  country?: string;
+}
+export interface SbnShipmentPackage {
+  trackingNumber?: string;
+  weight?: number;
+  length?: number;
+  height?: number;
+  width?: number;
+}
+export interface SbnShipmentItem {
+  sellerPartNumber?: string;
+  quantity?: number;
+  numberOfPackages?: number;
+}
+export interface SbnShipment {
+  shipmentId: string;
+  status?: string; // "Preparing" | "Ready to ship" | "Shipped" | "Received" | "Void" ... (as sent)
+  createdAt?: { raw: string; iso?: string };
+  lastEditedAt?: { raw: string; iso?: string };
+  shipFrom?: string;
+  shipToWarehouseCode?: string;
+  shipTo: SbnAddress;
+  shippingMethod?: "smallParcel" | "lessThanTruckload";
+  carrierCode?: number; // 101 DHL, 102 FedEx, 103 UPS, 104 USPS, 105 Newegg UPS, 99 other
+  carrier?: string;
+  packages: SbnShipmentPackage[];
+  items: SbnShipmentItem[];
+}
+export interface SbnShipmentsResult {
+  marketplace: NeweggMarketplace;
+  page: number; // echo of the request: the response has no total, a full page may have more
+  pageSize: number;
+  shipments: SbnShipment[];
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+export interface GetSbnRequestStatusInput {
+  requestIds?: string[]; // when set, Newegg ignores every other filter
+  action?: SbnRequestAction; // default "all"
+  maxCount?: number; // 1-100, default 100
+  requestStatus?: SbnRequestStatusFilter; // default "ALL"
+  requestDateFrom?: Date | string;
+  requestDateTo?: Date | string;
+}
+export interface SbnRequestStatusEntry {
+  requestId: string;
+  action?: "create" | "void";
+  requestedAt?: { raw: string; iso?: string };
+  status?: string; // SUBMITTED | IN_PROGRESS | FINISHED | CANCELLED
+  memo?: string;
+}
+export interface SbnRequestStatusResult {
+  marketplace: NeweggMarketplace;
+  requests: SbnRequestStatusEntry[];
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+// The label download URL is credential-bearing (like report file URLs): never exposed, only host + file name.
+export interface SbnShipmentLabel {
+  type?: string;
+  host?: string;
+  fileName?: string;
+}
+export interface SbnRequestResult {
+  marketplace: NeweggMarketplace;
+  requestId: string;
+  requestedAt?: { raw: string; iso?: string };
+  processedAt?: { raw: string; iso?: string };
+  status?: string;
+  shipmentId?: string;
+  labels: SbnShipmentLabel[];
+  errors: string[];
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown; // sanitized: credential-bearing URLs redacted
+}
+
+export interface ListSbnWarehousesInput {
+  warehouseCode?: string;
+} // 1-3 digits; omit = all (ASSUMPTION)
+export interface SbnWarehouse {
+  warehouseCode: string;
+  allowBulkItem?: boolean;
+  allowSmallItem?: boolean;
+  address: SbnAddress;
+}
+export interface SbnWarehousesResult {
+  marketplace: NeweggMarketplace;
+  warehouses: SbnWarehouse[];
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+export interface SbnApi {
+  listShipments(
+    input?: ListSbnShipmentsInput,
+    options?: RequestOptions,
+  ): Promise<SbnShipmentsResult>; // 500/hr
+  getRequestStatus(
+    input?: GetSbnRequestStatusInput,
+    options?: RequestOptions,
+  ): Promise<SbnRequestStatusResult>; // 1,000/min
+  getRequestResult(requestId: string, options?: RequestOptions): Promise<SbnRequestResult>; // 500/hr
+  listWarehouses(
+    input?: ListSbnWarehousesInput,
+    options?: RequestOptions,
+  ): Promise<SbnWarehousesResult>; // 1,000/min
+}
+
+// ----------------------------------------------------------------------------
 // listings (existing item creation — contracts §13; WRITE surface)
 // ----------------------------------------------------------------------------
 // create() submits an ITEM_DATA data feed with the bare `&v2` template flag (BatchItemCreation).
@@ -2014,8 +2158,9 @@ export interface RecordedCall {
     name). Wire numbers/flags (strings, `"0"/"1"`), single-vs-array lists, `""` for an empty list and
     the Newegg.com `FufillmentCenterList` (sic) spelling are normalized, never thrown on; unknown
     status/membership codes degrade to `"unknown"`. A `200` whose body is a bare `[{Code, Message}]`
-    list throws `NeweggApiError` rather than reading as an empty result. Get Warehouse List and Get
-    Subcategory Status v1.1 are not implemented (contracts §19.1).
+    list throws `NeweggApiError` rather than reading as an empty result. The seller-fulfilled Get
+    Warehouse List and Get Subcategory Status v1.1 are not implemented (contracts §19.1); the SBN
+    warehouse list is `sbn.listWarehouses` (item 17).
 16. **RMA and courtesy refund writes (non-idempotent, money-moving)**: `rma.submit` / `edit` /
     `process` (receive) / `reject` and `refunds.issue` (contracts §20) each have a read-only
     `preview*` twin that reads the order, its RMAs and its courtesy refunds and returns
@@ -2035,6 +2180,18 @@ export interface RecordedCall {
     The checks fail closed (unknown order total, unreconcilable prior refunds, or a partial read of the
     order's RMAs / refunds block). A caller abort after dispatch is indeterminate too; a replacement RMA
     previews a `DiffShippedByPartyAction` warning (the field is never sent).
+17. **SBN inbound shipments (reads)**: `sbn.listShipments`/`getRequestStatus`/`getRequestResult`/
+    `listWarehouses` never mutate (contracts §21); the list, status and warehouse reads are `PUT` on the
+    wire, which does not make them writes. Newegg.com and Newegg Business only: the availability check
+    lives in `platform/sbn.ts` and `ca` throws `UnsupportedMarketplaceOperationError` before any request.
+    Inputs are validated before sending (paging 1-100, request ids 1-64 alphanumeric, 1-3 digit
+    warehouse code, valid dates). The shipment list carries no total, so `page`/`pageSize` echo the
+    request and a full page may have more. Label download URLs of a request result may embed credentials
+    (the samples show `ftp://` URLs, like the report files, §17.5): they are NEVER returned, logged or put
+    in an error: `labels` holds `type`, `host` and `fileName` only and `raw` is redacted. Create / Void
+    Inbound Shipment (writes) and Get Inbound Shipment Plan Suggestion (not shown to be side-effect free)
+    are not implemented; their wire markers are blocked in the live read-only guard. Every verb/path is
+    from the official pages and un-probed (contracts §21 **ASSUMPTION**s).
 
 ```
 

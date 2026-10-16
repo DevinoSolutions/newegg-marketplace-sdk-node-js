@@ -47,6 +47,14 @@ const fail = (msg: string): void => {
 // NOTE (2026-10-15): the sellermgmt reference reads (client.reference.*: Seller Status Check, Get
 // Industry List, Get Subcategory Status / Properties / Property Values, contracts §19) are READS,
 // four of them via PUT; they are deliberately absent from the list below.
+//
+// NOTE (2026-10-15): the Shipped-by-Newegg reads (client.sbn.listShipments / getRequestStatus /
+// getRequestResult / listWarehouses = Get Inbound Shipment List / Status Request / Request Result,
+// Get Warehouse List, contracts §21) are READS, three via PUT, and are deliberately NOT matched.
+// Create and Void Inbound Shipment are WRITES that share one endpoint (`shipmentrequest`); that
+// endpoint, their OperationType and any `sbn.<create|void|...>` method are listed below. Get
+// Inbound Shipment Plan Suggestion is not classified as a read (its page does not say it has no
+// side effects, §21.1), so it stays blocked until it is.
 const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /\.updateItem\s*\(/, why: "inventory write (updateItem)" },
   { re: /\.updateMany\s*\(/, why: "inventory write (updateMany)" },
@@ -90,6 +98,27 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   {
     re: /\b(EditRMAInfo|ReceiveRMAInfo|RejectRMAInfo|AutoReceiveMark|TotalRefundAmount|SourceSONumber)\b/,
     why: "raw RMA/courtesy-refund write body element (write)",
+  },
+  // Shipped-by-Newegg inbound-shipment writes (contracts §21). The reads (client.sbn.listShipments /
+  // getRequestStatus / getRequestResult / listWarehouses) are deliberately NOT matched. Create and Void
+  // Inbound Shipment share one URL (`shipmentrequest`) and one OperationType (`SubmitShipmentRequest`);
+  // the SDK method names (and preview twins) and the raw wire markers are listed so none can land in a
+  // live test. Plan Suggestion is unclassified (not shown to be side-effect free).
+  {
+    re: /\bsbn\s*\??\.\s*(preview)?(create|submit|void|cancel|update|edit|plan|suggest)\w*\s*\(/i,
+    why: "sbn write method (create/void inbound shipment, or its preview)",
+  },
+  {
+    re: /inboundshipment\/shipmentrequest|\bshipmentrequest\b/i,
+    why: "SBN create/void inbound shipment endpoint (write)",
+  },
+  {
+    re: /\bSubmitShipment(Request|Response)\b/,
+    why: "raw SBN create/void inbound shipment OperationType (write)",
+  },
+  {
+    re: /inboundshipment\/plansuggestion|\bplansuggestion\b|\bGetPlanSuggestion(Request|Response)\b/i,
+    why: "SBN plan-suggestion endpoint (not classified as a read)",
   },
   // Listing creation (Existing Item Creation feed, contracts §13) — WRITE surface.
   { re: /listings\s*\.\s*create\s*\(/, why: "listings.create (write)" },

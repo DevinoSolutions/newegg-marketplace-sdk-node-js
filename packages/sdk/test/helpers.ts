@@ -83,6 +83,12 @@ export const paths = {
   subcategoryStatusIntl: /sellermgmt\/seller\/subcategory\/V2\?/,
   subcategoryProperty: /sellermgmt\/seller\/subcategoryproperty\?/,
   propertyValue: /sellermgmt\/seller\/propertyvalue\?/,
+  // Shipped-by-Newegg inbound-shipment READS (§21). The (unimplemented) create/void WRITE endpoint
+  // is `shipmentrequest`, which none of these patterns can match.
+  sbnShipmentList: /sbnmgmt\/inboundshipment\/shipmentlist\?/,
+  sbnShipmentStatus: /sbnmgmt\/inboundshipment\/shipmentstatus\?/,
+  sbnShipmentResult: /sbnmgmt\/inboundshipment\/shipmentresult\//,
+  sbnWarehouse: /sbnmgmt\/inboundshipment\/warehouse\?/,
   reportSubmit: /reportmgmt\/report\/submitrequest\?/,
   reportStatus: /reportmgmt\/report\/status\?/,
   reportResult: /reportmgmt\/report\/result\?/,
