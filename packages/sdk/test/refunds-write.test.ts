@@ -11,6 +11,7 @@ import { makeClient, paths } from "./helpers.js";
 import {
   ORDER_NUMBER,
   REQUEST_ID,
+  SKU,
   courtesyIssueResponse,
   courtesyRecord,
   orderResponse,
@@ -49,6 +50,25 @@ const posts = <T extends { method: string }>(calls: T[]): T[] =>
   calls.filter((c) => c.method === "POST");
 
 describe("refunds.previewIssue", () => {
+  it("warns, without blocking, when a prior refund RMA line has an unknown shipping refund", async () => {
+    const noShipping = rmaRecord({
+      RMATransactionList: {
+        RMATransaction: {
+          SellerPartNumber: SKU,
+          UnitPrice: "50.00",
+          ReturnQuantity: "1",
+          ReturnUnitPrice: "20.00",
+        },
+      },
+    });
+    const { client, calls } = setup("ca", [issueOk], { rmas: [noShipping] });
+    const preview = await client.refunds.previewIssue(input);
+    expect(preview.blockers).toEqual([]);
+    const warning = preview.warnings.find((w) => w.includes("shipping refund of prior"));
+    expect(warning).toContain("counted as 0");
+    expect(posts(calls)).toHaveLength(0);
+  });
+
   it("only reads and reports the amount, currency and the no-commission warning", async () => {
     const { client, calls } = setup("ca", [issueOk]);
     const preview = await client.refunds.previewIssue(input);

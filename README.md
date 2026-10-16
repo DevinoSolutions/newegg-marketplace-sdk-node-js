@@ -558,7 +558,16 @@ failures; feed submissions never blindly retry after an ambiguous send (they rai
   listing, not a production SKU.**
 - **The live suite is guarded READ-ONLY.** `npm run check:live-readonly` (its own CI job)
   scans `packages/sdk/test/live/` and fails if a mutating call is ever added there, so the
-  opt-in live suite is structurally prevented from writing to a real account.
+  opt-in live suite is structurally prevented from writing to a real account. It is an
+  allowlist, not just a denylist: comments are stripped before matching; the live files may
+  import only `vitest`, `../../src/index.js`, `./helpers.js` and a few `node:` built-ins (never
+  SDK internals); a namespace with write methods (`inventory`, `pricing`, `feeds`, `orders`,
+  `listings`, `rma`, `refunds`) may only be used as `client.<namespace>.<documented read>(...)`
+  (no aliasing, destructuring in any position, or naming a write method on any receiver);
+  computed member access with a non-literal key, `Object.*` reflection and `Reflect` are
+  banned; and every `NeweggClient` namespace and write-namespace method must be classified in
+  `scripts/live-readonly-ast.ts`, so a new write surface fails the guard until it is. The
+  guard's `MUST_FLAG` / `MUST_PASS` self-test runs on every invocation.
 
 ---
 

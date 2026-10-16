@@ -82,6 +82,26 @@ function unreconcilablePriorRefunds(context: OrderContext, excludeRmaNumber?: st
   return reasons;
 }
 
+/**
+ * Prior active refund RMAs with a priced line whose shipping refund is unreadable. The refund sum
+ * counts that shipping refund as 0, which can understate what was already refunded, so the
+ * remaining balance is only a warning-level estimate (not a blocker: the item refund is known).
+ */
+function priorRmasWithUnknownShippingRefund(
+  context: OrderContext,
+  excludeRmaNumber?: string,
+): string[] {
+  return context.rmas
+    .filter(
+      (rma) =>
+        isActiveRma(rma) &&
+        rma.rmaNumber !== excludeRmaNumber &&
+        rma.type === "refund" &&
+        rma.items.some((item) => item.refundShippingPrice === undefined),
+    )
+    .map((rma) => rma.rmaNumber);
+}
+
 /** Order-level eligibility shared by RMAs and courtesy refunds (`SE004` / `SE026` / `SE027`). */
 export function checkOrderEligibility(order: Order | undefined, findings: Findings): void {
   if (order === undefined) {
@@ -158,6 +178,12 @@ function checkRefundBalance(
       `Prior refunds on the order cannot be reconciled (${unreconcilable.join("; ")}), so the remaining balance is unknown (SE034).`,
     );
     return;
+  }
+  const unknownShipping = priorRmasWithUnknownShippingRefund(context, excludeRmaNumber);
+  if (unknownShipping.length > 0) {
+    findings.warnings.push(
+      `The shipping refund of prior RMA(s) ${unknownShipping.join(", ")} is unknown and counted as 0; the already-refunded amount may be understated, so verify the remaining balance.`,
+    );
   }
   const prior = priorRefundCents(context, excludeRmaNumber);
   if (totalCents > orderTotalCents - prior) {
