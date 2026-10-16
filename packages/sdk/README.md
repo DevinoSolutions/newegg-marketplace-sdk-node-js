@@ -159,7 +159,7 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
 ## Examples
 
 Runnable, typechecked examples live in the repository's
-[`examples/`](https://github.com/devino/newegg-marketplace-sdk-node-js/tree/main/examples):
+[`examples/`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/tree/main/examples):
 `sdk-basic`, `sdk-batch-inventory`, `sdk-orders-and-reports` (read-only) and
 `sdk-pricing-preview` (preview-only). They read credentials from the environment.
 
@@ -174,7 +174,7 @@ import { createMockFetch } from "@devino/newegg-marketplace-sdk/testing";
 ## Documentation
 
 The binding public-API contract and deep-dive guides live in the
-[repository](https://github.com/devino/newegg-marketplace-sdk-node-js):
+[repository](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js):
 
 - Inventory strategies (direct vs feed, dedup, chunking, polling): `docs/inventory-strategies.md`
 - Platform differences (US vs B2B vs CA): `docs/platform-differences.md`
