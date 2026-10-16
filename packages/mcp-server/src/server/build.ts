@@ -43,6 +43,16 @@ import {
   refundStatusTool,
   rmaGetTool,
   rmaListTool,
+  createRmaPreviewSubmitTool,
+  rmaApplySubmitTool,
+  createRmaPreviewEditTool,
+  rmaApplyEditTool,
+  createRmaPreviewProcessTool,
+  rmaApplyProcessTool,
+  createRmaPreviewRejectTool,
+  rmaApplyRejectTool,
+  createRefundPreviewIssueTool,
+  refundApplyIssueTool,
   createPricingPreviewTool,
   pricingApplyTool,
   pricingGetTool,
@@ -160,6 +170,22 @@ export function enabledToolNames(config: McpServerConfig): string[] {
   // Price updates: BOTH the preview and the apply tool exist only with writes enabled.
   if (config.allowWrites) {
     names.push(TOOL_NAMES.pricingPreviewUpdate, TOOL_NAMES.pricingApplyUpdate);
+  }
+  // RMA and courtesy-refund writes (contracts §20) move customer money or change a return: BOTH the
+  // preview and the apply tool of each exist only with writes enabled.
+  if (config.allowWrites) {
+    names.push(
+      TOOL_NAMES.rmaPreviewSubmit,
+      TOOL_NAMES.rmaApplySubmit,
+      TOOL_NAMES.rmaPreviewEdit,
+      TOOL_NAMES.rmaApplyEdit,
+      TOOL_NAMES.rmaPreviewProcess,
+      TOOL_NAMES.rmaApplyProcess,
+      TOOL_NAMES.rmaPreviewReject,
+      TOOL_NAMES.rmaApplyReject,
+      TOOL_NAMES.refundPreviewIssue,
+      TOOL_NAMES.refundApplyIssue,
+    );
   }
   return names;
 }
@@ -314,6 +340,18 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   if (config.allowWrites) {
     registerToolDefinition(server, createPricingPreviewTool(config), ctx);
     registerToolDefinition(server, pricingApplyTool, ctx);
+  }
+  if (config.allowWrites) {
+    registerToolDefinition(server, createRmaPreviewSubmitTool(config), ctx);
+    registerToolDefinition(server, rmaApplySubmitTool, ctx);
+    registerToolDefinition(server, createRmaPreviewEditTool(config), ctx);
+    registerToolDefinition(server, rmaApplyEditTool, ctx);
+    registerToolDefinition(server, createRmaPreviewProcessTool(config), ctx);
+    registerToolDefinition(server, rmaApplyProcessTool, ctx);
+    registerToolDefinition(server, createRmaPreviewRejectTool(config), ctx);
+    registerToolDefinition(server, rmaApplyRejectTool, ctx);
+    registerToolDefinition(server, createRefundPreviewIssueTool(config), ctx);
+    registerToolDefinition(server, refundApplyIssueTool, ctx);
   }
 
   registerResources(server, ctx, enabledToolNames(config));

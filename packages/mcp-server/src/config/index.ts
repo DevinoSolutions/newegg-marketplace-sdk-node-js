@@ -34,6 +34,11 @@ export interface McpLimits {
    * price; a bigger move is blocked at preview time (fat-finger guard). Default 50.
    */
   readonly maxPriceChangePercent: number;
+  /**
+   * Largest amount of money a single RMA refund or courtesy refund may move, in the marketplace
+   * currency; a bigger one is blocked at preview time (fat-finger / runaway-agent guard). Default 500.
+   */
+  readonly maxRefundAmount: number;
   /** Uppercased warehouse codes; empty means "all warehouses allowed". */
   readonly allowedWarehouses: string[];
   /** Normalized marketplace codes; empty means "all marketplaces allowed". */
@@ -281,6 +286,12 @@ const envSchema = z.object({
     (n) => n > 0 && n <= 10_000,
     "a number greater than 0 and at most 10000",
   ),
+  NEWEGG_MCP_MAX_REFUND_AMOUNT: numberEnv(
+    "NEWEGG_MCP_MAX_REFUND_AMOUNT",
+    500,
+    (n) => n > 0 && n <= 99_999.99,
+    "a number greater than 0 and at most 99999.99",
+  ),
   NEWEGG_MCP_ALLOWED_WAREHOUSES: csvEnv({ uppercase: true }),
   NEWEGG_MCP_HTTP_HOST: z
     .string()
@@ -338,6 +349,7 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     previewTtlSeconds: parsed.NEWEGG_MCP_PREVIEW_TTL_SECONDS,
     allowZeroQuantity: parsed.NEWEGG_MCP_ALLOW_ZERO_QUANTITY,
     maxPriceChangePercent: parsed.NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT,
+    maxRefundAmount: parsed.NEWEGG_MCP_MAX_REFUND_AMOUNT,
     allowedWarehouses: parsed.NEWEGG_MCP_ALLOWED_WAREHOUSES,
     allowedMarketplaces,
   };

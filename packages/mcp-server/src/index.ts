@@ -38,7 +38,11 @@ export {
   type ListingPreviewRecord,
   type PricePreviewRecord,
   type PreviewRecord,
+  type PreviewRecordBase,
   type PreviewStore,
+  type ServiceWriteInputs,
+  type ServiceWriteKind,
+  type ServiceWritePreviewRecord,
 } from "./preview-store/index.js";
 
 export { TOOL_NAMES, type ToolName } from "./tools/names.js";
