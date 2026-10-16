@@ -185,7 +185,7 @@ ignored update on a deactivated item shows as `unverified` instead of success. T
 `newegg_pricing_preview_update` / `newegg_pricing_apply_update` exists only with
 `NEWEGG_MCP_ALLOW_WRITES=true`. The US write path follows the docs but is not live-verified.
 
-## RMAs and courtesy refunds (read-only)
+## RMAs and courtesy refunds
 
 ```ts
 const open = await client.rma.list({ status: "open", pageSize: 20 });
@@ -199,11 +199,46 @@ const request = await client.refunds.getRequestStatus("<courtesy refund request 
 
 These wrap Get RMA Information and the two courtesy refund reads (contracts §18). They are `PUT`
 requests but only read, so the SDK and the MCP tools (`newegg_rma_list`, `newegg_rma_get`,
-`newegg_refund_list`, `newegg_refund_status`) are always available. Submitting / editing /
-processing / rejecting an RMA and issuing a courtesy refund are writes and are not implemented. The
-MCP tools return business fields only - never the buyer's name, phone, e-mail or address. Amounts are
+`newegg_refund_list`, `newegg_refund_status`) are always available. The MCP tools return business fields only - never the buyer's name, phone, e-mail or address. Amounts are
 USD on Newegg.com / Neweggbusiness.com and CAD on Newegg.ca; Get Courtesy Refund Information is
 limited to 30 requests per minute.
+
+### RMA and courtesy refund writes (money-moving)
+
+```ts
+const plan = await client.rma.previewSubmit({
+  orderNumber: "<order number>",
+  type: "refund",
+  items: [
+    {
+      sellerPartNumber: "<sku>",
+      returnQuantity: 1,
+      reason: "defective",
+      returnUnitPrice: 40.0,
+      refundShippingPrice: 0,
+    },
+  ],
+}); // read-only: blockers + warnings
+if (plan.blockers.length === 0) await client.rma.submit(plan.normalized);
+
+await client.refunds.issue({
+  orderNumber: "<order number>",
+  reason: "customerCourtesy",
+  amount: 10,
+});
+```
+
+`rma.submit/edit/process/reject` and `refunds.issue` (contracts §20) each have a read-only
+`preview*` twin; the write re-runs the same checks and throws `NeweggValidationError` on any
+blocker before sending. Money is positive, at most 2 decimals, and never rounded or clamped. The
+writes are not idempotent: an ambiguous failure (timeout or reset after dispatch, 408/5xx, or a
+2xx that does not identify the RMA / refund request) throws `IndeterminateServiceWriteError` and is
+never auto-retried; check `rma.list/get` or `refunds.list/listRequests` first. A courtesy refund
+does NOT refund the commission. The MCP pairs `newegg_rma_preview_submit|edit|process|reject` /
+`newegg_rma_apply_*` and `newegg_refund_preview_issue` / `newegg_refund_apply_issue` exist only
+with `NEWEGG_MCP_ALLOW_WRITES=true` (courtesy refunds are capped by `NEWEGG_MCP_MAX_REFUND_AMOUNT`).
+The write paths follow the docs but have never been sent to a real account. Void / close RMA is
+not implemented (no documented operation).
 
 ## Seller status and category reference (read-only)
 
