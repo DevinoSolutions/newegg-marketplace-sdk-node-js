@@ -301,8 +301,13 @@ export const rmaApplyProcessTool: ToolDefinition<
   inputSchema: processApplyInput,
   outputSchema: serviceApplyOutputSchema,
   handler: (input, ctx) =>
-    runServiceApply(ctx, "rmaProcess", input.previewId, async (stored) =>
-      serializeRmaResult(await ctx.client.rma.process(stored)),
+    runServiceApply(
+      ctx,
+      "rmaProcess",
+      input.previewId,
+      async (stored) => serializeRmaResult(await ctx.client.rma.process(stored)),
+      // The refund released is whatever the RMA holds NOW: re-read it and abort if it moved.
+      (stored) => ctx.client.rma.previewProcess(stored),
     ),
 };
 

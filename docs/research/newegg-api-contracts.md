@@ -2892,7 +2892,7 @@ with Get Courtesy Refund Request Status (§18.3, `client.refunds.getRequestStatu
 None of the five writes is idempotent (a re-send creates a second RMA or pays a second refund) and none
 accepts a client token. `sendServiceWrite` (`servicemgmt/write.ts`) therefore retries **only** transport
 failures proven to have happened before any byte was sent; the first ambiguous failure (timeout or reset
-after dispatch, HTTP 408/502/503/504) throws `IndeterminateServiceWriteError` (`service_write_indeterminate`,
+after dispatch, HTTP 408 or ANY 5xx, including a plain 500) throws `IndeterminateServiceWriteError` (`service_write_indeterminate`,
 never `retryable`) carrying the operation, order and RMA number and the time it was submitted. The same
 error is thrown when Newegg answers 2xx but the response does not identify the RMA (or, for a refund, has no
 `RequestId`), or names a different RMA than the one edited. The guidance is to check `rma.list/get` or
@@ -2926,8 +2926,12 @@ non-void courtesy refunds; a mismatch with the order's `RefundAmount` is a warni
 `NEWEGG_MCP_ALLOW_WRITES=true` (ADR 0005 and the pricing precedent). A preview with blockers returns no
 `previewId`; a clean one returns a single-use, TTL-bound, 256-bit `previewId`, and apply accepts only that
 id, re-hashes the stored request (`preview_tampered`) and refuses a replay, an expired id or one of another
-kind. Courtesy refunds above `NEWEGG_MCP_MAX_REFUND_AMOUNT` (default 500, in the marketplace currency) are
-blocked at preview time. Outputs map fields explicitly and omit the customer block, free-text notes,
+kind. Courtesy refunds and refund RMAs above `NEWEGG_MCP_MAX_REFUND_AMOUNT` (default 500, in the marketplace
+currency) are blocked at preview time, and a refund-type write whose amount reads as 0 (unreadable
+lines) is blocked too rather than passing the ceiling. The previewed refund total (cents) is stored with
+the preview and covered by its hash. Process RMA releases whatever the RMA holds at that moment, so the
+apply tool re-reads the RMA first and aborts (`preview_stale`, preview consumed, nothing sent) if it is
+no longer open, its refund differs from the previewed total, or it exceeds the ceiling. Outputs map fields explicitly and omit the customer block, free-text notes,
 memos, tracking numbers and label URLs (`docs/mcp-security.md`).
 
 **Not built.** (1) Voiding / closing an RMA and any other RMA status change: the section documents no such

@@ -547,6 +547,78 @@ describe("RMA tools", () => {
     }
   });
 
+  it("process: a refund RMA whose amounts cannot be read is blocked, not waved through", async () => {
+    const unreadable = rmaRecord({ RMATransactionList: "" });
+    const harness = await harnessFor({ rmas: [unreadable] }, []);
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewProcess, { rmaNumber: RMA_NUMBER });
+      expect(preview.json.eligible).toBe(false);
+      expect(preview.json.previewId).toBeUndefined();
+      expect((preview.json.blockers as string[]).join("\n")).toContain("could not be read");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("process: aborts at apply when the RMA refund changed after the preview", async () => {
+    const reads: Reads = { rmas: [rmaRecord()] };
+    const harness = await harnessFor(reads, [
+      postRoute(UPDATE_RMA, 200, rmaWriteBody("ReceiveRMAResponse")),
+    ]);
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewProcess, { rmaNumber: RMA_NUMBER });
+      expect(preview.json).toMatchObject({ eligible: true, refundTotal: 50 });
+      // The RMA is edited upwards inside the TTL (still under the ceiling of 500).
+      reads.rmas = [
+        rmaRecord({
+          RMATransactionList: {
+            RMATransaction: {
+              SellerPartNumber: SKU,
+              UnitPrice: "50.00",
+              ReturnQuantity: "1",
+              ReturnUnitPrice: "400.00",
+              RefundShippingPrice: "0.00",
+              RMAReason: "2",
+            },
+          },
+        }),
+      ];
+      const applied = await callTool(harness.mcp, TOOLS.applyProcess, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(String(applied.json.message)).toContain("changed since the preview");
+      expect(posts(harness)).toHaveLength(0);
+      // Single use: the preview is consumed even though nothing was sent.
+      const replay = await callTool(harness.mcp, TOOLS.applyProcess, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(replay.json.errorCode).toBe("preview_already_used");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("process: aborts at apply when the RMA is no longer open", async () => {
+    const reads: Reads = { rmas: [rmaRecord()] };
+    const harness = await harnessFor(reads, [
+      postRoute(UPDATE_RMA, 200, rmaWriteBody("ReceiveRMAResponse")),
+    ]);
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewProcess, { rmaNumber: RMA_NUMBER });
+      reads.rmas = [rmaRecord({ RMAStatus: "5" })];
+      const applied = await callTool(harness.mcp, TOOLS.applyProcess, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(posts(harness)).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("reject: previews the denial and applies RejectRMARequest with the marketplace's reason code", async () => {
     const harness = await harnessFor({ rmas: [rmaRecord()] }, [
       postRoute(UPDATE_RMA, 200, rmaWriteBody("RejectRMAResponse")),

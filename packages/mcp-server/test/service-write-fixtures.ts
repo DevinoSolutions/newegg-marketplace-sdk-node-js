@@ -77,7 +77,6 @@ export interface Reads {
 }
 
 export function readRoutes(reads: Reads = {}): MockRoute[] {
-  const rmas = reads.rmas ?? [];
   const courtesy = reads.courtesyRefunds ?? [];
   return [
     {
@@ -88,21 +87,25 @@ export function readRoutes(reads: Reads = {}): MockRoute[] {
     {
       method: "PUT",
       pathPattern: /servicemgmt\/rma\/rmainfo\?/,
-      reply: () => ({
-        status: 200,
-        body: {
-          IsSuccess: "true",
-          ResponseBody: {
-            PageInfo: {
-              TotalCount: String(rmas.length),
-              TotalPageCount: "1",
-              PageIndex: "1",
-              PageSize: "100",
+      reply: () => {
+        // Read lazily: a test may change the RMAs between preview and apply.
+        const rmas = reads.rmas ?? [];
+        return {
+          status: 200,
+          body: {
+            IsSuccess: "true",
+            ResponseBody: {
+              PageInfo: {
+                TotalCount: String(rmas.length),
+                TotalPageCount: "1",
+                PageIndex: "1",
+                PageSize: "100",
+              },
+              RMAInfoList: rmas.length === 0 ? "" : { RMAInfo: rmas },
             },
-            RMAInfoList: rmas.length === 0 ? "" : { RMAInfo: rmas },
           },
-        },
-      }),
+        };
+      },
     },
     {
       method: "PUT",

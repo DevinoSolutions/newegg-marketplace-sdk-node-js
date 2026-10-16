@@ -102,11 +102,21 @@ export const serviceApplyOutputSchema = z.object({
 /** Digit-string order / RMA number input (the SDK validates it further). */
 export const numberInputSchema = z.union([z.string().min(1).max(15), z.number().int().positive()]);
 
-function hashInput(kind: ServiceWriteKind, marketplace: string, input: unknown): string {
+function hashInput(
+  kind: ServiceWriteKind,
+  marketplace: string,
+  input: unknown,
+  refundCents: number | undefined,
+): string {
   return createHash("sha256")
-    .update(JSON.stringify({ kind, marketplace, input }), "utf8")
+    .update(JSON.stringify({ kind, marketplace, input, refundCents: refundCents ?? null }), "utf8")
     .digest("hex");
 }
+
+const toCents = (amount: number): number => Math.round(amount * 100);
+
+const formatCents = (cents: number | undefined): string =>
+  cents === undefined ? "none" : (cents / 100).toFixed(2);
 
 /** Runs a preview, enforces the refund ceiling in code, and stores the plan when it is clean. */
 export async function runServicePreview<K extends ServiceWriteKind>(
@@ -130,10 +140,21 @@ export async function runServicePreview<K extends ServiceWriteKind>(
     );
   }
 
+  // Fail closed: a refund-type write that moves no readable money must never pass the ceiling by
+  // looking like it moves nothing.
+  if (preview.refundTotal !== undefined && !(preview.refundTotal > 0)) {
+    blockers.push(
+      "The refund amount of this RMA could not be read (it reads as 0), so it cannot be checked against " +
+        "NEWEGG_MCP_MAX_REFUND_AMOUNT. Inspect it with newegg_rma_get.",
+    );
+  }
+
   const eligible = blockers.length === 0;
   let previewId: string | undefined;
   let previewExpiresAt: string | undefined;
   if (eligible) {
+    const refundCents =
+      preview.refundTotal === undefined ? undefined : toCents(preview.refundTotal);
     const createdAt = ctx.now();
     const expiresAt = new Date(createdAt.getTime() + limits.previewTtlSeconds * 1000);
     previewId = randomBytes(32).toString("base64url");
@@ -141,9 +162,10 @@ export async function runServicePreview<K extends ServiceWriteKind>(
     const record = {
       previewId,
       kind,
-      hash: hashInput(kind, preview.marketplace, preview.normalized),
+      hash: hashInput(kind, preview.marketplace, preview.normalized, refundCents),
       marketplace: preview.marketplace,
       input: preview.normalized,
+      refundCents,
       createdAt,
       expiresAt,
     } as ServiceWritePreviewRecord;
@@ -175,12 +197,18 @@ export async function runServicePreview<K extends ServiceWriteKind>(
  * Consumes a preview (single use), re-checks its hash, runs the matching SDK write and shapes the
  * structured output. An ambiguous outcome is reported with the SDK's recovery guidance and the
  * explicit instruction not to retry blindly.
+ *
+ * `recheck` re-plans the write just before it is sent (reads only) for operations whose money is read
+ * from Newegg rather than supplied by the caller (Process RMA releases whatever the RMA refunds NOW).
+ * The write is aborted when the fresh plan has blockers, when its refund differs from the previewed
+ * figure, or when it exceeds the server ceiling.
  */
 export async function runServiceApply<K extends ServiceWriteKind>(
   ctx: ToolContext,
   kind: K,
   previewId: string,
   send: (input: ServiceWriteInputs[K]) => Promise<Record<string, unknown>>,
+  recheck?: (input: ServiceWriteInputs[K]) => Promise<ServiceWritePreview<unknown>>,
 ): Promise<ToolResult> {
   const outcome = await consumeTypedPreview(ctx, previewId, kind);
   if ("error" in outcome) {
@@ -191,9 +219,10 @@ export async function runServiceApply<K extends ServiceWriteKind>(
     hash: string;
     marketplace: string;
     input: ServiceWriteInputs[K];
+    refundCents?: number;
   };
 
-  if (hashInput(kind, record.marketplace, record.input) !== record.hash) {
+  if (hashInput(kind, record.marketplace, record.input, record.refundCents) !== record.hash) {
     return errorResult(
       businessError(
         "preview_tampered",
@@ -201,6 +230,36 @@ export async function runServiceApply<K extends ServiceWriteKind>(
           "consumed; create a new preview.",
       ),
     );
+  }
+
+  if (recheck !== undefined) {
+    let fresh: ServiceWritePreview<unknown>;
+    try {
+      fresh = await recheck(record.input);
+    } catch (error) {
+      return errorResult(appendConsumedNote(mapErrorToPayload(error, ctx.logger)));
+    }
+    const freshCents = fresh.refundTotal === undefined ? undefined : toCents(fresh.refundTotal);
+    const { maxRefundAmount } = ctx.config.limits;
+    const problems: string[] = [...fresh.blockers];
+    if (freshCents !== record.refundCents) {
+      problems.push(
+        `The refund changed since the preview (previewed ${formatCents(record.refundCents)}, now ${formatCents(freshCents)} ${fresh.currency}).`,
+      );
+    }
+    if (fresh.refundTotal !== undefined && fresh.refundTotal > maxRefundAmount) {
+      problems.push(
+        `The refund of ${fresh.refundTotal.toFixed(2)} ${fresh.currency} exceeds the server limit of ${maxRefundAmount} (NEWEGG_MCP_MAX_REFUND_AMOUNT).`,
+      );
+    }
+    if (problems.length > 0) {
+      return errorResult(
+        businessError(
+          "preview_stale",
+          `Nothing was sent: ${problems.join(" ")} The preview has been consumed; create a new preview and review it.`,
+        ),
+      );
+    }
   }
 
   try {

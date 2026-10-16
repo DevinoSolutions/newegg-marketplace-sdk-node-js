@@ -68,12 +68,18 @@ export type ServiceWriteKind = keyof ServiceWriteInputs;
 /**
  * A stored RMA or courtesy-refund write. These move customer money or change a return, so the
  * `input` here is authoritative at apply time and `hash` (sha-256 of the canonical kind +
- * marketplace + input) is re-checked before anything is sent.
+ * marketplace + input + refundCents) is re-checked before anything is sent.
  */
 export type ServiceWritePreviewRecord = {
   [K in ServiceWriteKind]: PreviewRecordBase & {
     readonly kind: K;
     readonly input: ServiceWriteInputs[K];
+    /**
+     * Money the previewed write moves, in whole cents (undefined when it moves none). A write whose
+     * amount is read from Newegg at plan time (Process RMA) re-reads it at apply and aborts when it
+     * differs from this figure.
+     */
+    readonly refundCents?: number;
   };
 }[ServiceWriteKind];
 

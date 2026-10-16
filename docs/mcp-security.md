@@ -90,7 +90,7 @@ Tools (underscore names, per MCP naming rules):
 > explicitly like the read tools (no customer block, notes, memos or tracking numbers). A write
 > whose outcome is unknown (timeout, 5xx, a 2xx that does not name the RMA / request) is reported
 > as indeterminate and never retried: check `newegg_rma_list` / `newegg_refund_list` first.
-> `AutoReceiveMark` (receive on creation) is not offered, and the live test suite is forbidden
+> Process RMA re-reads the RMA at apply and aborts if its refund changed since the preview. `AutoReceiveMark` (receive on creation) is not offered, and the live test suite is forbidden
 > from calling any of these endpoints (`npm run check:live-readonly`).
 
 > **Order List / RMA List / Item Basic Information report tools: PII handling.** Unlike
