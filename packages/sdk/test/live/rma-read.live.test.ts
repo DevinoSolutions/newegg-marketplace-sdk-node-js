@@ -14,12 +14,12 @@ const RANGE = { dateFrom: "2020-01-01", dateTo: "2026-12-31" } as const;
 
 describe.skipIf(!liveEnabled)("live (read-only): RMA and courtesy refund reads", () => {
   let rmas: RmasPage | undefined;
-  let refunds: CourtesyRefundsPage | undefined;
+  let refundsPage: CourtesyRefundsPage | undefined;
 
   beforeAll(async () => {
     const client = makeLiveClient();
     rmas = await client.rma.list({ ...RANGE, pageSize: 5 });
-    refunds = await client.refunds.list({ ...RANGE, pageSize: 5 });
+    refundsPage = await client.refunds.list({ ...RANGE, pageSize: 5 });
   });
 
   it("rma.list returns a normalized page (possibly empty)", () => {
@@ -48,10 +48,10 @@ describe.skipIf(!liveEnabled)("live (read-only): RMA and courtesy refund reads",
   });
 
   it("refunds.list returns a normalized page (possibly empty)", () => {
-    if (!refunds) throw new Error("beforeAll did not populate a courtesy refund page");
-    expect(Array.isArray(refunds.refunds)).toBe(true);
-    expect(typeof refunds.totalCount).toBe("number");
-    for (const refund of refunds.refunds) {
+    if (!refundsPage) throw new Error("beforeAll did not populate a courtesy refund page");
+    expect(Array.isArray(refundsPage.refunds)).toBe(true);
+    expect(typeof refundsPage.totalCount).toBe("number");
+    for (const refund of refundsPage.refunds) {
       expect(refund.courtesyRefundId.length).toBeGreaterThan(0);
       expect(refund.status.length).toBeGreaterThan(0);
       expect(refund.reason.length).toBeGreaterThan(0);
