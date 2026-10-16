@@ -51,19 +51,19 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /killitem/i, why: "remove-item (KillItem) endpoint (write)" },
   { re: /KillItemRequest|OrderConfirmationRequest/, why: "raw order-write OperationType (write)" },
   { re: /cancel_?status/i, why: "cancel-order endpoint (write)" },
-  // RMA / courtesy refund writes (contracts §18) — pre-armed: the SDK implements only the reads
-  // (client.rma.list/get/tryGet, client.refunds.list/get/tryGet/listRequests/getRequestStatus =
-  // Get RMA Information, Get Courtesy Refund Information/Request Status, which are READS via PUT
-  // and are deliberately NOT matched). Submit/Edit/Process/Reject RMA and Issue Courtesy Refund
-  // are WRITES: both prospective SDK method calls and the raw wire markers (endpoints and
-  // OperationTypes) are listed so none can land in a live test.
+  // RMA / courtesy refund writes (contracts §20). The reads (client.rma.list/get/tryGet,
+  // client.refunds.list/get/tryGet/listRequests/getRequestStatus = Get RMA Information, Get Courtesy
+  // Refund Information/Request Status) are READS via PUT and are deliberately NOT matched. Submit /
+  // Edit / Process / Reject RMA and Issue Courtesy Refund are WRITES: the SDK methods (rma.submit /
+  // edit / process / reject, refunds.issue) AND their read-only preview* twins are listed, as are the
+  // raw wire markers (endpoints, OperationTypes and body elements), so none can land in a live test.
   {
-    re: /\brma\s*\??\.\s*(submit|issue|create|edit|update|process|receive|reject|void|close)\w*\s*\(/i,
-    why: "rma write method (submit/edit/process/reject RMA)",
+    re: /\brma\s*\??\.\s*(preview)?(submit|issue|create|edit|update|process|receive|reject|void|close)\w*\s*\(/i,
+    why: "rma write method (submit/edit/process/reject RMA, or its preview)",
   },
   {
-    re: /\brefunds\s*\??\.\s*(issue|create|submit|request|new)\w*\s*\(/i,
-    why: "refunds write method (issue courtesy refund)",
+    re: /\brefunds\s*\??\.\s*(preview)?(issue|create|submit|request|new)\w*\s*\(/i,
+    why: "refunds write method (issue courtesy refund, or its preview)",
   },
   {
     re: /servicemgmt\/rma\/(newrma|updaterma)|\bnewrma\b|\bupdaterma\b/i,
@@ -73,6 +73,10 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   {
     re: /\b(IssueRMA|EditRMA|ReceiveRMA|RejectRMA)(Request|Response)?\b|\bIssueCourtesyRefund\b|\bCourtesyRefundResponse\b/,
     why: "raw RMA/courtesy-refund write OperationType (write)",
+  },
+  {
+    re: /\b(EditRMAInfo|ReceiveRMAInfo|RejectRMAInfo|AutoReceiveMark|TotalRefundAmount|SourceSONumber)\b/,
+    why: "raw RMA/courtesy-refund write body element (write)",
   },
   // Listing creation (Existing Item Creation feed, contracts §13) — WRITE surface.
   { re: /listings\s*\.\s*create\s*\(/, why: "listings.create (write)" },
