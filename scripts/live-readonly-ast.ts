@@ -12,7 +12,7 @@ import ts from "typescript";
  * (contracts §18 / §15 / §20). `<expr>.<namespace>` may appear only as `<expr>.<namespace>.<read>(`.
  * A namespace with an empty list may not be touched at all.
  */
-export const WRITE_NAMESPACE_READS: Readonly<Record<string, readonly string[]>> = {
+const WRITE_NAMESPACE_READS: Readonly<Record<string, readonly string[]>> = {
   inventory: ["getItem", "tryGetItem", "getMany"],
   pricing: ["get", "tryGet", "getMany"],
   feeds: ["getStatus", "getResult", "waitForResult"],
@@ -28,7 +28,7 @@ export const WRITE_NAMESPACE_READS: Readonly<Record<string, readonly string[]>> 
  * see (a parameter, a destructured array element). check-live-readonly.ts fails when an SDK method
  * on a write namespace is in neither this set nor the namespace's read list above.
  */
-export const WRITE_METHOD_NAMES: ReadonlySet<string> = new Set([
+const WRITE_METHOD_NAMES: ReadonlySet<string> = new Set([
   "updateItem",
   "updateMany",
   "submitInventoryFeed",
@@ -59,9 +59,9 @@ export const WRITE_METHOD_NAMES: ReadonlySet<string> = new Set([
 /**
  * Client namespaces that are read-only by contract (they create report jobs or read reference
  * data). Together with WRITE_NAMESPACE_READS this must cover every `readonly x: <Name>Api` member
- * of `NeweggClient`; check-live-readonly.ts fails when a new namespace is in neither list.
+ * of `NeweggClient`; clientSurfaceProblems fails when a new namespace is in neither list.
  */
-export const READ_ONLY_NAMESPACES: readonly string[] = [
+const READ_ONLY_NAMESPACES: readonly string[] = [
   "service",
   "reference",
   "catalog",
@@ -101,11 +101,17 @@ const BANNED_GLOBALS: ReadonlySet<string> = new Set([
   "eval",
   "Function",
   "Reflect",
+  "Proxy",
   "XMLHttpRequest",
   "WebSocket",
   "EventSource",
 ]);
+// `.constructor` reaches Object / Function from any value (`({}).constructor.values(client)`,
+// `[].constructor.constructor("return globalThis")()`), so it and `.prototype` are banned as
+// properties, string keys and destructuring keys.
 const BANNED_PROPERTY_NAMES: ReadonlySet<string> = new Set([
+  "constructor",
+  "prototype",
   "__proto__",
   "__lookupGetter__",
   "__lookupSetter__",
@@ -114,10 +120,9 @@ const BANNED_PROPERTY_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 // A string-literal key (`raw["AvailableQuantity"]`) is statically resolvable, so it is judged by
-// what it names: never a client namespace, never a write-verb member. Any other computed key is
-// refused outright (`x[k]`, `x['r'+'ma']`, `x[`r${'ma'}`]`).
-const WRITE_VERB_KEY =
-  /^(?:preview)?(?:submit|issue|create|edit|update|process|receive|reject|void|close|ship|cancel|confirm|remove|send|delete|set|put|post|write|apply|call|bind|constructor|prototype)/i;
+// what it names: a client namespace, a write method or a reflection name is refused; any other
+// literal (`raw["ShipVia"]`, `raw["UpdateDate"]`) is plain data. Any non-literal computed key is
+// refused outright (`x[k]`, `x['r'+'ma']`, a template with substitutions).
 
 const CLIENT_SOURCES: ReadonlySet<string> = new Set([
   "makeLiveClient",
@@ -237,6 +242,23 @@ function clientHolders(sourceFile: ts.SourceFile): Set<string> {
     return found;
   };
 
+  function classHoldsClient(cls: ts.ClassLikeDeclaration): boolean {
+    return cls.members.some((member) => {
+      if (ts.isMethodDeclaration(member) || ts.isGetAccessorDeclaration(member)) {
+        return returnsClient(member);
+      }
+      if (ts.isConstructorDeclaration(member)) {
+        return member.parameters.some((parameter) => typeMentionsClient(parameter.type));
+      }
+      if (ts.isPropertyDeclaration(member)) {
+        return (
+          typeMentionsClient(member.type) || (!!member.initializer && yields(member.initializer))
+        );
+      }
+      return false;
+    });
+  }
+
   function yields(expr: ts.Node): boolean {
     if (ts.isIdentifier(expr)) return isSource(expr.text);
     if (
@@ -258,14 +280,21 @@ function clientHolders(sourceFile: ts.SourceFile): Set<string> {
         if (ts.isPropertyAssignment(property)) return yields(property.initializer);
         if (ts.isShorthandPropertyAssignment(property)) return isSource(property.name.text);
         if (ts.isSpreadAssignment(property)) return yields(property.expression);
+        // Methods and accessors are functions: `{ make() { return client; } }`.
+        if (ts.isMethodDeclaration(property) || ts.isGetAccessorDeclaration(property)) {
+          return returnsClient(property);
+        }
         return false;
       });
     }
+    if (ts.isClassExpression(expr)) return classHoldsClient(expr);
     if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
       return yields(expr.expression);
     }
     if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) return returnsClient(expr);
-    if (ts.isNewExpression(expr)) return (expr.arguments ?? []).some(yields);
+    if (ts.isNewExpression(expr)) {
+      return yields(expr.expression) || (expr.arguments ?? []).some(yields);
+    }
     if (ts.isCallExpression(expr)) {
       const callee = expr.expression;
       if (ts.isIdentifier(callee) && isSource(callee.text)) return true;
@@ -303,6 +332,8 @@ function clientHolders(sourceFile: ts.SourceFile): Set<string> {
       if (typeMentionsClient(node.type)) markBound(node.name);
     } else if (ts.isFunctionDeclaration(node)) {
       if (node.name !== undefined && returnsClient(node)) mark(node.name.text);
+    } else if (ts.isClassDeclaration(node)) {
+      if (node.name !== undefined && classHoldsClient(node)) mark(node.name.text);
     } else if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -395,6 +426,8 @@ export function astViolations(source: string): string[] {
 
   const holders = clientHolders(sourceFile);
   const namespaces = Object.keys(WRITE_NAMESPACE_READS);
+  const isForbiddenMemberName = (name: string): boolean =>
+    namespaces.includes(name) || WRITE_METHOD_NAMES.has(name) || BANNED_PROPERTY_NAMES.has(name);
 
   const checkSpecifier = (specifier: string): void => {
     if (ALLOWED_SPECIFIERS.has(specifier) || specifier === "vitest") return;
@@ -459,6 +492,7 @@ export function astViolations(source: string): string[] {
     }
     const resultName = iterable.expression.text;
     if (holders.has(resultName) || holders.has(arg.text)) return false;
+    if (arg.text === resultName) return false;
     // No re-declaration of the loop variable inside the loop body.
     let shadowed = false;
     const scan = (n: ts.Node): void => {
@@ -494,8 +528,80 @@ export function astViolations(source: string): string[] {
       ts.isVariableDeclarationList(only.parent) &&
       (only.parent.flags & ts.NodeFlags.Const) !== 0 &&
       only.initializer !== undefined &&
-      ts.isAwaitExpression(only.initializer)
+      isDirectReportRead(only.initializer)
     );
+  };
+
+  const patternBinds = (pattern: ts.BindingName, name: string): boolean => {
+    const names = new Set<string>();
+    boundNames(pattern, names);
+    return names.has(name);
+  };
+
+  // Every declaration of `name` in the file (variables, parameters, bindings, functions, classes,
+  // imports), so a shadowed or re-declared name is never mistaken for the real thing.
+  const declarationsOf = (name: string): ts.Node[] => {
+    const found: ts.Node[] = [];
+    const walk = (n: ts.Node): void => {
+      if (
+        (ts.isVariableDeclaration(n) ||
+          ts.isParameter(n) ||
+          ts.isBindingElement(n) ||
+          ts.isFunctionDeclaration(n) ||
+          ts.isClassDeclaration(n) ||
+          ts.isImportSpecifier(n) ||
+          ts.isNamespaceImport(n) ||
+          ts.isImportClause(n)) &&
+        n.name !== undefined &&
+        (ts.isIdentifier(n.name)
+          ? n.name.text === name
+          : (ts.isObjectBindingPattern(n.name) || ts.isArrayBindingPattern(n.name)) &&
+            patternBinds(n.name, name))
+      ) {
+        found.push(n);
+      }
+      ts.forEachChild(n, walk);
+    };
+    walk(sourceFile);
+    return found;
+  };
+
+  const isFactoryCall = (expr: ts.Node): boolean => {
+    if (!ts.isCallExpression(expr) || !ts.isIdentifier(expr.expression)) return false;
+    const factory = expr.expression.text;
+    if (factory !== "makeLiveClient" && factory !== "createNeweggClient") return false;
+    const declarations = declarationsOf(factory);
+    return declarations.length === 1 && declarations.every((d) => ts.isImportSpecifier(d));
+  };
+
+  /** `name` only ever names a client built by the imported factory: `const name = makeLiveClient()`. */
+  const isRealClient = (name: string): boolean => {
+    const declarations = declarationsOf(name);
+    return (
+      declarations.length > 0 &&
+      declarations.every(
+        (d) =>
+          ts.isVariableDeclaration(d) &&
+          d.initializer !== undefined &&
+          ts.isVariableDeclarationList(d.parent) &&
+          (d.parent.flags & ts.NodeFlags.Const) !== 0 &&
+          isFactoryCall(d.initializer),
+      )
+    );
+  };
+
+  const REPORT_READS: ReadonlySet<string> = new Set(["waitForResult", "waitForRequest", "result"]);
+  /** `await <real client>.reports.<report>.<waitForResult|waitForRequest|result>(...)`, nothing else. */
+  const isDirectReportRead = (expr: ts.Node): boolean => {
+    if (!ts.isAwaitExpression(expr) || !ts.isCallExpression(expr.expression)) return false;
+    const callee = expr.expression.expression;
+    if (!ts.isPropertyAccessExpression(callee) || !REPORT_READS.has(callee.name.text)) return false;
+    const report = callee.expression;
+    if (!ts.isPropertyAccessExpression(report)) return false;
+    const reports = report.expression;
+    if (!ts.isPropertyAccessExpression(reports) || reports.name.text !== "reports") return false;
+    const receiver = reports.expression;
+    return ts.isIdentifier(receiver) ? isRealClient(receiver.text) : isFactoryCall(receiver);
   };
 
   const checkObjectUse = (node: ts.Identifier): void => {
@@ -512,7 +618,7 @@ export function astViolations(source: string): string[] {
       }
     }
     flag(
-      "Object.* (values/entries/keys/getOwnProperty*/fromEntries/…) — it can enumerate SDK namespaces; the only tolerated use is Object.entries|values|keys(row) inside `for (const row of result.rows)` over an awaited report result",
+      "Object.* (values/entries/keys/getOwnProperty*/fromEntries/…) — it can enumerate SDK namespaces; the only tolerated use is Object.entries|values|keys(row) inside `for (const row of result.rows)` where `const result = await client.reports.<report>.waitForResult|waitForRequest|result(...)` is called on a client built by the imported makeLiveClient()",
     );
   };
 
@@ -547,14 +653,14 @@ export function astViolations(source: string): string[] {
       if (ts.isNumericLiteral(key) || onProcessEnv) {
         // Array index / environment lookup: cannot name an SDK member.
       } else if (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) {
-        if (namespaces.includes(key.text) || WRITE_VERB_KEY.test(key.text)) {
+        if (isForbiddenMemberName(key.text)) {
           flag(
-            `string-keyed access to "${key.text}" (client namespace or write-verb member) — use plain member access to a documented read`,
+            `string-keyed access to "${key.text}" (client namespace, write method or reflection name) — use plain member access to a documented read`,
           );
         }
       } else {
         flag(
-          "computed member access with a non-literal key (x[k], x['r'+'ma'], x[`r${a}`]) — it can reach a write method on the SDK",
+          "computed member access with a non-literal key (x[k], rows[i], x['r'+'ma']) — it can reach a write method on the SDK; index with a numeric literal, or use .at(n) / for-of / .map() instead",
         );
       }
     } else if (ts.isPropertyAccessExpression(node)) {
@@ -576,6 +682,11 @@ export function astViolations(source: string): string[] {
           if (WRITE_METHOD_NAMES.has(key.text)) {
             flag(`destructuring of the write method ${key.text}`);
           }
+          if (BANNED_PROPERTY_NAMES.has(key.text) || BANNED_GLOBALS.has(key.text)) {
+            flag(
+              `destructuring of ${key.text} (reflection, raw network access or code evaluation)`,
+            );
+          }
           if (namespaces.includes(key.text)) {
             flag(
               `destructuring of the ${key.text} namespace (variable, parameter or catch binding) — use client.${key.text}.<read>(...)`,
@@ -586,16 +697,16 @@ export function astViolations(source: string): string[] {
     } else if (ts.isObjectLiteralExpression(node) && isAssignmentTarget(node)) {
       for (const property of node.properties) {
         if (ts.isShorthandPropertyAssignment(property)) {
-          if (namespaces.includes(property.name.text)) {
-            flag(`destructuring assignment of the ${property.name.text} namespace`);
+          if (isForbiddenMemberName(property.name.text) || BANNED_GLOBALS.has(property.name.text)) {
+            flag(`destructuring assignment of ${property.name.text}`);
           }
         } else if (ts.isPropertyAssignment(property)) {
           if (ts.isComputedPropertyName(property.name)) {
             flag("destructuring assignment with a computed key");
           } else {
             const text = keyText(property.name);
-            if (text !== undefined && namespaces.includes(text)) {
-              flag(`destructuring assignment of the ${text} namespace`);
+            if (text !== undefined && (isForbiddenMemberName(text) || BANNED_GLOBALS.has(text))) {
+              flag(`destructuring assignment of ${text}`);
             }
           }
         }
@@ -644,4 +755,108 @@ export function astViolations(source: string): string[] {
 
   visit(sourceFile);
   return [...reasons];
+}
+
+// Members of NeweggClient that are neither a namespace nor a write surface.
+const CLIENT_PLAIN_MEMBERS: ReadonlySet<string> = new Set(["marketplace", "verifyCredentials"]);
+// Methods that only re-bind a function; they are not SDK methods and never appear on an API interface.
+const FUNCTION_HELPERS: ReadonlySet<string> = new Set(["call", "apply", "bind"]);
+
+function memberName(member: ts.TypeElement): string | undefined {
+  const name = member.name;
+  if (name === undefined) return undefined;
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text;
+  return undefined;
+}
+
+/**
+ * Problems with how the SDK's client surface is classified, found by parsing `types.ts` (not by
+ * regex, so no member form can be skipped): every member of `NeweggClient` must be a plain member
+ * or a classified namespace typed by a plain interface reference, and every member of a write
+ * namespace's interface must be a listed read or a listed write method. Fails closed on anything
+ * it cannot read (index signatures, computed names, `extends`, unions, intersections).
+ */
+export function clientSurfaceProblems(typesSource: string): string[] {
+  const problems: string[] = [];
+  const file = ts.createSourceFile("types.ts", typesSource, ts.ScriptTarget.ESNext, true);
+  const interfaces = new Map<string, ts.InterfaceDeclaration>();
+  for (const statement of file.statements) {
+    if (ts.isInterfaceDeclaration(statement)) interfaces.set(statement.name.text, statement);
+  }
+  const client = interfaces.get("NeweggClient");
+  if (client === undefined)
+    return ["interface NeweggClient not found in packages/sdk/src/types.ts"];
+  if (client.heritageClauses !== undefined) {
+    problems.push("NeweggClient extends something: its inherited members cannot be classified");
+  }
+  const writeNamespaces = Object.keys(WRITE_NAMESPACE_READS);
+  const seen = new Set<string>();
+  for (const member of client.members) {
+    const name = memberName(member);
+    if (name === undefined) {
+      problems.push(`NeweggClient has a member the guard cannot name: ${member.getText(file)}`);
+      continue;
+    }
+    seen.add(name);
+    if (CLIENT_PLAIN_MEMBERS.has(name)) continue;
+    const isWrite = writeNamespaces.includes(name);
+    if (!isWrite && !READ_ONLY_NAMESPACES.includes(name)) {
+      problems.push(
+        `NeweggClient.${name} is not classified in scripts/live-readonly-ast.ts: add it to WRITE_NAMESPACE_READS (with its read methods), READ_ONLY_NAMESPACES or CLIENT_PLAIN_MEMBERS`,
+      );
+      continue;
+    }
+    const type = ts.isPropertySignature(member) ? member.type : undefined;
+    if (
+      type === undefined ||
+      !ts.isTypeReferenceNode(type) ||
+      !ts.isIdentifier(type.typeName) ||
+      type.typeArguments !== undefined
+    ) {
+      problems.push(
+        `NeweggClient.${name} is not a plain interface reference (union, intersection, method, ...)`,
+      );
+      continue;
+    }
+    const api = interfaces.get(type.typeName.text);
+    if (api === undefined || api.heritageClauses !== undefined) {
+      problems.push(
+        `${type.typeName.text} (NeweggClient.${name}) is not a plain interface the guard can read`,
+      );
+      continue;
+    }
+    const names = new Set<string>();
+    for (const apiMember of api.members) {
+      const apiName = memberName(apiMember);
+      if (apiName === undefined) {
+        problems.push(
+          `${api.name.text} has a member the guard cannot name: ${apiMember.getText(file)}`,
+        );
+        continue;
+      }
+      names.add(apiName);
+      if (isWrite) {
+        const reads = WRITE_NAMESPACE_READS[name] ?? [];
+        if (!reads.includes(apiName) && !WRITE_METHOD_NAMES.has(apiName)) {
+          problems.push(
+            `client.${name}.${apiName} is in neither the read allowlist nor WRITE_METHOD_NAMES (scripts/live-readonly-ast.ts): classify it`,
+          );
+        }
+      } else if (WRITE_METHOD_NAMES.has(apiName) && !FUNCTION_HELPERS.has(apiName)) {
+        problems.push(
+          `client.${name}.${apiName} looks like a write method on a namespace classified read-only: reclassify ${name} or rename the method`,
+        );
+      }
+    }
+    if (isWrite) {
+      for (const read of WRITE_NAMESPACE_READS[name] ?? []) {
+        if (!names.has(read)) problems.push(`allowlisted read ${name}.${read} no longer exists`);
+      }
+    }
+  }
+  for (const name of [...writeNamespaces, ...READ_ONLY_NAMESPACES, ...CLIENT_PLAIN_MEMBERS]) {
+    if (!seen.has(name))
+      problems.push(`scripts/live-readonly-ast.ts lists "${name}", which NeweggClient lacks`);
+  }
+  return problems;
 }

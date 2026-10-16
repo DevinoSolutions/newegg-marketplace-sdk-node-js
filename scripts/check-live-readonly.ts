@@ -10,13 +10,7 @@
 // allowlist, namespace allowlist). A self-test proves each known bypass is still flagged.
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import {
-  PARSE_FAILURE_REASON,
-  READ_ONLY_NAMESPACES,
-  WRITE_METHOD_NAMES,
-  WRITE_NAMESPACE_READS,
-  astViolations,
-} from "./live-readonly-ast.js";
+import { PARSE_FAILURE_REASON, astViolations, clientSurfaceProblems } from "./live-readonly-ast.js";
 import {
   MUST_FLAG,
   MUST_NOT_PARSE,
@@ -155,47 +149,32 @@ for (const sample of MUST_PASS) {
   }
 }
 
-// Every namespace on NeweggClient must be classified, so a new write surface cannot appear on the
-// client without the guard noticing.
+// Every member of NeweggClient, and every method of a write namespace, must be explicitly classified
+// (parsed with the TypeScript compiler, failing closed on anything unreadable), so a new write
+// surface cannot appear on the client without the guard noticing. The synthetic cases prove the
+// check itself does not fail open.
 {
+  const base = "export interface FooApi { get(): void; }\n";
+  const failOpenCases: ReadonlyArray<string> = [
+    `${base}export interface NeweggClient { readonly marketplace: string; readonly orders: FooApi; readonly extra: FooService; }`,
+    `${base}export interface NeweggClient { readonly marketplace: string; readonly extra: FooApi | undefined; }`,
+    `${base}export interface NeweggClient { readonly marketplace: string; readonly extra: FooApi & Bar; }`,
+    `${base}export interface NeweggClient { readonly marketplace: string; submitThing(): void; }`,
+    `${base}export interface NeweggClient { readonly marketplace: string; [key: string]: unknown; }`,
+    `${base}export interface NeweggClient extends Other { readonly marketplace: string; }`,
+    "export interface OrdersApi { list(): void; ship: (x: unknown) => void; }\nexport interface NeweggClient { readonly marketplace: string; readonly orders: OrdersApi; }",
+    "export interface OrdersApi { list(): void; sneaky(): void; }\nexport interface NeweggClient { readonly marketplace: string; readonly orders: OrdersApi; }",
+    "export interface OrdersApi { list(): void; [k: string]: unknown; }\nexport interface NeweggClient { readonly marketplace: string; readonly orders: OrdersApi; }",
+    "export interface OrdersApi extends Base { list(): void; }\nexport interface NeweggClient { readonly marketplace: string; readonly orders: OrdersApi; }",
+    "export type NeweggClient = { marketplace: string };",
+  ];
+  for (const sample of failOpenCases) {
+    if (clientSurfaceProblems(sample).length === 0) {
+      fail(`self-test: surface check fails open on: ${JSON.stringify(sample)}`);
+    }
+  }
   const typesSource = readFileSync(join(root, "packages", "sdk", "src", "types.ts"), "utf8");
-  const body = /export interface NeweggClient \{([\s\S]*?)\n\}/.exec(typesSource)?.[1] ?? "";
-  const members = [...body.matchAll(/^\s*readonly (\w+): \w+Api;/gm)].map((m) => m[1] ?? "");
-  const known = new Set([...Object.keys(WRITE_NAMESPACE_READS), ...READ_ONLY_NAMESPACES]);
-  if (members.length === 0) {
-    fail("could not read the NeweggClient namespaces from packages/sdk/src/types.ts");
-  }
-  for (const member of members) {
-    if (!known.has(member)) {
-      fail(
-        `NeweggClient.${member} is not classified in scripts/live-readonly-ast.ts: add it to WRITE_NAMESPACE_READS (with its read methods) or READ_ONLY_NAMESPACES`,
-      );
-    }
-  }
-  for (const name of known) {
-    if (members.length > 0 && !members.includes(name)) {
-      fail(`scripts/live-readonly-ast.ts lists namespace "${name}", which NeweggClient lacks`);
-    }
-  }
-  // ...and so must every method of a write namespace: a read in its allowlist or a named write.
-  for (const [namespace, reads] of Object.entries(WRITE_NAMESPACE_READS)) {
-    const apiName = new RegExp(`readonly ${namespace}: (\\w+);`).exec(body)?.[1];
-    const apiBody = apiName
-      ? new RegExp(`export interface ${apiName} \\{([\\s\\S]*?)\\r?\\n\\}`).exec(typesSource)?.[1]
-      : undefined;
-    if (apiBody === undefined) {
-      fail(`could not read the ${namespace} API interface from packages/sdk/src/types.ts`);
-      continue;
-    }
-    for (const m of apiBody.matchAll(/^ {2}(\w+)[(<]/gm)) {
-      const method = m[1] ?? "";
-      if (!reads.includes(method) && !WRITE_METHOD_NAMES.has(method)) {
-        fail(
-          `client.${namespace}.${method} is in neither the read allowlist nor WRITE_METHOD_NAMES (scripts/live-readonly-ast.ts): classify it`,
-        );
-      }
-    }
-  }
+  for (const problem of clientSurfaceProblems(typesSource)) fail(problem);
 }
 
 let files: string[] = [];
