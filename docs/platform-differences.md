@@ -331,6 +331,10 @@ a `NeweggAuthenticationError` / `NeweggAuthorizationError`; note the body is **p
 not JSON**, which is why the error parser tolerates non-JSON bodies (see
 `error-handling.md`).
 
+A `401` on a platform you hold valid keys for is most often a wrong **Seller ID**: Seller IDs
+are per platform (the CA and US IDs can differ), and the `?sellerid=` value must match the
+platform in `NEWEGG_MARKETPLACE`. Check the Seller ID before suspecting the keys.
+
 ---
 
 ## Assumptions box

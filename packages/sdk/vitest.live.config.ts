@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 
 // Opt-in live smoke tests against the real Newegg API.
-// Gated inside the suite on NEWEGG_LIVE_TESTS plus explicit acknowledgement vars;
+// Gated inside the suite on NEWEGG_LIVE_TESTS=true plus the three credentials;
 // never included in the default `npm test` run and never in CI.
 export default defineConfig({
   test: {

@@ -457,7 +457,9 @@ before exposing the server beyond loopback.
 ## Environment variables
 
 Canonical names and defaults from [`.env.example`](.env.example). Credentials are
-**platform-specific**: a US key is not valid for B2B or CA.
+**platform-specific**: a US key is not valid for B2B or CA. For `401` errors (a wrong Seller ID or a
+key from another platform is the usual cause), see
+[`docs/platform-differences.md`](docs/platform-differences.md#credentials-are-platform-specific).
 
 ### SDK / credentials
 
@@ -489,12 +491,11 @@ Canonical names and defaults from [`.env.example`](.env.example). Credentials ar
 
 ### Live tests (opt-in; never in CI)
 
-| Variable                                                     | Default | Meaning                                            |
-| ------------------------------------------------------------ | ------- | -------------------------------------------------- |
-| `NEWEGG_LIVE_TESTS`                                          | `false` | Master switch for the live smoke suite.            |
-| `NEWEGG_LIVE_TEST_SELLER_PART_NUMBER`                        | empty   | A dedicated **test** listing's Seller Part Number. |
-| `NEWEGG_LIVE_TEST_WAREHOUSE`                                 | empty   | Warehouse/location for the live test.              |
-| `NEWEGG_LIVE_TESTS_I_UNDERSTAND_THIS_TOUCHES_A_REAL_ACCOUNT` | empty   | Reserved; the live suite has no write test.        |
+| Variable                              | Default | Meaning                                            |
+| ------------------------------------- | ------- | -------------------------------------------------- |
+| `NEWEGG_LIVE_TESTS`                   | `false` | Master switch for the live smoke suite.            |
+| `NEWEGG_LIVE_TEST_SELLER_PART_NUMBER` | empty   | A dedicated **test** listing's Seller Part Number. |
+| `NEWEGG_LIVE_TEST_WAREHOUSE`          | empty   | Warehouse/location for the live test.              |
 
 ---
 
