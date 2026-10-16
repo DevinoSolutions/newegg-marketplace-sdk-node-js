@@ -1,8 +1,9 @@
 # Dependabot version updates.
 #
-# Security updates are separate from this file's `ignore` rules: Dependabot
-# security PRs still open for vulnerable versions even when a version-update
-# ignore rule below would otherwise skip them.
+# The `ignore` rules below also apply to Dependabot security updates. If the
+# only fix for an alert is an ignored bump (a major of a pinned tool, or a
+# TypeScript minor), no security PR opens: the alert stays open and needs a
+# manual, owner-approved bump.
 #
 # Toolchain pins (see CLAUDE.md) need owner sign-off to move, so semver-major
 # bumps of the pinned tools are ignored, and TypeScript minors too (pin ~6.0.3).
