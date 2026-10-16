@@ -1,6 +1,7 @@
 import type { RateLimitInfo } from "../types.js";
 import { parsePacificTimestamp } from "../platform/dates.js";
 import { isRecord } from "../util.js";
+import { redactUrlCredentials } from "./redact.js";
 import {
   NeweggApiError,
   NeweggAuthenticationError,
@@ -66,20 +67,33 @@ function parseXmlErrors(text: string): UpstreamErrorEntry[] {
   return out;
 }
 
-/** Parses any Newegg error body (JSON object, JSON array, XML, or plain text) into entries. */
+function redactEntry(entry: UpstreamErrorEntry): UpstreamErrorEntry {
+  return {
+    code: entry.code === undefined ? undefined : redactUrlCredentials(entry.code),
+    message: entry.message === undefined ? undefined : redactUrlCredentials(entry.message),
+  };
+}
+
+/**
+ * Parses any Newegg error body (JSON object, JSON array, XML, or plain text) into entries.
+ * Every returned string has URL credentials (`ftp://user:password@host`) redacted. The raw text
+ * is redacted before parsing/clipping (a clip could otherwise cut a credential mid-way and leave
+ * a partial secret) and the parsed values again afterwards (JSON unicode escapes only become
+ * an `@` once decoded).
+ */
 export function parseUpstreamBody(bodyText: string | undefined): UpstreamErrorEntry[] {
-  const text = (bodyText ?? "").trim();
+  const text = redactUrlCredentials((bodyText ?? "").trim());
   if (text === "") return [];
   if (text.startsWith("{") || text.startsWith("[")) {
     try {
-      return normalizeJsonError(JSON.parse(text));
+      return normalizeJsonError(JSON.parse(text)).map(redactEntry);
     } catch {
       // Not valid JSON despite the leading brace — fall through to other parsers.
     }
   }
   if (text.startsWith("<")) {
     const xml = parseXmlErrors(text);
-    if (xml.length > 0) return xml;
+    if (xml.length > 0) return xml.map(redactEntry);
   }
   return [{ message: clip(text) }];
 }
@@ -111,7 +125,8 @@ interface UpstreamErrorContext {
 
 /**
  * Maps an upstream non-2xx response to the correct SDK error subclass. Never includes
- * credential material — only Newegg's own `Code`/`Message` values reach `details`.
+ * credential material — only Newegg's own `Code`/`Message` values reach `details`, with URL
+ * credentials redacted.
  */
 export function parseUpstreamError(
   status: number,
