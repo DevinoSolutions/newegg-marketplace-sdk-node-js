@@ -134,7 +134,12 @@ describe("classifyTransport", () => {
       false,
     );
     expect(reset).toMatchObject({ phase: "ambiguous", timeout: false, causeCode: "ECONNRESET" });
-    expect(classifyTransport("weird", false)).toMatchObject({ phase: "ambiguous" });
+    const weird = classifyTransport("weird", false) as TransportError;
+    expect(weird).toBeInstanceOf(TransportError);
+    expect(weird.phase).toBe("ambiguous");
+    expect(weird.timeout).toBe(false);
+    expect(weird.causeCode).toBeUndefined();
+    expect(weird.cause).toBe("weird");
   });
 });
 
@@ -191,11 +196,18 @@ describe("feed envelopes", () => {
   ];
 
   it("US envelope: Item is an array, fulfillment is always Seller, quantity is a string", () => {
-    const env = buildUsFeedEnvelope(items) as {
-      NeweggEnvelope: { Header: unknown; Message: { Inventory: { Item: unknown[] } } };
+    // Compare the serialized wire form: an undefined WarehouseLocation must not be sent.
+    const env = JSON.parse(JSON.stringify(buildUsFeedEnvelope(items))) as {
+      NeweggEnvelope: {
+        Header: unknown;
+        MessageType: string;
+        Message: { Inventory: { Item: unknown[] } };
+      };
     };
-    expect(env.NeweggEnvelope.Header).toEqual({ DocumentVersion: "2.0" });
-    expect(env.NeweggEnvelope.Message.Inventory.Item).toEqual([
+    expect(env.NeweggEnvelope.Header).toStrictEqual({ DocumentVersion: "2.0" });
+    expect(env.NeweggEnvelope.MessageType).toBe("Inventory");
+    expect(env.NeweggEnvelope).not.toHaveProperty("Overwrite");
+    expect(env.NeweggEnvelope.Message.Inventory.Item).toStrictEqual([
       {
         SellerPartNumber: "SKU-1",
         NeweggItemNumber: "N82E-FAKE",
@@ -205,7 +217,6 @@ describe("feed envelopes", () => {
       },
       {
         SellerPartNumber: "SKU-2",
-        WarehouseLocation: undefined,
         FulfillmentOption: "Seller",
         Inventory: "0",
       },
@@ -214,8 +225,15 @@ describe("feed envelopes", () => {
 
   it("B2B/CA envelope hard-codes Overwrite=No and omits an absent item number", () => {
     const env = buildItemFeedEnvelope(items) as {
-      NeweggEnvelope: { Overwrite: string; Message: { Inventory: { Item: unknown[] } } };
+      NeweggEnvelope: {
+        Header: unknown;
+        MessageType: string;
+        Overwrite: string;
+        Message: { Inventory: { Item: unknown[] } };
+      };
     };
+    expect(env.NeweggEnvelope.Header).toStrictEqual({ DocumentVersion: "1.0" });
+    expect(env.NeweggEnvelope.MessageType).toBe("Inventory");
     expect(env.NeweggEnvelope.Overwrite).toBe("No");
     expect(JSON.stringify(env)).not.toContain('"Yes"');
     expect(env.NeweggEnvelope.Message.Inventory.Item).toEqual([
