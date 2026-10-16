@@ -1,15 +1,17 @@
 # @devino/newegg-marketplace-mcp
 
 A Model Context Protocol (MCP) server exposing safe, narrowly-scoped Newegg Marketplace
-inventory tools over **stdio** and **Streamable HTTP**. Built on
+tools (inventory, prices, orders, reports, RMAs and refunds, catalog and reference lookups, listing
+creation) over **stdio** and **Streamable HTTP**. Built on
 [`@devino/newegg-marketplace-sdk`](../sdk/README.md), it is designed for language-model callers acting
 on a real seller account: tool descriptions are treated as hints, not security, and every
 constraint is enforced in handler code.
 
-- **Read-only by default.** The mutating apply tool is registered only when
+- **Read-only by default.** No write tool is registered unless
   `NEWEGG_MCP_ALLOW_WRITES=true`.
 - **Preview → apply writes.** A model must produce a reviewable plan and a single-use,
-  TTL-bounded `previewId`; apply cannot change quantities.
+  TTL-bounded `previewId`; apply takes only that id and cannot change the plan.
+- **No order writes.** Shipping or cancelling orders is SDK-only; no MCP tool exposes it.
 - **No credentials via MCP.** Callers can never supply credentials, base URLs, hostnames, or
   `Overwrite` values; raw upstream Newegg bodies never cross the boundary.
 
@@ -116,6 +118,23 @@ Underscore names, per MCP naming rules. All reads are annotated `readOnlyHint: t
 | `newegg_orders_get`                      | `{ orderNumber: string \| integer }`                                                                                                                        | Read-only. One order's full detail; `found=false` when no such order exists for this seller.                                                                                                                                                                                                                                         |
 | `newegg_orders_get_status`               | `{ orderNumber: string \| integer }`                                                                                                                        | Read-only. Lightweight order status (status code/name, sales channel, fulfillment); `found=false` when absent.                                                                                                                                                                                                                       |
 
+### Catalog, reference and listing tools
+
+Read-only unless marked **W** (**W** tools exist only with `NEWEGG_MCP_ALLOW_WRITES=true`). Use
+`tools/list` for each tool's exact input schema.
+
+| Tool                            | Notes                                                                                                                               |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `newegg_catalog_resolve`        | Resolve UPC / manufacturer part number / Newegg item number to Newegg item numbers (Item Lookup Report; may answer `pending`).      |
+| `newegg_catalog_lookup_status`  | Continue a pending catalog lookup by request id.                                                                                    |
+| `newegg_seller_status`          | Seller account status and tier.                                                                                                     |
+| `newegg_industries_list`        | Industries the seller may list in.                                                                                                  |
+| `newegg_subcategories_list`     | Subcategories and their enabled status.                                                                                             |
+| `newegg_subcategory_properties` | Properties a subcategory takes.                                                                                                     |
+| `newegg_property_values`        | Allowed values for a property; requires a subcategory id.                                                                           |
+| `newegg_listing_preview_create` | Offline plan for adding offers on EXISTING Newegg items (never creates a product record). Returns a `previewId` for the apply tool. |
+| `newegg_listing_apply_create`   | **W** Submits exactly the previewed listing feed.                                                                                   |
+
 Where:
 
 - **`Identifier`** = `{ type: "sellerPartNumber" | "neweggItemNumber" | "upc"; value: string (1–64); condition?: Condition }`.
@@ -148,7 +167,7 @@ is not surfaced in the tool's output.
 | `NEWEGG_API_KEY`                      | — (required)             | API key (`Authorization` header).                                                                                              |
 | `NEWEGG_SECRET_KEY`                   | — (required)             | Secret key (`SecretKey` header).                                                                                               |
 | `NEWEGG_MARKETPLACE`                  | `us`                     | `us` \| `b2b` \| `ca`. Credentials are platform-specific.                                                                      |
-| `NEWEGG_MCP_ALLOW_WRITES`             | `false`                  | Registers the write tools (inventory, pricing, RMA, courtesy refund preview + apply) when `true`.                              |
+| `NEWEGG_MCP_ALLOW_WRITES`             | `false`                  | Registers the write tools (inventory, pricing, listings, RMA, courtesy refund; preview + apply) when `true`.                   |
 | `NEWEGG_MCP_MAX_ITEMS_PER_OPERATION`  | `500`                    | Max items per preview/apply.                                                                                                   |
 | `NEWEGG_MCP_PREVIEW_TTL_SECONDS`      | `600`                    | Preview lifetime before expiry.                                                                                                |
 | `NEWEGG_MCP_ALLOW_ZERO_QUANTITY`      | `true`                   | Allow quantity `0` (out-of-stock) writes.                                                                                      |

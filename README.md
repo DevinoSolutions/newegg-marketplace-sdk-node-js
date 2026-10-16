@@ -6,8 +6,9 @@ safety-first inventory management across Newegg's US, B2B, and Canada marketplac
 
 - **`@devino/newegg-marketplace-sdk`** — the SDK. One runtime dependency (`zod`), no MCP
   baggage, no I/O at import time. Usable from queues, cron jobs, HTTP services, or the CLI.
-- **`@devino/newegg-marketplace-mcp`** — an MCP server exposing safe inventory tools over
-  stdio and Streamable HTTP, with writes gated behind a preview → apply flow.
+- **`@devino/newegg-marketplace-mcp`** — an MCP server exposing Newegg read tools (inventory,
+  prices, orders, reports, RMAs, catalog, reference data) over stdio and Streamable HTTP. Write
+  tools exist only with `NEWEGG_MCP_ALLOW_WRITES=true` and always go through preview → apply.
 
 > The `@devino` scope is a placeholder chosen to be easy to find-and-replace. See
 > [`docs/publishing.md`](docs/publishing.md#rename-the-devino-scope) to rename it.
@@ -19,6 +20,8 @@ safety-first inventory management across Newegg's US, B2B, and Canada marketplac
 - [Installation](#installation)
 - [SDK quick start](#sdk-quick-start)
 - [Reading inventory](#reading-inventory)
+- [SDK surface](#sdk-surface)
+- [MCP tools](#mcp-tools)
 - [MCP server — stdio](#mcp-server--stdio)
 - [MCP server — Streamable HTTP](#mcp-server--streamable-http)
 - [Environment variables](#environment-variables)
@@ -45,10 +48,12 @@ newegg-marketplace-sdk-node-js/
 │  ├─ sdk/          @devino/newegg-marketplace-sdk — transport-independent TS SDK
 │  └─ mcp-server/   @devino/newegg-marketplace-mcp — MCP server (stdio + Streamable HTTP)
 ├─ examples/        runnable examples (npm workspaces):
-│  ├─ sdk-basic/            read + preview with the SDK
-│  ├─ sdk-batch-inventory/  batch updates, dedup, feed chunking
-│  ├─ mcp-stdio/            MCP client over stdio
-│  └─ mcp-http/             MCP client over Streamable HTTP
+│  ├─ sdk-basic/              read + preview with the SDK
+│  ├─ sdk-batch-inventory/    batch updates, dedup, feed chunking
+│  ├─ sdk-orders-and-reports/ read-only: unshipped orders + settlement summary
+│  ├─ sdk-pricing-preview/    price read + previewUpdate only (never writes)
+│  ├─ mcp-stdio/              MCP client over stdio
+│  └─ mcp-http/               MCP client over Streamable HTTP
 ├─ docs/
 │  ├─ adr/          architecture decision records (0001–0005)
 │  └─ research/     verified Newegg wire contracts + the binding SDK API contract
@@ -309,6 +314,63 @@ console.log(listings.totalRows, listings.rows[0]?.sellerPartNumber); // SKU, no 
 
 ---
 
+## SDK surface
+
+`createNeweggClient(config)` returns a `NeweggClient`. The binding contract is
+[`docs/research/sdk-public-api.md`](docs/research/sdk-public-api.md); `packages/sdk/src/types.ts`
+is the source of truth for signatures. **Write** methods change the real seller account; every
+other method only reads (several reads are HTTP `PUT`/`POST` upstream, so classify by this table,
+not by verb).
+
+| Namespace                    | Reads                                                                                                                                | Writes                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| `client.inventory`           | `getItem`, `tryGetItem`, `getMany`, `previewUpdate`                                                                                  | `updateItem`, `updateMany`                            |
+| `client.pricing`             | `get`, `tryGet`, `getMany`, `previewUpdate`                                                                                          | `update`                                              |
+| `client.orders`              | `list`, `get`, `tryGet`, `getStatus`, `tryGetStatus`                                                                                 | `ship`, `cancel`, `confirmDownload`, `removeItems`    |
+| `client.listings`            | `previewCreate` (offline)                                                                                                            | `create` (offers on existing Newegg items only)       |
+| `client.catalog`             | `resolve`, `submitLookup`, `lookupStatus`, `lookupResult` (Item Lookup Report)                                                       | —                                                     |
+| `client.reports`             | `settlementSummary`, `settlementTransactions`, `dailyInventory`, `dailyPrice`, `itemBasicInfo`, `orderList`, `rmaList`, `status(id)` | — (submitting a report only creates a job)            |
+| `client.reference`           | `getSellerStatus`, `listIndustries`, `listSubcategories`, `listSubcategoryProperties`, `listPropertyValues` (needs `subcategoryId`)  | —                                                     |
+| `client.rma`                 | `list`, `get`, `tryGet`, `previewSubmit`, `previewEdit`, `previewProcess`, `previewReject`                                           | `submit`, `edit`, `process`, `reject`                 |
+| `client.refunds`             | `list`, `get`, `tryGet`, `listRequests`, `getRequestStatus`, `previewIssue`                                                          | `issue` (courtesy refund; commission is not refunded) |
+| `client.feeds`               | `getStatus`, `getResult`, `waitForResult`                                                                                            | `submitInventoryFeed`                                 |
+| `client.service`             | `getStatus`                                                                                                                          | —                                                     |
+| `client.storefront`          | `getOffers` (unofficial public buy-box reader; `us`/`ca` only)                                                                       | —                                                     |
+| `client.verifyCredentials()` | one service-status GET; throws on 401/403                                                                                            | —                                                     |
+
+Also exported: `createNeweggClient`, the typed `NeweggError` hierarchy, `InMemoryRateLimitStore`,
+`InMemoryOperationStore`, `SDK_VERSION`, and the chunk-size constants. Test helpers live at
+`@devino/newegg-marketplace-sdk/testing`.
+
+Runnable examples (read-only or preview-only unless stated in their README): `examples/` (each has its own README).
+
+---
+
+## MCP tools
+
+Read tools are always registered. Write tools (marked **W**) are registered only when
+`NEWEGG_MCP_ALLOW_WRITES=true`; each `…_apply_…` tool takes only a `previewId` from its
+`…_preview_…` twin (ADR 0005). Full inputs and notes:
+[`packages/mcp-server/README.md`](packages/mcp-server/README.md).
+
+| Area      | Read tools (always)                                                                                                                      | Write tools (gated)                                                                                                      |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Inventory | `newegg_inventory_get`, `newegg_inventory_preview_update`                                                                                | **W** `newegg_inventory_apply_update`                                                                                    |
+| Pricing   | `newegg_pricing_get`                                                                                                                     | **W** `newegg_pricing_preview_update`, `newegg_pricing_apply_update`                                                     |
+| Listings  | `newegg_listing_preview_create`                                                                                                          | **W** `newegg_listing_apply_create`                                                                                      |
+| RMA       | `newegg_rma_list`, `newegg_rma_get`                                                                                                      | **W** `newegg_rma_preview_{submit,edit,process,reject}`, `newegg_rma_apply_{submit,edit,process,reject}`                 |
+| Refunds   | `newegg_refund_list`, `newegg_refund_status`                                                                                             | **W** `newegg_refund_preview_issue`, `newegg_refund_apply_issue` (capped by `NEWEGG_MCP_MAX_REFUND_AMOUNT`, default 500) |
+| Orders    | `newegg_orders_list`, `newegg_orders_get`, `newegg_orders_get_status`                                                                    | none (order ship/cancel is SDK-only)                                                                                     |
+| Reports   | `newegg_reports_{settlement_summary,settlement_transactions,daily_inventory,daily_price,item_basic_info,order_list,rma_list,status}`     | —                                                                                                                        |
+| Catalog   | `newegg_catalog_resolve`, `newegg_catalog_lookup_status`                                                                                 | —                                                                                                                        |
+| Reference | `newegg_seller_status`, `newegg_industries_list`, `newegg_subcategories_list`, `newegg_subcategory_properties`, `newegg_property_values` | —                                                                                                                        |
+| Platform  | `newegg_feed_status`, `newegg_feed_result`, `newegg_service_status`                                                                      | —                                                                                                                        |
+
+The server also serves the resources `newegg://capabilities`, `newegg://configuration/public` and
+`newegg://feeds/{requestId}`.
+
+---
+
 ## MCP server — stdio
 
 Stdio is the default transport: the MCP client launches the server as a subprocess. Add it
@@ -354,7 +416,7 @@ Claude Desktop style (same shape; run the built CLI directly from a local checko
 }
 ```
 
-Writes are **disabled by default** — the apply tool is not even registered unless
+Writes are **disabled by default** — no write tool is registered unless
 `NEWEGG_MCP_ALLOW_WRITES=true`. On stdio, the server logs strictly to stderr; stdout carries
 only the JSON-RPC protocol.
 
@@ -409,19 +471,21 @@ Canonical names and defaults from [`.env.example`](.env.example). Credentials ar
 
 ### MCP server
 
-| Variable                             | Default                  | Meaning                                                                                                       |
-| ------------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `NEWEGG_MCP_ALLOW_WRITES`            | `false`                  | When `true`, registers `newegg_inventory_apply_update`. Otherwise the write tool is absent from `tools/list`. |
-| `NEWEGG_MCP_MAX_ITEMS_PER_OPERATION` | `500`                    | Hard cap on items per preview/apply.                                                                          |
-| `NEWEGG_MCP_PREVIEW_TTL_SECONDS`     | `600`                    | Lifetime of a stored preview before it expires.                                                               |
-| `NEWEGG_MCP_ALLOW_ZERO_QUANTITY`     | `true`                   | Whether quantity `0` (out-of-stock) writes are allowed.                                                       |
-| `NEWEGG_MCP_ALLOWED_WAREHOUSES`      | empty = all              | Comma-separated warehouse allowlist.                                                                          |
-| `NEWEGG_MCP_ALLOWED_MARKETPLACES`    | empty = all              | Comma-separated marketplace allowlist.                                                                        |
-| `NEWEGG_MCP_HTTP_HOST`               | `127.0.0.1`              | HTTP transport bind host.                                                                                     |
-| `NEWEGG_MCP_HTTP_PORT`               | `3919`                   | HTTP transport bind port.                                                                                     |
-| `NEWEGG_MCP_HTTP_BEARER_TOKEN`       | empty                    | Bearer token; **required** before binding a non-loopback host.                                                |
-| `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`    | empty = same-origin only | Comma-separated allowed browser `Origin` values.                                                              |
-| `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`      | empty                    | Comma-separated allowed `Host` values (`host[:port]`); loopback always allowed.                               |
+| Variable                              | Default                  | Meaning                                                                                                                                   |
+| ------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `NEWEGG_MCP_ALLOW_WRITES`             | `false`                  | When `true`, registers the write tools (inventory, pricing, listings, RMA, courtesy refund). Otherwise they are absent from `tools/list`. |
+| `NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT` | `50`                     | Largest absolute % change one price update may make vs the current price; bigger is blocked at preview.                                   |
+| `NEWEGG_MCP_MAX_REFUND_AMOUNT`        | `500`                    | Largest courtesy refund (or refund-RMA total) one preview may plan, in the marketplace currency.                                          |
+| `NEWEGG_MCP_MAX_ITEMS_PER_OPERATION`  | `500`                    | Hard cap on items per preview/apply.                                                                                                      |
+| `NEWEGG_MCP_PREVIEW_TTL_SECONDS`      | `600`                    | Lifetime of a stored preview before it expires.                                                                                           |
+| `NEWEGG_MCP_ALLOW_ZERO_QUANTITY`      | `true`                   | Whether quantity `0` (out-of-stock) writes are allowed.                                                                                   |
+| `NEWEGG_MCP_ALLOWED_WAREHOUSES`       | empty = all              | Comma-separated warehouse allowlist.                                                                                                      |
+| `NEWEGG_MCP_ALLOWED_MARKETPLACES`     | empty = all              | Comma-separated marketplace allowlist.                                                                                                    |
+| `NEWEGG_MCP_HTTP_HOST`                | `127.0.0.1`              | HTTP transport bind host.                                                                                                                 |
+| `NEWEGG_MCP_HTTP_PORT`                | `3919`                   | HTTP transport bind port.                                                                                                                 |
+| `NEWEGG_MCP_HTTP_BEARER_TOKEN`        | empty                    | Bearer token; **required** before binding a non-loopback host.                                                                            |
+| `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`     | empty = same-origin only | Comma-separated allowed browser `Origin` values.                                                                                          |
+| `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`       | empty                    | Comma-separated allowed `Host` values (`host[:port]`); loopback always allowed.                                                           |
 
 ### Live tests (opt-in; never in CI)
 
@@ -430,7 +494,7 @@ Canonical names and defaults from [`.env.example`](.env.example). Credentials ar
 | `NEWEGG_LIVE_TESTS`                                          | `false` | Master switch for the live smoke suite.            |
 | `NEWEGG_LIVE_TEST_SELLER_PART_NUMBER`                        | empty   | A dedicated **test** listing's Seller Part Number. |
 | `NEWEGG_LIVE_TEST_WAREHOUSE`                                 | empty   | Warehouse/location for the live test.              |
-| `NEWEGG_LIVE_TESTS_I_UNDERSTAND_THIS_TOUCHES_A_REAL_ACCOUNT` | empty   | Must equal `yes` to arm the live suite.            |
+| `NEWEGG_LIVE_TESTS_I_UNDERSTAND_THIS_TOUCHES_A_REAL_ACCOUNT` | empty   | Reserved; the live suite has no write test.        |
 
 ---
 
@@ -439,14 +503,16 @@ Canonical names and defaults from [`.env.example`](.env.example). Credentials ar
 The MCP server assumes tool descriptions are hints, not security, and enforces every
 constraint in code:
 
-- **Read-only by default.** The write tool is registered only when
+- **Read-only by default.** Write tools are registered only when
   `NEWEGG_MCP_ALLOW_WRITES=true`.
 - **Preview → apply.** Writes require a two-step flow; apply takes only a single-use,
-  TTL-bounded `previewId` and cannot alter quantities.
+  TTL-bounded `previewId` and cannot alter the previewed plan. Price changes and refunds are
+  also capped (`NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT`, `NEWEGG_MCP_MAX_REFUND_AMOUNT`).
 - **No credentials via MCP.** Callers can never supply credentials, base URLs, hostnames, or
   `Overwrite` values; raw upstream bodies never cross the MCP boundary.
-- **`Overwrite: "Yes"` is impossible** — hard-coded `"No"` for B2B/CA feeds, so catalog-wide
+- **`Overwrite: "Yes"` is impossible** — the feed envelope hard-codes `"No"`, so catalog-wide
   deactivation is unreachable.
+- **The live test suite is read-only**, guarded in CI by `npm run check:live-readonly`.
 - **Network-safe HTTP** — loopback default, bearer requirement for non-loopback, host/origin
   validation, secret-free `/healthz`.
 
@@ -456,7 +522,9 @@ Full threat model and deployment checklists: [`docs/mcp-security.md`](docs/mcp-s
 
 ## Preview & apply workflow
 
-Consequential writes are two steps, both in the SDK and (enforced) in the MCP server:
+Consequential writes are two steps, both in the SDK and (enforced) in the MCP server. Inventory
+is shown here; pricing, listings, RMA and courtesy refunds follow the same shape
+(`previewUpdate` / `previewCreate` / `previewSubmit` / `previewIssue`, then the matching write):
 
 1. **Preview** — `inventory.previewUpdate(...)` (SDK) or `newegg_inventory_preview_update`
    (MCP) validates, deduplicates (last-write-wins), decides direct vs feed, and surfaces
@@ -465,7 +533,7 @@ Consequential writes are two steps, both in the SDK and (enforced) in the MCP se
 2. **Apply** — pass the reviewed plan to `inventory.updateMany(...)`, or call
    `newegg_inventory_apply_update` with only the `previewId`. The MCP apply step consumes the
    preview atomically (single use, replay-proof), rejects expired previews, and cannot change
-   quantities.
+   the previewed values.
 
 This makes a model show its plan before anything mutates Newegg, and makes stale or replayed
 approvals structurally impossible (ADR 0005).
@@ -550,12 +618,11 @@ failures; feed submissions never blindly retry after an ambiguous send (they rai
 
 - **`npm test`** runs the unit and integration suites with **no credentials required**
   (`vitest run`). This is what CI runs.
-- **Live smoke tests are opt-in and never run in CI.** They hit a real account. Read tests
-  require `NEWEGG_LIVE_TESTS=true`, valid platform credentials,
-  `NEWEGG_LIVE_TEST_SELLER_PART_NUMBER`, and `NEWEGG_LIVE_TEST_WAREHOUSE`; the mutating write
-  test additionally requires `NEWEGG_LIVE_TESTS_I_UNDERSTAND_THIS_TOUCHES_A_REAL_ACCOUNT`
-  set to exactly `yes`. Run them with `npm run test:live`, and **use a dedicated test
-  listing, not a production SKU.**
+- **Live smoke tests are opt-in and never run in CI.** They hit a real account. The suite is
+  **read-only** (there is no live write test). It requires `NEWEGG_LIVE_TESTS=true` and valid
+  platform credentials; inventory reads also need `NEWEGG_LIVE_TEST_SELLER_PART_NUMBER` (and
+  `NEWEGG_LIVE_TEST_WAREHOUSE` on US) and skip cleanly without them. Run with
+  `NEWEGG_LIVE_TESTS=true npm run test:live`.
 - **The live suite is guarded READ-ONLY.** `npm run check:live-readonly` (its own CI job)
   scans `packages/sdk/test/live/` and fails if a mutating call is ever added there, so the
   opt-in live suite is structurally prevented from writing to a real account. It is an
@@ -615,9 +682,13 @@ how to rename the `@devino` scope to your own — is in
 
 ## Current limitations
 
-- **Inventory only, by design.** No price, MAP, shipping, or activation fields are ever
-  written. On B2B/CA the "Inventory and Price" endpoints and feeds are used with an
-  inventory-only body, and the feed envelope `Overwrite` is hard-coded `"No"`.
+- **Narrow write surface, by design.** Inventory writes send quantity only; price writes send
+  the selling price only (never MAP, MSRP, shipping or activation). The feed envelope
+  `Overwrite` is hard-coded `"No"`. Listing creation targets existing Newegg items only.
+- **Not every write path is live-verified.** Order, RMA, courtesy-refund, pricing and listing
+  writes follow the official docs but have not all been sent to a real account.
+- **Not implemented:** Void / Close RMA, Item Ranking, the China-only Tax Setting report, Get
+  Warehouse List, Subcategory Status v1.1, SBN, shipping labels and ads.
 - **Feed-status date filters are not implemented.** Feed status is queried by request ID
   only; Newegg's documented date-range filter field names did not render in extraction and
   were intentionally left out (see [`docs/platform-differences.md`](docs/platform-differences.md)).
@@ -625,10 +696,6 @@ how to rename the `@devino` scope to your own — is in
   the batch-read chunk size of 100 identifiers/request, and the treatment of all Newegg
   datetimes as Pacific Time are documented assumptions, each isolated behind a named module
   so a correction is a one-file change.
-- **Live credential acceptance is unverified.** Endpoints and header format are verified
-  against Newegg's official docs, but read-only probes on 2026-07-10 returned
-  `HTTP 401 Gateway: Seller Auth failed.` on all platforms with the credentials available at
-  the time (see `docs/research/newegg-api-contracts.md` §9).
 
 ---
 
