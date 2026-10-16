@@ -2439,14 +2439,21 @@ an e-mail) and the label tracking number / URL (see `docs/mcp-security.md`).
 - `can/servicemgmt/courtesyrefund/info` and `…/requeststatus` answer `IsSuccess: "true"`.
 - Empty lists arrive as `""` (see §18.1).
 
+**VERIFIED live 2026-10-16 on US and B2B (read-only, same live test, 4/4 on each; CAN re-run as control, 4/4):**
+
+- `servicemgmt/rma/rmainfo` on US (no prefix) and `b2b/` accepts version `320`, the nested `PageInfo` form and
+  `YYYY-MM-DD` criteria dates (2020-01-01 to 2026-12-31). The `servicemgmt` paths on B2B are real.
+- The RMA lists on US and B2B were populated (a small non-empty page on each, `rma.get` round-tripped), the courtesy
+  refund list and the request-status list were empty on US, B2B and CAN, and the normalized currency was
+  `USD` on US and B2B. The RMA count was identical on all three platforms; that was observed, not explained
+  (whether the seller account shares RMAs across platforms is not established).
+
 **ASSUMPTIONs (retire when verified live):**
 
 - `YYYY-MM-DD HH:mm:ss` criteria dates.
-- Version `320` on US/B2B.
 - The request-vs-response courtesy `Status` tables (no refunds on our account to compare).
 - No date-range cap on any read.
 - The courtesy refund request id equalling the refund id.
-- The `servicemgmt` paths on B2B.
   The section was written from the docs alone, then checked on CAN with the live test (above). That test
   (`rma-read.live.test.ts`, read-only) asserts shapes only with identifiers discovered at runtime, and skips
   the identifier-dependent cases when the account has no RMAs.
