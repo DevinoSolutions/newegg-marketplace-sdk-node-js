@@ -119,6 +119,31 @@ describe("rma.previewSubmit", () => {
     expect(posts(calls)).toHaveLength(0);
   });
 
+  it("warns, without blocking, when a prior refund line has an unknown shipping refund", async () => {
+    const noShipping = rmaRecord({
+      RMATransactionList: {
+        RMATransaction: {
+          SellerPartNumber: SKU,
+          UnitPrice: "50.00",
+          ReturnQuantity: "1",
+          ReturnUnitPrice: "20.00",
+        },
+      },
+    });
+    const { client } = setup("ca", [], { rmas: [noShipping] });
+    const preview = await client.rma.previewSubmit(submitInput);
+    expect(preview.blockers).toEqual([]);
+    const warning = preview.warnings.find((w) => w.includes("shipping refund"));
+    expect(warning).toContain(EXISTING_RMA_NUMBER);
+    expect(warning).toContain("counted as 0");
+  });
+
+  it("does not warn about shipping when every prior refund line records its shipping refund", async () => {
+    const { client } = setup("ca", [], { rmas: [rmaRecord()] });
+    const preview = await client.rma.previewSubmit(submitInput);
+    expect(preview.warnings.some((w) => w.includes("shipping refund of prior"))).toBe(false);
+  });
+
   it("blocks when a prior refund RMA carries no lines at all", async () => {
     const { client } = setup("ca", [], { rmas: [rmaRecord({ RMATransactionList: "" })] });
     const preview = await client.rma.previewSubmit(submitInput);
