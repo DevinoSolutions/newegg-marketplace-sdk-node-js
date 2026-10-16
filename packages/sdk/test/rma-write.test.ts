@@ -644,6 +644,43 @@ describe("rma.edit", () => {
     expect(posts(typed.calls)).toHaveLength(0);
   });
 
+  it("does not warn about the edited RMA's own unknown shipping refund, but does about another", async () => {
+    const ownNoShipping = rmaRecord({
+      RMATransactionList: {
+        RMATransaction: {
+          SellerPartNumber: SKU,
+          UnitPrice: "50.00",
+          ReturnQuantity: "1",
+          ReturnUnitPrice: "20.00",
+        },
+      },
+    });
+    const own = setup("ca", [], { rmas: [ownNoShipping] });
+    const ownPreview = await own.client.rma.previewEdit(editInput);
+    expect(ownPreview.blockers).toEqual([]);
+    expect(ownPreview.warnings.some((w) => w.includes("shipping refund of prior"))).toBe(false);
+
+    const other = rmaRecord({
+      RMANumber: "900000012",
+      ...{
+        RMATransactionList: {
+          RMATransaction: {
+            SellerPartNumber: SKU,
+            UnitPrice: "50.00",
+            ReturnQuantity: "1",
+            ReturnUnitPrice: "20.00",
+          },
+        },
+      },
+    });
+    const both = setup("ca", [], { rmas: [rmaRecord(), other] });
+    const bothPreview = await both.client.rma.previewEdit(editInput);
+    expect(bothPreview.blockers).toEqual([]);
+    const warning = bothPreview.warnings.find((w) => w.includes("shipping refund of prior"));
+    expect(warning).toContain("900000012");
+    expect(warning).not.toContain(EXISTING_RMA_NUMBER);
+  });
+
   it("requires a note", async () => {
     const { client } = setup("ca", [], { rmas: [rmaRecord()] });
     await expect(

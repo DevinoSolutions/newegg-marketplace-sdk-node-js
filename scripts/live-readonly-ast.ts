@@ -80,6 +80,7 @@ const ALLOWED_NODE_MODULES: ReadonlySet<string> = new Set([
   "node:util",
   "node:assert",
   "node:assert/strict",
+  "node:timers/promises",
 ]);
 // `vi` is excluded on purpose: vi.importActual / vi.mock load arbitrary modules.
 const ALLOWED_VITEST_NAMES: ReadonlySet<string> = new Set([
@@ -433,7 +434,7 @@ export function astViolations(source: string): string[] {
     if (ALLOWED_SPECIFIERS.has(specifier) || specifier === "vitest") return;
     if (ALLOWED_NODE_MODULES.has(specifier)) return;
     flag(
-      `import of "${specifier}" — live files may import only vitest, ../../src/index.js, ./helpers.js and node:fs/path/url/util/assert (SDK internals, node:child_process/http/net and the like can write)`,
+      `import of "${specifier}" — live files may import only vitest, ../../src/index.js, ./helpers.js and node:fs/path/url/util/assert/timers/promises (SDK internals, node:child_process/http/net and the like can write)`,
     );
   };
 
@@ -668,7 +669,7 @@ export function astViolations(source: string): string[] {
       if (BANNED_PROPERTY_NAMES.has(name)) flag(`access to .${name} (reflection)`);
       if (WRITE_METHOD_NAMES.has(name)) {
         flag(
-          `.${name} named in a live file — write methods (and call/apply/bind) may not be referenced on any receiver`,
+          `.${name} named in a live file — write methods (and call/apply/bind) may not be referenced on any receiver; if it is a plain data field the guard cannot tell it from an SDK method: pick another field or local name, or add a reviewed exception in scripts/live-readonly-ast.ts with a reason`,
         );
       }
       if (namespaces.includes(name)) checkNamespaceUse(node, name);
@@ -724,7 +725,7 @@ export function astViolations(source: string): string[] {
           parent.name.text === "env"
         )) {
           flag(
-            "process used other than process.env — process.getBuiltinModule / mainModule / binding can load modules",
+            "process used other than process.env — process.getBuiltinModule / mainModule / binding can load modules; for platform or timing needs add the exact property to the guard's allowlist in the same PR with a reason",
           );
         }
       }
