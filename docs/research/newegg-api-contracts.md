@@ -2974,8 +2974,16 @@ seven functions; every page was last updated 2018-10-15). The wire domain is `sb
 (the standard prefix applies: none on Newegg.com, `b2b/`). **Every page lists Newegg.com and
 Neweggbusiness.com only; Canada is not listed**, so the SDK fails on CAN with
 `UnsupportedMarketplaceOperationError` before sending (`platform/sbn.ts`, ADR 0002). Nothing here was called
-live: the shapes below are the pages' samples, which contradict themselves in places (flagged below). Every
-example uses fictional identifiers.
+live except as marked "Live-verified 2026-10-16": the shapes below are the pages' samples, which contradict
+themselves in places (flagged below). Every example uses fictional identifiers.
+
+**Live verification, 2026-10-16 (usa and b2b, READ-ONLY, same credentials as the other reads):** Get Inbound
+Shipment List and Get Warehouse List were each called through the SDK on both platforms and returned HTTP 200
+with `IsSuccess`, `OperationType`, `SellerID` and `ResponseBody` (list: `ShipmentList`, empty for this seller;
+warehouses: `WarehouseList`, one record with `WarehouseCode`, `AllowBulkItem`, `AllowSmallItem` and the
+address fields). No separate SBN enablement was needed for these two reads. Get Inbound Shipment Status
+Request and Get Inbound Shipment Request Result were NOT called (no request id exists to look up). CAN fails
+before sending, as designed. No SDK change was needed.
 
 ### 21.1 Operation inventory and classification
 
@@ -3008,10 +3016,13 @@ WRITES and deliberately not implemented. They are classified in the live read-on
 
 ### 21.2 Get Inbound Shipment List
 
-`PUT {prefix}sbnmgmt/inboundshipment/shipmentlist?sellerid=…`. **ASSUMPTION (verb):** the Resource table and
-the XML example say `PUT`; the JSON example's request line says `GET`. The SDK sends `PUT` with a body (both
-agree a body exists). The JSON request sample nests paging; the field table lists it flat. The SDK follows
-the sample:
+`PUT {prefix}sbnmgmt/inboundshipment/shipmentlist?sellerid=…`. **Live-verified 2026-10-16 (usa/b2b):** the
+verb is `PUT` with a body (the Resource table and XML example were right; the JSON example's `GET` request
+line is wrong), and the path and the nested `RequestBody.PageInfo` shape are accepted. Verified with
+`PageInfo` only (no keyword, status or date filters sent), which returned an empty `ShipmentList` for this
+seller. **ASSUMPTION (still unverified):** the filter fields and date formats below, and the row shape (no
+shipment existed to inspect). The JSON request sample nests paging; the field table lists it flat. The SDK
+follows the sample:
 
 ```json
 {
@@ -3160,12 +3171,13 @@ shape inside `ErrorList` is unknown (the SDK accepts bare strings or objects wit
 ### 21.5 Get Warehouse List
 
 `PUT {prefix}sbnmgmt/inboundshipment/warehouse?sellerid=…`. This is Newegg's own SBN inbound-warehouse list
-(the page `seller_management/get-warehouse-list/` redirects to it, §19.1). **ASSUMPTION (verb and path):**
-the Resource table and the XML example say `PUT …/warehouse`; the JSON example's request line says
-`GET …/shipmentlist`, which looks like a copy-paste from §21.2 (the SDK uses the table). Body:
+(the page `seller_management/get-warehouse-list/` redirects to it, §19.1). **Live-verified 2026-10-16
+(usa/b2b):** verb and path are as the Resource table and XML example say (`PUT …/warehouse`); the JSON
+example's `GET …/shipmentlist` request line was the copy-paste from §21.2 it looked like. Body:
 `{ "OperationType": "GetWarehouseRequest", "RequestBody": { "WarehouseCode": "10" } }`. `WarehouseCode` is
-optional and **ASSUMPTION:** omitting it returns every warehouse (the page does not say; the SDK sends an
-empty `RequestBody`). Response: `ResponseBody > WarehouseList[]` (XML `WarehouseList > Warehouse`) of
+optional; an empty `RequestBody` is accepted and returned the response shape below (one warehouse record for
+this seller on both platforms). **ASSUMPTION (still unverified):** that omitting it returns _every_
+warehouse, and filtering by a code (not exercised). Response: `ResponseBody > WarehouseList[]` (XML `WarehouseList > Warehouse`) of
 `{ WarehouseCode "10", AllowBulkItem 0|1, AllowSmallItem 0|1, ShipToAddress1/2, ShipToCityName,
 ShipToStateCode, ShipToZipCode, ShipToCountryCode }`.
 
@@ -3177,6 +3189,13 @@ empty lists as `""`; dates `MM/DD/YYYY HH:MM:SS` Pacific wall-clock (`platform/d
 is a bare `[{ Code, Message }]` list becomes a `NeweggApiError`. Error bodies on non-2xx go through
 `errors/parse-upstream.ts`. The pages' "Failed Response Error Code List" is the only error reference.
 
-**ASSUMPTIONs (unverified, retire with a live read):** every verb and path above; the nested request
-shapes (§21.2, §21.3); that absent optional filters are accepted; the rate limits (the live headers on other
-reads disagree with their pages, §19.1); and that `ShippingMethodCode` takes only 1 or 2.
+**Live-verified 2026-10-16 (usa/b2b):** verbs, paths and the nested request shape of Get Inbound Shipment
+List and Get Warehouse List (§21.2, §21.5); that absent optional filters are accepted by both; the response
+envelope (`IsSuccess`, `OperationType`, `SellerID`, `ResponseBody`); empty list handling. The shipment-list
+rate-limit header read 100 per window against the page's 500/hr (the same page-vs-header disagreement as
+§19.1); the warehouse read returned no rate-limit headers.
+
+**ASSUMPTIONs (still unverified, retire with a live read):** the verb, path and nested request shape of Get
+Inbound Shipment Status Request and Get Inbound Shipment Request Result (§21.3, §21.4), including that absent
+optional filters are accepted there and the `ErrorList` entry shape; the list filters and dates (§21.2); the
+non-empty shipment row shape; and that `ShippingMethodCode` takes only 1 or 2.
