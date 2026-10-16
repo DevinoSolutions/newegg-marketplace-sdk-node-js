@@ -8,15 +8,20 @@
  * This module never imports the MCP SDK (ADR 0001).
  */
 import type {
+  EditRmaInput,
+  IssueCourtesyRefundInput,
   NeweggMarketplace,
   NormalizedInventoryUpdate,
   InventoryUpdateStrategy,
   NormalizedCreateListing,
   NormalizedPriceUpdate,
+  ProcessRmaInput,
+  RejectRmaInput,
+  SubmitRmaInput,
 } from "@devino/newegg-marketplace-sdk";
 
 /** Fields common to every stored, ready-to-apply operation. */
-interface PreviewRecordBase {
+export interface PreviewRecordBase {
   readonly previewId: string;
   /** sha-256 (hex) of the canonical payload for this operation kind. */
   readonly hash: string;
@@ -48,8 +53,39 @@ export interface PricePreviewRecord extends PreviewRecordBase {
   readonly normalizedUpdates: NormalizedPriceUpdate[];
 }
 
+/** Stored input of each RMA / courtesy-refund write (contracts §20), by record `kind`. */
+export interface ServiceWriteInputs {
+  readonly rmaSubmit: SubmitRmaInput;
+  readonly rmaEdit: EditRmaInput;
+  readonly rmaProcess: ProcessRmaInput;
+  readonly rmaReject: RejectRmaInput;
+  readonly courtesyRefundIssue: IssueCourtesyRefundInput;
+}
+
+/** Discriminator of the Service Management write previews. */
+export type ServiceWriteKind = keyof ServiceWriteInputs;
+
+/**
+ * A stored RMA or courtesy-refund write. These move customer money or change a return, so the
+ * `input` here is authoritative at apply time and `hash` (sha-256 of the canonical kind +
+ * marketplace + input + refundCents) is re-checked before anything is sent.
+ */
+export type ServiceWritePreviewRecord = {
+  [K in ServiceWriteKind]: PreviewRecordBase & {
+    readonly kind: K;
+    readonly input: ServiceWriteInputs[K];
+    /**
+     * Money the previewed write moves, in whole cents (undefined when it moves none). A write whose
+     * amount is read from Newegg at plan time (Process RMA) re-reads it at apply and aborts when it
+     * differs from this figure.
+     */
+    readonly refundCents?: number;
+  };
+}[ServiceWriteKind];
+
 /** A stored, ready-to-apply operation, discriminated by `kind`. */
-export type PreviewRecord = InventoryPreviewRecord | ListingPreviewRecord | PricePreviewRecord;
+export type PreviewRecord =
+  InventoryPreviewRecord | ListingPreviewRecord | PricePreviewRecord | ServiceWritePreviewRecord;
 
 /** Result of an atomic consume — distinguishes the three failure modes ADR 0005 requires. */
 export type ConsumeResult =

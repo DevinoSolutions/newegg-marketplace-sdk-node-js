@@ -35,6 +35,7 @@ export function buildCapabilities(
       previewTtlSeconds: config.limits.previewTtlSeconds,
       allowZeroQuantity: config.limits.allowZeroQuantity,
       maxPriceChangePercent: config.limits.maxPriceChangePercent,
+      maxRefundAmount: config.limits.maxRefundAmount,
       allowedWarehouses: config.limits.allowedWarehouses,
       allowedMarketplaces: config.limits.allowedMarketplaces,
     },
@@ -62,6 +63,7 @@ export function buildPublicConfiguration(
       previewTtlSeconds: config.limits.previewTtlSeconds,
       allowZeroQuantity: config.limits.allowZeroQuantity,
       maxPriceChangePercent: config.limits.maxPriceChangePercent,
+      maxRefundAmount: config.limits.maxRefundAmount,
     },
     batchLimits: {
       feedMaxRecords: INVENTORY_FEED_MAX_RECORDS,

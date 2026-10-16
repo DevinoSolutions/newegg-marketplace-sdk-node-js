@@ -5,6 +5,7 @@
 // itself would pass vacuously (no files found).
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { MUST_FLAG, MUST_PASS, normalizedViolations } from "./live-readonly-rules.js";
 
 const root = resolve(import.meta.dirname, "..");
 const liveDir = join(root, "packages", "sdk", "test", "live");
@@ -51,19 +52,19 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /killitem/i, why: "remove-item (KillItem) endpoint (write)" },
   { re: /KillItemRequest|OrderConfirmationRequest/, why: "raw order-write OperationType (write)" },
   { re: /cancel_?status/i, why: "cancel-order endpoint (write)" },
-  // RMA / courtesy refund writes (contracts §18) — pre-armed: the SDK implements only the reads
-  // (client.rma.list/get/tryGet, client.refunds.list/get/tryGet/listRequests/getRequestStatus =
-  // Get RMA Information, Get Courtesy Refund Information/Request Status, which are READS via PUT
-  // and are deliberately NOT matched). Submit/Edit/Process/Reject RMA and Issue Courtesy Refund
-  // are WRITES: both prospective SDK method calls and the raw wire markers (endpoints and
-  // OperationTypes) are listed so none can land in a live test.
+  // RMA / courtesy refund writes (contracts §20). The reads (client.rma.list/get/tryGet,
+  // client.refunds.list/get/tryGet/listRequests/getRequestStatus = Get RMA Information, Get Courtesy
+  // Refund Information/Request Status) are READS via PUT and are deliberately NOT matched. Submit /
+  // Edit / Process / Reject RMA and Issue Courtesy Refund are WRITES: the SDK methods (rma.submit /
+  // edit / process / reject, refunds.issue) AND their read-only preview* twins are listed, as are the
+  // raw wire markers (endpoints, OperationTypes and body elements), so none can land in a live test.
   {
-    re: /\brma\s*\??\.\s*(submit|issue|create|edit|update|process|receive|reject|void|close)\w*\s*\(/i,
-    why: "rma write method (submit/edit/process/reject RMA)",
+    re: /\brma\s*\??\.\s*(preview)?(submit|issue|create|edit|update|process|receive|reject|void|close)\w*\s*\(/i,
+    why: "rma write method (submit/edit/process/reject RMA, or its preview)",
   },
   {
-    re: /\brefunds\s*\??\.\s*(issue|create|submit|request|new)\w*\s*\(/i,
-    why: "refunds write method (issue courtesy refund)",
+    re: /\brefunds\s*\??\.\s*(preview)?(issue|create|submit|request|new)\w*\s*\(/i,
+    why: "refunds write method (issue courtesy refund, or its preview)",
   },
   {
     re: /servicemgmt\/rma\/(newrma|updaterma)|\bnewrma\b|\bupdaterma\b/i,
@@ -73,6 +74,10 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   {
     re: /\b(IssueRMA|EditRMA|ReceiveRMA|RejectRMA)(Request|Response)?\b|\bIssueCourtesyRefund\b|\bCourtesyRefundResponse\b/,
     why: "raw RMA/courtesy-refund write OperationType (write)",
+  },
+  {
+    re: /\b(EditRMAInfo|ReceiveRMAInfo|RejectRMAInfo|AutoReceiveMark|TotalRefundAmount|SourceSONumber)\b/,
+    why: "raw RMA/courtesy-refund write body element (write)",
   },
   // Listing creation (Existing Item Creation feed, contracts §13) — WRITE surface.
   { re: /listings\s*\.\s*create\s*\(/, why: "listings.create (write)" },
@@ -91,6 +96,29 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /["'`]?SellingPrice["'`]?\s*:/, why: "raw price-write body (SellingPrice)" },
 ];
 
+/** Every reason `source` breaks the rule: the per-line denylist plus the normalised allowlist. */
+function violationsOf(source: string): string[] {
+  const reasons: string[] = [];
+  for (const line of source.split(/\r?\n/)) {
+    for (const { re, why } of FORBIDDEN) if (re.test(line)) reasons.push(why);
+  }
+  return [...reasons, ...normalizedViolations(source)];
+}
+
+// The guard proves itself on every run: each known bypass MUST be flagged and each legitimate read
+// MUST pass, otherwise the guard would be passing vacuously (live-readonly-rules.ts).
+for (const sample of MUST_FLAG) {
+  if (violationsOf(sample).length === 0) {
+    fail(`self-test: bypass NOT flagged: ${JSON.stringify(sample)}`);
+  }
+}
+for (const sample of MUST_PASS) {
+  const reasons = violationsOf(sample);
+  if (reasons.length > 0) {
+    fail(`self-test: legitimate read flagged (${reasons.join("; ")}): ${JSON.stringify(sample)}`);
+  }
+}
+
 let files: string[] = [];
 try {
   files = readdirSync(liveDir).filter((f) => f.endsWith(".ts"));
@@ -104,7 +132,8 @@ if (files.length === 0 && failures === 0) {
 for (const file of files) {
   const path = join(liveDir, file);
   const rel = relative(root, path).replaceAll("\\", "/");
-  const lines = readFileSync(path, "utf8").split(/\r?\n/);
+  const source = readFileSync(path, "utf8");
+  const lines = source.split(/\r?\n/);
   const isTestFile = file.endsWith(".live.test.ts");
   lines.forEach((line, i) => {
     for (const { re, why } of FORBIDDEN) {
@@ -117,6 +146,9 @@ for (const file of files) {
       );
     }
   });
+  for (const why of normalizedViolations(source)) {
+    fail(`${rel} ${why} — the live suite is read-only`);
+  }
   if (isTestFile && !lines.some((l) => l.includes("describe.skipIf(!liveEnabled)"))) {
     fail(`${rel} missing the describe.skipIf(!liveEnabled) gate`);
   }

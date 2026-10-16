@@ -2253,13 +2253,12 @@ platforms. The wire domain is `servicemgmt/` (the standard prefix applies: none 
 Classification follows what each page says it does. The three reads are `PUT` with a request body - like
 order info (§10) and Get Item Price (§15), the verb does not imply a write. The five writes create or
 change RMAs / refunds (Issue Courtesy Refund is an asynchronous "request" that Get Courtesy Refund Request
-Status then reports on; the index page warns a courtesy refund does NOT refund the commission). **Only the
-three reads are implemented** (`client.rma`, `client.refunds`); the writes are recorded here for the record
-and are forbidden in the live suite by `npm run check:live-readonly` (their endpoints, `OperationType`s and
-prospective SDK method names are all pre-armed). Throttles on the write pages: Submit RMA 100/hour; Edit /
+Status then reports on; the index page warns a courtesy refund does NOT refund the commission). The three reads are
+implemented in §18.1-18.4; the five writes are implemented (mocked tests only, never sent live) as
+preview + apply pairs in §20, and are forbidden in the live suite by `npm run check:live-readonly`. Throttles on the write pages: Submit RMA 100/hour; Edit /
 Process / Reject RMA and Issue Courtesy Refund 1,000/hour. Write `version`: 307 on Newegg.com, 305 on
-Neweggbusiness.com / Newegg.ca (Issue Courtesy Refund has no `version`). The write bodies were not
-transcribed; do that from the pages when one is implemented.
+Neweggbusiness.com / Newegg.ca (Issue Courtesy Refund has no `version`). The write bodies are
+transcribed in §20.
 
 Common to the reads:
 
@@ -2411,7 +2410,7 @@ id returned by Issue Courtesy Refund identifies both).
 
 ### 18.4 SDK mapping
 
-All READS, none gated; the MCP tools register unconditionally.
+All READS, none gated; the MCP tools register unconditionally. The writes are in §20.7.
 
 | SDK                                   | Wire             | MCP tool               |
 | ------------------------------------- | ---------------- | ---------------------- |
@@ -2730,3 +2729,238 @@ with the pages' per-hour figures (see §19.1).
   test's shape assertions (non-empty property list, a value row with an array of values), not inspected
   field by field. On Newegg.com the probed account reported every subcategory disabled, so those two reads
   ran against a disabled subcategory; the field-by-field checks above are CAN only.
+
+## 20. Service Management — RMA and courtesy refund WRITES
+
+> Extracted 2026-10-15 from the official RMA Management pages under
+> `https://developer.newegg.com/newegg_marketplace_api/rma_management/` (`submit_rma/`, `edit_rma/`,
+> `process_rma/`, `reject_rma/`, `issue_courtesy_refund/`; the section index and every sub-page were last
+> updated 2018-10-15). **Implemented in code and mocked tests only; no RMA or courtesy-refund write has EVER
+> been sent to a real account, and none of this was probed** (repo rule 2; `check:live-readonly` forbids every
+> method, the endpoints and the body elements in `test/live`). Everything below is therefore
+> documented-shape, not live-verified. The five operations are classified in the §18 table; this section is
+> the wire detail. All examples use fictional identifiers.
+
+These operations **move money or change a customer's return**: an RMA refund credits the buyer, a courtesy
+refund pays the buyer and **the commission is NOT refunded** (the index page says so), and a rejected RMA
+tells the buyer the return was refused. They are never retried after an ambiguous failure (§20.6).
+
+### 20.1 Wire summary
+
+| Operation             | Verb | Path (after prefix)              | `version`                | Rate limit | `OperationType`       | Body element                        |
+| --------------------- | ---- | -------------------------------- | ------------------------ | ---------- | --------------------- | ----------------------------------- |
+| Submit RMA            | POST | `servicemgmt/rma/newrma`         | 307 (US), 305 (B2B, CAN) | 100/hour   | `IssueRMARequest`     | `RequestBody > IssueRMA`            |
+| Edit RMA              | POST | `servicemgmt/rma/updaterma`      | 307 (US), 305 (B2B, CAN) | 1,000/hour | `EditRMARequest`      | `RequestBody > EditRMAInfo`         |
+| Process (receive) RMA | POST | `servicemgmt/rma/updaterma`      | 307 (US), 305 (B2B, CAN) | 1,000/hour | `ReceiveRMARequest`   | `RequestBody > ReceiveRMAInfo`      |
+| Reject RMA            | POST | `servicemgmt/rma/updaterma`      | 307 (US), 305 (B2B, CAN) | 1,000/hour | `RejectRMARequest`    | `RequestBody > RejectRMAInfo`       |
+| Issue Courtesy Refund | POST | `servicemgmt/courtesyrefund/new` | none                     | 1,000/hour | `IssueCourtesyRefund` | `RequestBody > IssueCourtesyRefund` |
+
+Platform prefix per §2 (none on Newegg.com, `b2b/`, `can/`); `?sellerid={SellerID}` as everywhere, plus
+`&version={writeVersion}` on the four RMA writes (`platform/rma.ts` `writeVersion`). Edit, Process and Reject
+share one URL and are told apart only by `OperationType` and the body element. Request and response formats:
+XML or JSON; the SDK sends JSON with every value a **string** (`"ReturnQuantity": "1"`), as in the samples.
+The optional `IssueUser` is not sent. Currency is USD (Newegg.com, Neweggbusiness.com) or CAD (Newegg.ca).
+Error bodies and the `NeweggAPIResponse` wrapper: §18 "Common to the reads" (`errors/parse-upstream.ts`,
+`servicemgmt/shared.ts`). Each write has its own local rate-limit key (`rma.submit`, `rma.edit`,
+`rma.receive`, `rma.reject`, `refunds.issue`).
+
+The Submit page lists its response fields flat and its JSON "response" sample is a copy of the request;
+Edit / Process / Reject nest the RMA under `ResponseBody > RMAInfo`. The SDK reads `RMAInfo`, else the body,
+else the root (`parseRmaWriteResponse`). All three RMA writes report status **6 = Processing** in their
+samples (the Get RMA Information status table has no 6; the SDK maps it to `processing`, §18.1).
+
+### 20.2 Submit RMA (`IssueRMARequest`)
+
+Body (a refund RMA for one line; all values strings):
+
+```json
+{
+  "OperationType": "IssueRMARequest",
+  "RequestBody": {
+    "IssueRMA": {
+      "RMAType": "2",
+      "SourceSONumber": "900000002",
+      "SellerRMANumber": "SELLERRMA1",
+      "AutoReceiveMark": "1",
+      "RMANote": "text",
+      "RMATransactionList": {
+        "RMATransaction": {
+          "SellerPartNumber": "SKU-PLACEHOLDER",
+          "ReturnQuantity": "1",
+          "ReturnUnitPrice": "40.00",
+          "RefundShippingPrice": "0.00",
+          "RMAReason": "2"
+        }
+      }
+    }
+  }
+}
+```
+
+- `RMAType`: `1` replacement, `2` refund. `ReturnUnitPrice` and `RefundShippingPrice` are required for a
+  refund and **not allowed** for a replacement (SDK: validation error). `RefundShippingPrice` `0.00` means no
+  shipping refund.
+- `RMAReason` (request side, 1-10): 1 item damaged, 2 defective, 3 incompatible, 4 no longer needed,
+  5 not as described, 6 ordered wrong item, 7 sent wrong item, 8 unsatisfied, 9 extra item shipped, 10 item
+  not received. Reasons **3, 4, 6, 8** additionally require `UnOpen` (`"0"`/`"1"`), 1-5 evidence image URLs
+  (`FileUrls > ImgUrl`) and a `Memo`. `FileUrls` and `Memo` are documented **US and CAN only**; the SDK
+  refuses them on B2B (`acceptsEvidenceFiles`).
+- `AutoReceiveMark` `"1"` marks the RMA received on creation (refund only). **The SDK supports it but the MCP
+  never exposes it** (auto-receiving is the step before a refund pays out).
+- `SellerRMANumber`: 1-50 letters and digits. `RMANote`: free text.
+- Money: two decimals, each unit price and shipping refund within 0-99,999.99; the SDK sends exactly what the
+  caller gave (it rejects a third decimal, never rounds or clamps).
+- Lists use the object-or-array quirk: one row is sent as an object, several as an array.
+- Errors the page lists (`SE0xx`), mirrored locally from reads where possible: SE001/SE024 item not on the
+  order, SE004 order not invoiced, SE009 quantity above the returnable quantity, SE011 unit refund above the
+  unit price, SE012 shipping refund above the shipping charge, SE013 replacement not in stock / ship method,
+  SE023 refund above the order total, SE026 replacement order, SE027 voided order, SE034 refund above the
+  total minus prior refunds. Codes are surfaced from the upstream body unchanged.
+
+### 20.3 Edit, Process and Reject RMA (`updaterma`)
+
+Edit (`EditRMARequest`, `EditRMAInfo`) replaces an **open** RMA's note and lines: `RMANumber`, `RMAType`,
+optional `SellerRMANumber`, `RMANote` (required) and a full `RMATransactionList` with the §20.2 line rules.
+
+Process (`ReceiveRMARequest`, `ReceiveRMAInfo > RMANumber`) marks the returned goods received.
+
+Reject (`RejectRMARequest`, `RejectRMAInfo`):
+
+```json
+{
+  "OperationType": "RejectRMARequest",
+  "RequestBody": {
+    "RejectRMAInfo": {
+      "RMANumber": "900000011",
+      "RejectReason": "3",
+      "ShipCarrier": "1",
+      "ShipService": "Ground",
+      "TrackingNumberList": { "TrackingNumber": "TRACKING0001" },
+      "RejectReasonMemo": "text",
+      "RejectReasonDescriptionImages": { "ImageUrl": ["https://example.invalid/a.jpg"] }
+    }
+  }
+}
+```
+
+- `ShipCarrier`: 1 UPS, 2 FedEx, 3 DHL, 4 USPS, 5 other (then `OtherShipCarrier`, <= 10, is required). The
+  rejected goods are shipped back, so carrier, service and 1+ tracking numbers are required.
+- `RejectReason` codes 3-12 on every platform: 3 physical damage, 4 item missing, 5 wrong item returned,
+  6 CPU pin damage, 7 missing retail box, 8 missing UPC code, 9 tampered serial number, 10 missing
+  accessories, 11 consumable item, 12 motherboard socket pin damage. Newegg.com and Neweggbusiness.com add
+  13 QA sent wrong item, 14 unlocked cellphone, 15 used item returned as new; Newegg.ca adds 16 customer
+  request, 17 missing serial number, 18 software (`platform/rma.ts` `rejectReasonCodes`). Codes 4 and 6-12
+  require a memo and 1-5 image URLs.
+- Only an **open** RMA may be edited, received or rejected (SE028); the SDK blocks a non-open RMA from a
+  read and warns when it is still `processing` (see ASSUMPTIONs).
+
+### 20.4 Platform differences (`packages/sdk/src/platform/rma.ts`)
+
+| Difference                 | Newegg.com (us) | Neweggbusiness.com (b2b) | Newegg.ca (ca) |
+| -------------------------- | --------------- | ------------------------ | -------------- |
+| Write `version`            | 307             | 305                      | 305            |
+| Evidence images / memo     | accepted        | **refused by the SDK**   | accepted       |
+| Reject reasons beyond 3-12 | 13, 14, 15      | 13, 14, 15               | 16, 17, 18     |
+| Currency                   | USD             | USD                      | CAD            |
+
+### 20.5 Issue Courtesy Refund (`IssueCourtesyRefund`)
+
+```json
+{
+  "OperationType": "IssueCourtesyRefund",
+  "RequestBody": {
+    "IssueCourtesyRefund": {
+      "SourceSONumber": "900000002",
+      "RefundReason": "6",
+      "TotalRefundAmount": "10.00",
+      "NoteToCustomer": "text"
+    }
+  }
+}
+```
+
+`RefundReason`: 1 negative customer feedback, 2 pricing error, 3 wrong item information, 4 shipping delay,
+5 package not received, 6 customer courtesy. `TotalRefundAmount` is one positive 2-decimal total in the
+marketplace currency, within 0-99,999.99, and must not exceed the order total minus prior refunds
+(SE023/SE034). `NoteToCustomer` <= 500. Response: `ResponseBody > ResponseList > ResponseInfo { RequestId,
+RequestDate, RequestStatus }` (the field table spells the keys `RequestID` / `RequestSatus` and lists a flat
+`Memo`; the SDK reads every spelling and placement). The refund is an **asynchronous request**: follow it
+with Get Courtesy Refund Request Status (§18.3, `client.refunds.getRequestStatus`).
+
+### 20.6 Idempotency and indeterminate outcomes (ADR 0004)
+
+None of the five writes is idempotent (a re-send creates a second RMA or pays a second refund) and none
+accepts a client token. `sendServiceWrite` (`servicemgmt/write.ts`) therefore retries **only** transport
+failures proven to have happened before any byte was sent; the first ambiguous failure (timeout or reset
+after dispatch, a caller abort after the request was dispatched, HTTP 408 or ANY 5xx,
+including a plain 500) throws `IndeterminateServiceWriteError` (`service_write_indeterminate`,
+never `retryable`) carrying the operation, order and RMA number and the time it was submitted. The same
+error is thrown when Newegg answers 2xx but the response does not identify the RMA (or, for a refund, has no
+`RequestId`), or names a different RMA than the one edited. The guidance is to check `rma.list/get` or
+`refunds.list/listRequests` before doing anything else. A `200` with `IsSuccess=false` is a definitive
+`NeweggApiError`; upstream `SE0xx`/`CE0xx` 4xx errors pass through unchanged.
+
+### 20.7 SDK and MCP mapping
+
+All WRITES. Every method takes a normalized, strict (zod 4) input; unknown keys, a third decimal, a refund
+price on a replacement, missing evidence and reasons not offered by the marketplace are rejected before any
+request.
+
+| SDK                                                   | Wire | MCP (writes enabled only)                                   |
+| ----------------------------------------------------- | ---- | ----------------------------------------------------------- |
+| `client.rma.previewSubmit(input)` / `submit(input)`   | 20.2 | `newegg_rma_preview_submit` / `newegg_rma_apply_submit`     |
+| `client.rma.previewEdit(input)` / `edit(input)`       | 20.3 | `newegg_rma_preview_edit` / `newegg_rma_apply_edit`         |
+| `client.rma.previewProcess(input)` / `process(input)` | 20.3 | `newegg_rma_preview_process` / `newegg_rma_apply_process`   |
+| `client.rma.previewReject(input)` / `reject(input)`   | 20.3 | `newegg_rma_preview_reject` / `newegg_rma_apply_reject`     |
+| `client.refunds.previewIssue(input)` / `issue(input)` | 20.5 | `newegg_refund_preview_issue` / `newegg_refund_apply_issue` |
+
+**Pre-write reads.** `preview*` is read-only: it calls Get Order Information, Get RMA Information and Get
+Courtesy Refund Information (never a write) and returns `blockers` (the `SE0xx` rules above: unknown /
+voided / uninvoiced / replacement order, a line not on the order or cancelled, quantity above the returnable
+quantity, unit refund above the unit price, shipping above the charge, refund above the order total or the
+total minus prior refunds, non-open RMA) and `warnings` (an existing RMA or courtesy refund on the order,
+replacement stock, the commission note, RMA still processing). Prior refunds are summed from active RMAs plus
+non-void courtesy refunds; a mismatch with the order's `RefundAmount` is a warning only. The checks **fail
+closed**: an unknown order total, a partial read of the order's RMAs or courtesy refunds, and any prior
+refund line with no readable price or amount (never counted as 0) are BLOCKERS, because the remaining
+balance cannot be established. The write methods
+**re-run the same checks and throw `NeweggValidationError` before any POST** when there is a blocker.
+
+**MCP.** Both the preview and the apply tool of each pair register only when
+`NEWEGG_MCP_ALLOW_WRITES=true` (ADR 0005 and the pricing precedent). A preview with blockers returns no
+`previewId`; a clean one returns a single-use, TTL-bound, 256-bit `previewId`, and apply accepts only that
+id, re-hashes the stored request (`preview_tampered`) and refuses a replay, an expired id or one of another
+kind. The ceiling `NEWEGG_MCP_MAX_REFUND_AMOUNT` (default 500, in the marketplace currency) applies to
+EVERY `refundTotal`: RMA submit, edit and process, and the courtesy refund. It is MCP-only and **per
+operation**, not cumulative across previews: SDK callers are the operator, so the SDK enforces only the
+schema maximum (99,999.99) and the order-balance blockers above. A refund above the ceiling is blocked at
+preview time, and a refund-type write whose amount reads as 0 (unreadable
+lines) is blocked too rather than passing the ceiling. The previewed refund total (cents) is stored with
+the preview and covered by its hash. Process RMA releases whatever the RMA holds at that moment, so the
+apply tool re-reads the RMA first and aborts (`preview_stale`, preview consumed, nothing sent) if it is
+no longer open, its refund differs from the previewed total, or it exceeds the ceiling. Outputs map fields explicitly and omit the customer block, free-text notes,
+memos, tracking numbers and label URLs (`docs/mcp-security.md`).
+
+**Not built.** (1) Voiding / closing an RMA and any other RMA status change: the section documents no such
+operation. (2) `IssueUser`: never sent (**ASSUMPTION:** optional). (3) `DiffShippedByPartyAction`: the Submit
+RMA page lists it as REQUIRED for a Replacement RMA on an order that has both Shipped-by-Seller (SBS) and
+Shipped-by-Newegg (SBN) items. The SDK does not send it (it cannot detect a mixed order) and instead adds a
+WARNING to every replacement-RMA preview that Newegg may reject it. (4) Anything beyond the five documented
+operations.
+
+**ASSUMPTIONs (unverified, retire when an owner-authorized write is observed):**
+
+- Every response shape above (the Submit "response" sample is a copy of the request) and that Edit / Process /
+  Reject return the RMA under `ResponseBody > RMAInfo`.
+- The `version` values 307 / 305 for writes (the pages give them for the write pages; neither was probed).
+- That `servicemgmt/rma/newrma`, `updaterma` and `courtesyrefund/new` exist under `b2b/` and `can/`.
+- That the courtesy `RequestId` equals the later `CourtesyRefundID` (as §18.3).
+- That only the `SE0xx` rules listed are enforced and that the local mirrors match Newegg's arithmetic
+  (the SDK is stricter than Newegg only where a read proves the write would fail).
+- That Edit replaces the whole line set (the page shows a full `RMATransactionList`) rather than patching rows.
+- That receiving a refund RMA is what lets Newegg pay the buyer's refund (the pages do not say so in terms).
+- That a `processing` (status 6) RMA is not editable (SE028 says "open"); the SDK only warns about it.
+- The wire values and semantics of `DiffShippedByPartyAction` (unread; not sent).
+- That omitting `UnOpen` / `FileUrls` / `Memo` for reasons other than 3 / 4 / 6 / 8 is accepted.
+- The 100/hour and 1,000/hour limits on the pages (the live headers on other reads disagree with their
+  pages, §19.1).

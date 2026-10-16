@@ -67,16 +67,26 @@ describe("tools/list", () => {
     expect(names).not.toContain("newegg_listing_apply_create");
     expect(names).not.toContain("newegg_pricing_preview_update");
     expect(names).not.toContain("newegg_pricing_apply_update");
+    expect(
+      names.filter((name) => /_(preview|apply)_(submit|edit|process|reject|issue)$/.test(name)),
+    ).toEqual([]);
   });
 
-  it("adds the write tools when writes are enabled (33 tools)", async () => {
+  it("adds the write tools when writes are enabled (43 tools)", async () => {
     const tools = await listTools(makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "true" }));
     const names = tools.map((tool) => tool.name);
-    expect(names).toHaveLength(33);
+    expect(names).toHaveLength(43);
     expect(names).toContain("newegg_inventory_apply_update");
     expect(names).toContain("newegg_listing_apply_create");
     expect(names).toContain("newegg_pricing_preview_update");
     expect(names).toContain("newegg_pricing_apply_update");
+    // RMA / courtesy-refund writes (contracts §20): a preview and an apply tool per operation.
+    for (const operation of ["submit", "edit", "process", "reject"]) {
+      expect(names).toContain(`newegg_rma_preview_${operation}`);
+      expect(names).toContain(`newegg_rma_apply_${operation}`);
+    }
+    expect(names).toContain("newegg_refund_preview_issue");
+    expect(names).toContain("newegg_refund_apply_issue");
   });
 
   it("gives every tool a title, description, inputSchema, and outputSchema", async () => {

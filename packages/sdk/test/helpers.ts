@@ -71,6 +71,10 @@ export const paths = {
   rmaInfo: /servicemgmt\/rma\/rmainfo\?/,
   courtesyRefundInfo: /servicemgmt\/courtesyrefund\/info\?/,
   courtesyRefundStatus: /servicemgmt\/courtesyrefund\/requeststatus\?/,
+  // Service Management WRITES (§20), POST only. Edit / Process / Reject share updaterma.
+  rmaNew: /servicemgmt\/rma\/newrma\?/,
+  rmaUpdate: /servicemgmt\/rma\/updaterma\?/,
+  courtesyRefundNew: /servicemgmt\/courtesyrefund\/new\?/,
   // Seller / category reference READS (§19). Trailing `?` keeps subcategory vs subcategoryproperty
   // vs the V2 international variant apart; none of these can match a write endpoint.
   sellerStatus: /sellermgmt\/seller\/accountstatus\?/,

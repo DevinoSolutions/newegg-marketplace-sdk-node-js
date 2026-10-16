@@ -53,8 +53,8 @@ export interface NeweggClient {
   readonly feeds: FeedsApi;
   readonly service: ServiceApi;
   readonly orders: OrdersApi; // order reads (list / get / status) + writes (ship / cancel / confirm / remove)
-  readonly rma: RmaApi; // READ-only RMA lookups (Get RMA Information, contracts §18)
-  readonly refunds: RefundsApi; // READ-only courtesy refund lookups (info + request status, §18)
+  readonly rma: RmaApi; // RMA reads (contracts §18) + writes: submit / edit / process / reject (§20)
+  readonly refunds: RefundsApi; // courtesy refund reads (§18) + issue (§20)
   readonly reference: ReferenceApi; // READ-only seller/category reference lookups (contracts §19)
   readonly catalog: CatalogApi; // read-only catalog resolution (Item Lookup Report, contracts §12)
   readonly reports: ReportsApi; // read-only settlement / daily inventory / daily price reports (contracts §17)
@@ -1218,12 +1218,12 @@ export class ReportTimeoutError extends NeweggError {
 }
 
 // ----------------------------------------------------------------------------
-// RMA and courtesy refunds (Service Management READS — contracts §18)
+// RMA and courtesy refunds (Service Management reads — contracts §18; writes — §20)
 // ----------------------------------------------------------------------------
 // Get RMA Information (PUT, 1000/hr), Get Courtesy Refund Information (PUT, 30/min) and Get
 // Courtesy Refund Request Status (PUT, 10,000/hr) - READS despite the verb. Submit / Edit /
-// Process / Reject RMA and Issue Courtesy Refund are WRITES and are NOT part of this surface
-// (the live read-only guard forbids them). Amounts are USD (us, b2b) or CAD (ca): see `currency`.
+// Process / Reject RMA and Issue Courtesy Refund are WRITES (types further down; the live read-only
+// guard forbids them). Amounts are USD (us, b2b) or CAD (ca): see `currency`.
 export type RmaCurrency = "USD" | "CAD";
 export type RmaStatus =
   "open" | "received" | "rejected" | "voided" | "closed" | "processing" | "unknown";
@@ -1315,6 +1315,148 @@ export interface RmaApi {
   list(input?: ListRmasInput, options?: RequestOptions): Promise<RmasPage>; // empty page, not an error, when none
   get(rmaNumber: string | number, options?: RequestOptions): Promise<Rma>; // NeweggApiError when none; digits only
   tryGet(rmaNumber: string | number, options?: RequestOptions): Promise<Rma | undefined>;
+  // WRITES (non-idempotent, never auto-retried after dispatch; ambiguous -> IndeterminateServiceWriteError).
+  // Each preview* only READS the order / RMAs / courtesy refunds; the write re-runs the same checks and
+  // throws NeweggValidationError on any blocker BEFORE sending.
+  previewSubmit(
+    input: SubmitRmaInput,
+    options?: RequestOptions,
+  ): Promise<ServiceWritePreview<SubmitRmaInput>>;
+  submit(input: SubmitRmaInput, options?: RequestOptions): Promise<RmaWriteResult>; // 100 req/hr
+  previewEdit(
+    input: EditRmaInput,
+    options?: RequestOptions,
+  ): Promise<ServiceWritePreview<EditRmaInput>>;
+  edit(input: EditRmaInput, options?: RequestOptions): Promise<RmaWriteResult>; // 1000 req/hr
+  previewProcess(
+    input: ProcessRmaInput,
+    options?: RequestOptions,
+  ): Promise<ServiceWritePreview<ProcessRmaInput>>;
+  process(input: ProcessRmaInput, options?: RequestOptions): Promise<RmaWriteResult>; // receive; 1000 req/hr
+  previewReject(
+    input: RejectRmaInput,
+    options?: RequestOptions,
+  ): Promise<ServiceWritePreview<RejectRmaInput>>;
+  reject(input: RejectRmaInput, options?: RequestOptions): Promise<RmaWriteResult>; // 1000 req/hr
+}
+
+// RMA and courtesy refund WRITES (contracts §20). Every write has a read-only preview twin;
+// money is a 2-decimal number (never rounded, never clamped); input is strict (zod 4).
+export type RmaWriteReason =
+  | "itemDamaged"
+  | "defective"
+  | "incompatible"
+  | "noLongerNeeded"
+  | "notAsDescribed"
+  | "orderedWrongItem"
+  | "sentWrongItem"
+  | "unsatisfied"
+  | "extraItemShipped"
+  | "itemNotReceived";
+export interface RmaWriteItem {
+  sellerPartNumber: string;
+  returnQuantity: number;
+  reason: RmaWriteReason;
+  returnUnitPrice?: number; // refund RMA: required, > 0; replacement: forbidden
+  refundShippingPrice?: number; // refund RMA: required, >= 0 (0 = none); replacement: forbidden
+  unopened?: boolean; // required for incompatible / noLongerNeeded / orderedWrongItem / unsatisfied
+  imageUrls?: string[]; // 1-5 http(s); US and CA only (B2B: validation error)
+  memo?: string; // <= 1000; US and CA only
+}
+export interface SubmitRmaInput {
+  orderNumber: string | number;
+  type: "refund" | "replacement";
+  items: RmaWriteItem[]; // 1-50, unique sellerPartNumber
+  sellerRmaNumber?: string; // letters and digits, <= 50
+  note?: string; // <= 4000
+  autoReceive?: boolean; // AutoReceiveMark=1, refund RMAs only; NOT exposed by the MCP
+}
+export interface EditRmaInput {
+  rmaNumber: string | number;
+  type: "refund" | "replacement";
+  note: string;
+  items: RmaWriteItem[];
+  sellerRmaNumber?: string;
+}
+export interface ProcessRmaInput {
+  rmaNumber: string | number;
+} // mark received
+export type RmaRejectReason =
+  | "physicalDamage"
+  | "itemMissing"
+  | "wrongItemReturned"
+  | "cpuPinDamage"
+  | "missingRetailBox"
+  | "missingUpcCode"
+  | "tamperedSerialNumber"
+  | "missingAccessories"
+  | "consumableItem"
+  | "motherboardSocketPinDamage"
+  | "qaSentWrongItem"
+  | "unlockedCellphone"
+  | "usedItemReturnedAsNew"
+  | "customerRequest"
+  | "missingSerialNumber"
+  | "software";
+export type RmaRejectCarrier = "ups" | "fedex" | "dhl" | "usps" | "other";
+export interface RejectRmaInput {
+  rmaNumber: string | number;
+  reason: RmaRejectReason; // availability differs by marketplace (platform/rma.ts)
+  carrier: RmaRejectCarrier;
+  otherCarrier?: string; // required with carrier "other"
+  shipService: string;
+  trackingNumbers: string[];
+  memo?: string; // required with reasons itemMissing, cpuPinDamage .. motherboardSocketPinDamage
+  imageUrls?: string[]; // 1-5, required with the memo
+}
+export interface IssueCourtesyRefundInput {
+  orderNumber: string | number;
+  reason: Exclude<CourtesyRefundReason, "unknown">;
+  amount: number; // > 0, <= 2 decimals, <= 99999.99, <= order total minus prior refunds
+  noteToCustomer?: string; // <= 500
+}
+export type ServiceWriteOperation =
+  "rma.submit" | "rma.edit" | "rma.receive" | "rma.reject" | "refunds.issue";
+export interface ServiceWritePreview<N> {
+  marketplace: NeweggMarketplace;
+  operation: ServiceWriteOperation;
+  normalized: N; // the exact input a write would send
+  currency: RmaCurrency;
+  refundTotal?: number;
+  orderNumber?: string;
+  blockers: string[]; // the write throws NeweggValidationError while any remain
+  warnings: string[];
+  correlationId: string;
+}
+export interface RmaWriteResult {
+  marketplace: NeweggMarketplace;
+  operation: Exclude<ServiceWriteOperation, "refunds.issue">;
+  rmaNumber: string;
+  type: RmaType;
+  status: RmaStatus; // normally "processing" right after the write
+  statusDescription?: string;
+  sellerRmaNumber?: string;
+  orderNumber?: string;
+  note?: string;
+  items: RmaItem[];
+  currency: RmaCurrency;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export interface CourtesyRefundIssueResult {
+  marketplace: NeweggMarketplace;
+  requestId: string; // for refunds.getRequestStatus
+  requestDate?: { raw: string; iso?: string };
+  state: CourtesyRefundRequestState;
+  stateRaw?: string;
+  memo?: string;
+  orderNumber: string;
+  amount: number;
+  currency: RmaCurrency;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
 }
 
 export type CourtesyRefundStatus = "open" | "closed" | "void" | "unknown";
@@ -1390,6 +1532,15 @@ export interface CourtesyRefundRequestsResult {
   raw?: unknown;
 }
 export interface RefundsApi {
+  // WRITE: pays the customer, commission NOT refunded; asynchronous (follow with getRequestStatus).
+  previewIssue(
+    input: IssueCourtesyRefundInput,
+    options?: RequestOptions,
+  ): Promise<ServiceWritePreview<IssueCourtesyRefundInput>>;
+  issue(
+    input: IssueCourtesyRefundInput,
+    options?: RequestOptions,
+  ): Promise<CourtesyRefundIssueResult>; // 1000 req/hr
   list(input?: ListCourtesyRefundsInput, options?: RequestOptions): Promise<CourtesyRefundsPage>; // 30 req/min
   get(courtesyRefundId: string, options?: RequestOptions): Promise<CourtesyRefund>;
   tryGet(courtesyRefundId: string, options?: RequestOptions): Promise<CourtesyRefund | undefined>;
@@ -1743,6 +1894,15 @@ export class IndeterminateOrderWriteError extends NeweggError {
   readonly orderNumber?: string;
   readonly guidance: string; // "check order status (orders.getStatus) before retrying…"
 }
+export class IndeterminateServiceWriteError extends NeweggError {
+  // code "service_write_indeterminate"; retryable is always false
+  readonly marketplace: NeweggMarketplace;
+  readonly operation: ServiceWriteOperation; // e.g. "rma.submit", "refunds.issue"
+  readonly submittedAtIso: string;
+  readonly orderNumber?: string;
+  readonly rmaNumber?: string;
+  readonly guidance: string; // "check rma.list/get or refunds.list/listRequests before retrying…"
+}
 export class NeweggFeedProcessingError extends NeweggError {}
 export class NeweggFeedCancelledError extends NeweggError {}
 export class NeweggTimeoutError extends NeweggError {}
@@ -1856,6 +2016,25 @@ export interface RecordedCall {
     status/membership codes degrade to `"unknown"`. A `200` whose body is a bare `[{Code, Message}]`
     list throws `NeweggApiError` rather than reading as an empty result. Get Warehouse List and Get
     Subcategory Status v1.1 are not implemented (contracts §19.1).
+16. **RMA and courtesy refund writes (non-idempotent, money-moving)**: `rma.submit` / `edit` /
+    `process` (receive) / `reject` and `refunds.issue` (contracts §20) each have a read-only
+    `preview*` twin that reads the order, its RMAs and its courtesy refunds and returns
+    `blockers` / `warnings` (the `SE0xx` rules mirrored locally). The write re-runs the same checks and
+    throws `NeweggValidationError` on any blocker before any POST. Input is strict (zod 4): money is
+    positive (shipping refund >= 0), at most 2 decimals and at most 99999.99 and is NEVER rounded or
+    clamped; refund prices are forbidden on replacements; reasons 3/4/6/8 need `unopened` (+ images and
+    memo on US/CA; images and memo are refused on B2B); the reject-reason set differs per marketplace
+    (`platform/rma.ts`). Writes follow ADR 0004: only provably-unsent transport errors retry; a timeout
+    or reset after dispatch, a caller abort after dispatch, an HTTP 408 or any 5xx (including 500), or a 2xx that does not identify the RMA / refund
+    request throws `IndeterminateServiceWriteError` and is never auto-resent (read `rma.list/get` or
+    `refunds.list/listRequests` first). Void / close RMA is not built (no documented operation).
+    `autoReceive` exists in the SDK only. The MCP exposes preview + apply tools for all five, gated on
+    `NEWEGG_MCP_ALLOW_WRITES=true`. The refund cap `NEWEGG_MCP_MAX_REFUND_AMOUNT` is MCP-only, applies to
+    every refund total (RMA submit / edit / process and courtesy refund) and is per operation, not
+    cumulative across previews; the SDK enforces only the schema maximum and the order-balance blockers.
+    The checks fail closed (unknown order total, unreconcilable prior refunds, or a partial read of the
+    order's RMAs / refunds block). A caller abort after dispatch is indeterminate too; a replacement RMA
+    previews a `DiffShippedByPartyAction` warning (the field is never sent).
 
 ```
 
