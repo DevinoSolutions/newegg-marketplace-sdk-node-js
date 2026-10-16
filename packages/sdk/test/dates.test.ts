@@ -63,7 +63,7 @@ describe("Pacific DST edges", () => {
   // Wall-clock parsing goes through Intl with America/Los_Angeles, so none of these depend
   // on the host timezone (verified under TZ unset, UTC and Asia/Tokyo).
   describe("fall-back 2026-11-01 (01:00-02:00 occurs twice)", () => {
-    // Observed/deliberate choice: the repeated hour resolves to the FIRST (PDT, -07:00)
+    // Observed behaviour: the repeated hour resolves to the FIRST (PDT, -07:00)
     // occurrence, i.e. 01:30 PDT = 08:30Z, not 01:30 PST = 09:30Z.
     it("resolves the ambiguous M/D/YYYY wall time to the first (PDT) occurrence", () => {
       expect(iso("11/01/2026 01:30:00")).toBe("2026-11-01T08:30:00.000Z");
@@ -80,9 +80,9 @@ describe("Pacific DST edges", () => {
   });
 
   describe("spring-forward 2026-03-08 (02:00-03:00 does not exist)", () => {
-    // Observed behaviour: a nonexistent wall time takes the PST (-08:00) offset, so
-    // 02:30 maps to 09:30Z (which is 03:30 PDT on the wall).
-    it("maps the nonexistent 02:30 using the PST offset", () => {
+    // Observed behaviour: a nonexistent wall time is resolved with the PDT (-07:00) offset,
+    // so 02:30 maps to 09:30Z (which renders as 01:30 PST on the wall).
+    it("maps the nonexistent 02:30 using the PDT offset", () => {
       expect(iso("2026-03-08 02:30:00")).toBe("2026-03-08T09:30:00.000Z");
     });
 
