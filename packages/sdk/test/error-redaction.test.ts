@@ -89,6 +89,16 @@ describe("upstream error redaction", () => {
     );
   });
 
+  it("redacts a URL glued to a word character", () => {
+    expect(redactUrlCredentials("link_ftp://u:p@h/x")).toBe("link_ftp://***@h/x");
+    expect(redactUrlCredentials("1ftp://u:p@h")).toBe("1ftp://***@h");
+  });
+
+  it("does not swallow text after a JSON-escaped line break", () => {
+    const s = "ftp:\\/\\/h.example.com\\ncontact:a@b.com";
+    expect(redactUrlCredentials(s)).toBe(s);
+  });
+
   it("keeps the parsed code usable for classification", () => {
     const error = parseUpstreamError(400, bodyFor("object", FTP_URL), new Headers(), {
       correlationId: "cid",

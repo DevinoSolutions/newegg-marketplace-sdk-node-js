@@ -12,9 +12,13 @@
  * `scheme://` (optionally JSON-escaped as `scheme:\/\/`) followed by the userinfo run up to the
  * LAST `@` of the authority. The authority ends at `/`, `\`, `?`, `#`, whitespace or a quote, so
  * `https://host/a@b` and `https://host?email=a@b` are left alone, while a password that itself
- * contains `@` is fully covered. The scheme length is capped to keep the scan linear.
+ * contains `@` is fully covered. The scheme length is capped to keep the scan linear, and there
+ * is deliberately no leading word boundary, so `link_ftp://u:p@h` is redacted too.
+ *
+ * Known limit: a password containing a literal / ? # ' " < > ends the authority scan early, so
+ * only the part before it is redacted.
  */
-const URL_WITH_CREDENTIALS = /\b([a-z][a-z0-9+.-]{0,31}):(\\?\/\\?\/)[^\s/\\?#"'<>]*@/gi;
+const URL_WITH_CREDENTIALS = /([a-z][a-z0-9+.-]{0,31}):(\\?\/\\?\/)[^\s/\\?#"'<>]*@/gi;
 
 const MAX_DEPTH = 32;
 
