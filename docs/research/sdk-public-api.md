@@ -2025,7 +2025,7 @@ export interface RecordedCall {
     clamped; refund prices are forbidden on replacements; reasons 3/4/6/8 need `unopened` (+ images and
     memo on US/CA; images and memo are refused on B2B); the reject-reason set differs per marketplace
     (`platform/rma.ts`). Writes follow ADR 0004: only provably-unsent transport errors retry; a timeout
-    or reset after dispatch, an HTTP 408/502/503/504, or a 2xx that does not identify the RMA / refund
+    or reset after dispatch, an HTTP 408 or any 5xx (including 500), or a 2xx that does not identify the RMA / refund
     request throws `IndeterminateServiceWriteError` and is never auto-resent (read `rma.list/get` or
     `refunds.list/listRequests` first). Void / close RMA is not built (no documented operation).
     `autoReceive` exists in the SDK only. The MCP exposes preview + apply tools for all five, gated on

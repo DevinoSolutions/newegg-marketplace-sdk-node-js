@@ -348,6 +348,11 @@ export class RmaApiImpl implements RmaApi {
     const rma = await this.tryGet(String(normalized.rmaNumber), { ...options, correlationId });
     checkRmaState(rma, findings);
     let refundTotal: number | undefined;
+    if (rma !== undefined && rma.type === "unknown") {
+      findings.blockers.push(
+        "Newegg reported no readable type for the RMA, so the refund it would release cannot be checked.",
+      );
+    }
     if (rma !== undefined && rma.type === "refund") {
       const cents = rmaRefundCents(rma);
       refundTotal = fromCents(cents);

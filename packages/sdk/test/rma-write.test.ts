@@ -320,6 +320,19 @@ describe("rma.submit", () => {
     expect(posts(calls)).toHaveLength(1);
   });
 
+  it.each([500, 501, 599])(
+    "treats a plain HTTP %i after dispatch as indeterminate, never definitive",
+    async (status) => {
+      const { client, calls } = setup("ca", [
+        { method: "POST", pathPattern: paths.rmaNew, reply: () => ({ status, body: "oops" }) },
+      ]);
+      const err = await client.rma.submit(submitInput).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(IndeterminateServiceWriteError);
+      expect((err as IndeterminateServiceWriteError).retryable).toBe(false);
+      expect(posts(calls)).toHaveLength(1);
+    },
+  );
+
   it("throws IndeterminateServiceWriteError when the connection resets after dispatch", async () => {
     const { client, calls } = setup("ca", [
       {

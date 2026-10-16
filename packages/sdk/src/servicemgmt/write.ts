@@ -25,8 +25,14 @@ import { TransportError } from "../client/transport.js";
 import { delay, isAbortError } from "../util.js";
 import type { Findings, OrderContext } from "../rma/write-checks.js";
 
-/** HTTP statuses ambiguous after dispatch (the write may or may not have mutated). */
-const AMBIGUOUS_STATUSES = new Set([408, 502, 503, 504]);
+/**
+ * HTTP statuses ambiguous after dispatch (the write may or may not have mutated). For these money-moving
+ * service writes EVERY 5xx counts, including a plain 500: a server error after the body was sent does not
+ * prove nothing was recorded. (Orders, pricing and feeds keep their own narrower sets.)
+ */
+function isAmbiguousStatus(status: number): boolean {
+  return status === 408 || (status >= 500 && status <= 599);
+}
 
 /** What a write concerns, for the indeterminate error and logs. */
 export interface ServiceWriteMeta {
@@ -57,7 +63,7 @@ export function indeterminateServiceWrite(
 
 /**
  * Sends a single NON-idempotent Service Management write. Retries ONLY provably-unsent transport
- * failures (pre-send); an ambiguous failure (timeout/reset after dispatch, or a 408/5xx) throws
+ * failures (pre-send); an ambiguous failure (timeout/reset after dispatch, or a 408/any 5xx) throws
  * {@link IndeterminateServiceWriteError} rather than risk a duplicate RMA or refund (ADR 0004). A
  * definitively-unsent transport error surfaces as a non-retryable {@link NeweggApiError}; upstream
  * 4xx `SE0xx` / `CE0xx` errors pass through unchanged.
@@ -90,7 +96,7 @@ export async function sendServiceWrite(
         (err instanceof TransportError && err.phase === "ambiguous") ||
         (err instanceof NeweggError &&
           err.httpStatus !== undefined &&
-          AMBIGUOUS_STATUSES.has(err.httpStatus));
+          isAmbiguousStatus(err.httpStatus));
       if (ambiguous) {
         throw indeterminateServiceWrite(
           http,

@@ -218,6 +218,19 @@ describe("refunds.issue", () => {
     expect(posts(calls)).toHaveLength(1);
   });
 
+  it("treats a plain HTTP 500 after dispatch as indeterminate and sends once", async () => {
+    const { client, calls } = setup("ca", [
+      {
+        method: "POST",
+        pathPattern: paths.courtesyRefundNew,
+        reply: () => ({ status: 500, body: "internal error" }),
+      },
+    ]);
+    const err = await client.refunds.issue(input).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(IndeterminateServiceWriteError);
+    expect(posts(calls)).toHaveLength(1);
+  });
+
   it("is indeterminate when a 200 response carries no request id", async () => {
     const { client, calls } = setup("ca", [
       {
