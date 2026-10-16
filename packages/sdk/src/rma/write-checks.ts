@@ -58,6 +58,30 @@ function priorRefundCents(context: OrderContext, excludeRmaNumber?: string): num
   return fromRmas + fromCourtesy;
 }
 
+/**
+ * Why the refunds already recorded on the order cannot be summed reliably (empty when they can):
+ * a prior refund RMA line with no readable quantity or unit price, a refund RMA with no lines at
+ * all, or a prior courtesy refund with no readable amount. Such lines must never count as 0.
+ */
+function unreconcilablePriorRefunds(context: OrderContext, excludeRmaNumber?: string): string[] {
+  const reasons: string[] = [];
+  for (const rma of context.rmas) {
+    if (!isActiveRma(rma) || rma.rmaNumber === excludeRmaNumber || rma.type !== "refund") continue;
+    const unpriced =
+      rma.items.length === 0 ||
+      rma.items.some(
+        (item) => item.returnUnitPrice === undefined || item.returnQuantity === undefined,
+      );
+    if (unpriced) reasons.push(`RMA ${rma.rmaNumber} has a refund line with no readable price`);
+  }
+  for (const refund of context.courtesyRefunds) {
+    if (refund.status !== "void" && refund.refundAmount === undefined) {
+      reasons.push(`courtesy refund ${refund.courtesyRefundId} has no readable amount`);
+    }
+  }
+  return reasons;
+}
+
 /** Order-level eligibility shared by RMAs and courtesy refunds (`SE004` / `SE026` / `SE027`). */
 export function checkOrderEligibility(order: Order | undefined, findings: Findings): void {
   if (order === undefined) {
@@ -116,8 +140,8 @@ function checkRefundBalance(
 ): void {
   const orderTotal = order.amounts.total;
   if (orderTotal === undefined) {
-    findings.warnings.push(
-      "The order total is unknown, so the refund could not be capped (SE023).",
+    findings.blockers.push(
+      "The order total is unknown, so the refund cannot be capped against it (SE023).",
     );
     return;
   }
@@ -125,6 +149,13 @@ function checkRefundBalance(
   if (totalCents > orderTotalCents) {
     findings.blockers.push(
       `The refund of ${money(totalCents)} exceeds the order total of ${money(orderTotalCents)} (SE023).`,
+    );
+    return;
+  }
+  const unreconcilable = unreconcilablePriorRefunds(context, excludeRmaNumber);
+  if (unreconcilable.length > 0) {
+    findings.blockers.push(
+      `Prior refunds on the order cannot be reconciled (${unreconcilable.join("; ")}), so the remaining balance is unknown (SE034).`,
     );
     return;
   }

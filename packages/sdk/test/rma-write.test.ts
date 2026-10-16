@@ -102,6 +102,49 @@ describe("rma.previewSubmit", () => {
     expect(text).toContain("SE023");
   });
 
+  it("blocks when the order total is unknown (fail closed)", async () => {
+    const { client } = setup("ca", [], { order: orderResponse({ OrderTotalAmount: undefined }) });
+    const preview = await client.rma.previewSubmit(submitInput);
+    expect(preview.blockers.join("\n")).toContain("order total is unknown");
+  });
+
+  it("blocks when a prior refund line has no readable price instead of counting it as 0", async () => {
+    const unpriced = rmaRecord({
+      RMATransactionList: { RMATransaction: { SellerPartNumber: SKU, ReturnQuantity: "1" } },
+    });
+    const { client, calls } = setup("ca", [submitOk], { rmas: [unpriced] });
+    const preview = await client.rma.previewSubmit(submitInput);
+    expect(preview.blockers.join("\n")).toContain("cannot be reconciled");
+    await expect(client.rma.submit(submitInput)).rejects.toBeInstanceOf(NeweggValidationError);
+    expect(posts(calls)).toHaveLength(0);
+  });
+
+  it("blocks when a prior refund RMA carries no lines at all", async () => {
+    const { client } = setup("ca", [], { rmas: [rmaRecord({ RMATransactionList: "" })] });
+    const preview = await client.rma.previewSubmit(submitInput);
+    expect(preview.blockers.join("\n")).toContain("cannot be reconciled");
+  });
+
+  it("does not block on a prior replacement RMA or a rejected unpriced one", async () => {
+    const replacement = rmaRecord({ RMAType: "1", RMATransactionList: "" });
+    const rejected = rmaRecord({ RMANumber: "900000012", RMAStatus: "3", RMATransactionList: "" });
+    const { client } = setup("ca", [], { rmas: [replacement, rejected] });
+    const preview = await client.rma.previewSubmit(submitInput);
+    expect(preview.blockers).toEqual([]);
+  });
+
+  it("warns, without blocking, that a replacement RMA may need DiffShippedByPartyAction", async () => {
+    const { client } = setup("ca", [submitOk]);
+    const replacement: SubmitRmaInput = {
+      orderNumber: ORDER_NUMBER,
+      type: "replacement",
+      items: [{ sellerPartNumber: SKU, returnQuantity: 1, reason: "defective" }],
+    };
+    const preview = await client.rma.previewSubmit(replacement);
+    expect(preview.blockers).toEqual([]);
+    expect(preview.warnings.join("\n")).toContain("DiffShippedByPartyAction");
+  });
+
   it("blocks a quantity above what is left after other RMAs and ignores rejected ones", async () => {
     const other = rmaRecord({
       RMATransactionList: {
@@ -332,6 +375,38 @@ describe("rma.submit", () => {
       expect(posts(calls)).toHaveLength(1);
     },
   );
+
+  it("treats a caller abort after dispatch as indeterminate, not a clean cancellation", async () => {
+    const controller = new AbortController();
+    const { client, calls } = setup("ca", [
+      {
+        method: "POST",
+        pathPattern: paths.rmaNew,
+        reply: () => {
+          controller.abort();
+          throw new DOMException("This operation was aborted", "AbortError");
+        },
+      },
+    ]);
+    const err = await client.rma
+      .submit(submitInput, { signal: controller.signal })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(IndeterminateServiceWriteError);
+    expect((err as IndeterminateServiceWriteError).retryable).toBe(false);
+    expect(posts(calls)).toHaveLength(1);
+  });
+
+  it("rethrows the raw abort when the signal was aborted before anything was dispatched", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { client, calls } = setup("ca", [submitOk]);
+    const err = await client.rma
+      .submit(submitInput, { signal: controller.signal })
+      .catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(IndeterminateServiceWriteError);
+    expect((err as { name?: string }).name).toBe("AbortError");
+    expect(posts(calls)).toHaveLength(0);
+  });
 
   it("throws IndeterminateServiceWriteError when the connection resets after dispatch", async () => {
     const { client, calls } = setup("ca", [

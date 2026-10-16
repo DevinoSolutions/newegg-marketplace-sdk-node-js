@@ -231,6 +231,43 @@ describe("refunds.issue", () => {
     expect(posts(calls)).toHaveLength(1);
   });
 
+  it("blocks when the order total is unknown or a prior courtesy refund has no readable amount", async () => {
+    const unknownTotal = setup("ca", [issueOk], {
+      order: orderResponse({ OrderTotalAmount: undefined }),
+    });
+    const a = await unknownTotal.client.refunds.previewIssue(input);
+    expect(a.blockers.join("\n")).toContain("order total is unknown");
+    await expect(unknownTotal.client.refunds.issue(input)).rejects.toBeInstanceOf(
+      NeweggValidationError,
+    );
+    expect(posts(unknownTotal.calls)).toHaveLength(0);
+
+    const unpriced = setup("ca", [issueOk], {
+      courtesyRefunds: [courtesyRecord({ RefundAmount: undefined })],
+    });
+    const b = await unpriced.client.refunds.previewIssue(input);
+    expect(b.blockers.join("\n")).toContain("cannot be reconciled");
+  });
+
+  it("treats a caller abort after dispatch as indeterminate", async () => {
+    const controller = new AbortController();
+    const { client, calls } = setup("ca", [
+      {
+        method: "POST",
+        pathPattern: paths.courtesyRefundNew,
+        reply: () => {
+          controller.abort();
+          throw new DOMException("This operation was aborted", "AbortError");
+        },
+      },
+    ]);
+    const err = await client.refunds
+      .issue(input, { signal: controller.signal })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(IndeterminateServiceWriteError);
+    expect(posts(calls)).toHaveLength(1);
+  });
+
   it("is indeterminate when a 200 response carries no request id", async () => {
     const { client, calls } = setup("ca", [
       {

@@ -248,6 +248,11 @@ export class RmaApiImpl implements RmaApi {
       context,
       findings,
     });
+    if (normalized.type === "replacement") {
+      findings.warnings.push(
+        "Newegg requires DiffShippedByPartyAction on a replacement RMA for an order with both Shipped-by-Seller and Shipped-by-Newegg items; the SDK does not send it and cannot detect such an order, so Newegg may reject this.",
+      );
+    }
     if (normalized.autoReceive === true) {
       findings.warnings.push(
         "autoReceive finalizes the refund in the same call; it is refused for Newegg-fulfilled orders (SE031).",

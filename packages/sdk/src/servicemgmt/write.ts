@@ -63,7 +63,7 @@ export function indeterminateServiceWrite(
 
 /**
  * Sends a single NON-idempotent Service Management write. Retries ONLY provably-unsent transport
- * failures (pre-send); an ambiguous failure (timeout/reset after dispatch, or a 408/any 5xx) throws
+ * failures (pre-send); an ambiguous failure (timeout/reset/caller abort after dispatch, or a 408/any 5xx) throws
  * {@link IndeterminateServiceWriteError} rather than risk a duplicate RMA or refund (ADR 0004). A
  * definitively-unsent transport error surfaces as a non-retryable {@link NeweggApiError}; upstream
  * 4xx `SE0xx` / `CE0xx` errors pass through unchanged.
@@ -79,10 +79,23 @@ export async function sendServiceWrite(
   await http.acquireRateLimit(ctx);
   let attempt = 0;
   for (;;) {
+    // fetch() rejects without sending when its signal is already aborted; any abort that happens
+    // while the request is in flight may have reached Newegg.
+    const abortedBeforeSend = ctx.signal?.aborted === true;
     try {
       return { result: await http.executeOnce(spec, ctx), submittedAtIso };
     } catch (err) {
-      if (isAbortError(err)) throw err;
+      if (isAbortError(err)) {
+        if (abortedBeforeSend) throw err;
+        throw indeterminateServiceWrite(
+          http,
+          ctx,
+          meta,
+          "The caller aborted the RMA / courtesy refund write after it was dispatched, so it may have reached Newegg and the outcome is unknown.",
+          submittedAtIso,
+          err,
+        );
+      }
       const preSendRetryable =
         err instanceof TransportError &&
         err.phase === "pre-send" &&
@@ -156,13 +169,13 @@ export async function loadOrderContext(
     .refunds()
     .list({ keyword: { type: "orderNumber", value: orderNumber } }, readOptions);
   if (rmaPage.totalCount > rmaPage.rmas.length) {
-    findings.warnings.push(
-      `Only ${rmaPage.rmas.length} of ${rmaPage.totalCount} RMAs on the order were read; the duplicate and balance checks may be incomplete.`,
+    findings.blockers.push(
+      `Only ${rmaPage.rmas.length} of ${rmaPage.totalCount} RMAs on the order were read, so prior refunds cannot be reconciled.`,
     );
   }
   if (refundPage.totalCount > refundPage.refunds.length) {
-    findings.warnings.push(
-      `Only ${refundPage.refunds.length} of ${refundPage.totalCount} courtesy refunds on the order were read; the balance check may be incomplete.`,
+    findings.blockers.push(
+      `Only ${refundPage.refunds.length} of ${refundPage.totalCount} courtesy refunds on the order were read, so prior refunds cannot be reconciled.`,
     );
   }
   return {
