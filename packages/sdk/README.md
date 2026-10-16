@@ -1,7 +1,8 @@
 # @devino/newegg-marketplace-sdk
 
-Transport-independent TypeScript SDK for the Newegg Marketplace API, with first-class
-inventory management across Newegg's US, B2B, and Canada marketplaces.
+Transport-independent TypeScript SDK for the Newegg Marketplace API (US, B2B and Canada
+marketplaces): inventory, prices, orders, reports, RMAs and refunds, catalog and reference
+lookups, and existing-item listing creation.
 
 - **One runtime dependency** (`zod`). No I/O at import time; no environment variables read on
   your behalf.
@@ -103,7 +104,8 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
 
 ## What you get
 
-- **`client.pricing`** — read-only `get`, `tryGet`, `getMany` (Get Item Price; never mutates).
+- **`client.pricing`** — reads `get`, `tryGet`, `getMany`, `previewUpdate` (Get Item Price;
+  never mutate) and the write `update` (selling price only, absolute, read back to verify).
 - **`client.reports`** — read-only Reports Management reports (a report submission creates a
   report job and mutates nothing): `settlementSummary` and `settlementTransactions` (paged JSON),
   `dailyInventory` (all platforms) and `dailyPrice` (Newegg.com only), whose result is an FTP
@@ -119,17 +121,31 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
   `orders.list` / `rma.list`; the required result `version` defaults to 309 / 320 and is validated
   per platform). These three wait up to 300 s (live: 2-4 minutes). Item Ranking (a synchronous,
   Account-Manager-only `contentmgmt` call) and the China-only Tax Setting report are not built.
-- **`client.rma`** / **`client.refunds`** - read-only Service Management lookups (contracts §18):
-  `rma.list/get/tryGet` (Get RMA Information; `version` defaults to 320) and
-  `refunds.list/get/tryGet/listRequests/getRequestStatus` (courtesy refund information and request
-  status). Submitting, editing, processing or rejecting an RMA and issuing a courtesy refund are
-  writes and are not implemented. Amounts are USD (Newegg.com, B2B) or CAD (Newegg.ca); `Rma.customer`
-  holds buyer PII that the MCP tools deliberately never surface.
+- **`client.rma`** / **`client.refunds`** - Service Management (contracts §18, §20). Reads:
+  `rma.list/get/tryGet` (`version` defaults to 320) and
+  `refunds.list/get/tryGet/listRequests/getRequestStatus`. **Writes** (each has a read-only
+  `preview*` twin that reports blockers and warnings): `rma.submit/edit/process/reject` and
+  `refunds.issue` (a courtesy refund; the commission is not refunded). Ambiguous write failures
+  throw `IndeterminateServiceWriteError` and are never auto-retried. Amounts are USD (Newegg.com,
+  B2B) or CAD (Newegg.ca); `Rma.customer` holds buyer PII that the MCP tools deliberately never
+  surface.
+- **`client.orders`** - reads `list`, `get`, `tryGet`, `getStatus`, `tryGetStatus` (order info is a
+  read even though Newegg uses `PUT`); **writes** `ship`, `cancel`, `confirmDownload`,
+  `removeItems`. Orders carry buyer PII in `customer`.
+- **`client.catalog`** - read-only Item Lookup Report: `resolve` (UPC / manufacturer part number /
+  Newegg item number to Newegg item numbers), plus `submitLookup`, `lookupStatus`, `lookupResult`.
+- **`client.listings`** - `previewCreate` (offline) and **`create`** (write): add seller offers
+  on EXISTING Newegg items through an `ITEM_DATA` feed. It never creates product records.
+- **`client.reference`** - read-only: `getSellerStatus`, `listIndustries`, `listSubcategories`,
+  `listSubcategoryProperties`, `listPropertyValues` (requires `subcategoryId`).
+- **`client.storefront`** - UNOFFICIAL, read-only reader of the public storefront's buy box and
+  competing offers (`getOffers`; `us`/`ca` only; no SLA).
 - **`client.inventory`** — `getItem`, `getMany`, `previewUpdate`, `updateItem`, `updateMany`.
   `updateMany` takes `strategy: "direct" | "feed" | "auto"` (default `auto`; feeds above
   `strategy.autoFeedThreshold` post-dedup items, default 8).
 - **`client.feeds`** — `submitInventoryFeed`, `getStatus`, `getResult`, and `waitForResult`
-  (bounded exponential polling that returns a `timeout` outcome instead of throwing).
+  (bounded exponential polling that returns a `timeout` outcome instead of throwing). The feed
+  envelope `Overwrite` is always `"No"`.
 - **`client.verifyCredentials()`** — read-only, fail-fast startup check that credentials are
   actually accepted by Newegg (throws `NeweggAuthenticationError` on bad creds).
 - **`client.service`** — `getStatus(domain?)` for Newegg service availability.
@@ -139,6 +155,13 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
   `IndeterminateFeedSubmissionError` with a recovery path.
 - **Injectable everything** — `logger`, `fetch`, `retry`, `rateLimitStore`, `operationStore`.
   Credentials, headers, and secrets never appear in errors, logs, or `raw` payloads.
+
+## Examples
+
+Runnable, typechecked examples live in the repository's
+[`examples/`](https://github.com/devino/newegg-marketplace-sdk-node-js/tree/main/examples):
+`sdk-basic`, `sdk-batch-inventory`, `sdk-orders-and-reports` (read-only) and
+`sdk-pricing-preview` (preview-only). They read credentials from the environment.
 
 ## Testing helpers
 
