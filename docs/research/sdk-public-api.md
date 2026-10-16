@@ -2025,11 +2025,16 @@ export interface RecordedCall {
     clamped; refund prices are forbidden on replacements; reasons 3/4/6/8 need `unopened` (+ images and
     memo on US/CA; images and memo are refused on B2B); the reject-reason set differs per marketplace
     (`platform/rma.ts`). Writes follow ADR 0004: only provably-unsent transport errors retry; a timeout
-    or reset after dispatch, an HTTP 408 or any 5xx (including 500), or a 2xx that does not identify the RMA / refund
+    or reset after dispatch, a caller abort after dispatch, an HTTP 408 or any 5xx (including 500), or a 2xx that does not identify the RMA / refund
     request throws `IndeterminateServiceWriteError` and is never auto-resent (read `rma.list/get` or
     `refunds.list/listRequests` first). Void / close RMA is not built (no documented operation).
     `autoReceive` exists in the SDK only. The MCP exposes preview + apply tools for all five, gated on
-    `NEWEGG_MCP_ALLOW_WRITES=true`, and caps courtesy refunds at `NEWEGG_MCP_MAX_REFUND_AMOUNT`.
+    `NEWEGG_MCP_ALLOW_WRITES=true`. The refund cap `NEWEGG_MCP_MAX_REFUND_AMOUNT` is MCP-only, applies to
+    every refund total (RMA submit / edit / process and courtesy refund) and is per operation, not
+    cumulative across previews; the SDK enforces only the schema maximum and the order-balance blockers.
+    The checks fail closed (unknown order total, unreconcilable prior refunds, or a partial read of the
+    order's RMAs / refunds block). A caller abort after dispatch is indeterminate too; a replacement RMA
+    previews a `DiffShippedByPartyAction` warning (the field is never sent).
 
 ```
 

@@ -2892,7 +2892,8 @@ with Get Courtesy Refund Request Status (§18.3, `client.refunds.getRequestStatu
 None of the five writes is idempotent (a re-send creates a second RMA or pays a second refund) and none
 accepts a client token. `sendServiceWrite` (`servicemgmt/write.ts`) therefore retries **only** transport
 failures proven to have happened before any byte was sent; the first ambiguous failure (timeout or reset
-after dispatch, HTTP 408 or ANY 5xx, including a plain 500) throws `IndeterminateServiceWriteError` (`service_write_indeterminate`,
+after dispatch, a caller abort after the request was dispatched, HTTP 408 or ANY 5xx,
+including a plain 500) throws `IndeterminateServiceWriteError` (`service_write_indeterminate`,
 never `retryable`) carrying the operation, order and RMA number and the time it was submitted. The same
 error is thrown when Newegg answers 2xx but the response does not identify the RMA (or, for a refund, has no
 `RequestId`), or names a different RMA than the one edited. The guidance is to check `rma.list/get` or
@@ -2919,15 +2920,21 @@ voided / uninvoiced / replacement order, a line not on the order or cancelled, q
 quantity, unit refund above the unit price, shipping above the charge, refund above the order total or the
 total minus prior refunds, non-open RMA) and `warnings` (an existing RMA or courtesy refund on the order,
 replacement stock, the commission note, RMA still processing). Prior refunds are summed from active RMAs plus
-non-void courtesy refunds; a mismatch with the order's `RefundAmount` is a warning only. The write methods
+non-void courtesy refunds; a mismatch with the order's `RefundAmount` is a warning only. The checks **fail
+closed**: an unknown order total, a partial read of the order's RMAs or courtesy refunds, and any prior
+refund line with no readable price or amount (never counted as 0) are BLOCKERS, because the remaining
+balance cannot be established. The write methods
 **re-run the same checks and throw `NeweggValidationError` before any POST** when there is a blocker.
 
 **MCP.** Both the preview and the apply tool of each pair register only when
 `NEWEGG_MCP_ALLOW_WRITES=true` (ADR 0005 and the pricing precedent). A preview with blockers returns no
 `previewId`; a clean one returns a single-use, TTL-bound, 256-bit `previewId`, and apply accepts only that
 id, re-hashes the stored request (`preview_tampered`) and refuses a replay, an expired id or one of another
-kind. Courtesy refunds and refund RMAs above `NEWEGG_MCP_MAX_REFUND_AMOUNT` (default 500, in the marketplace
-currency) are blocked at preview time, and a refund-type write whose amount reads as 0 (unreadable
+kind. The ceiling `NEWEGG_MCP_MAX_REFUND_AMOUNT` (default 500, in the marketplace currency) applies to
+EVERY `refundTotal`: RMA submit, edit and process, and the courtesy refund. It is MCP-only and **per
+operation**, not cumulative across previews: SDK callers are the operator, so the SDK enforces only the
+schema maximum (99,999.99) and the order-balance blockers above. A refund above the ceiling is blocked at
+preview time, and a refund-type write whose amount reads as 0 (unreadable
 lines) is blocked too rather than passing the ceiling. The previewed refund total (cents) is stored with
 the preview and covered by its hash. Process RMA releases whatever the RMA holds at that moment, so the
 apply tool re-reads the RMA first and aborts (`preview_stale`, preview consumed, nothing sent) if it is
@@ -2935,7 +2942,11 @@ no longer open, its refund differs from the previewed total, or it exceeds the c
 memos, tracking numbers and label URLs (`docs/mcp-security.md`).
 
 **Not built.** (1) Voiding / closing an RMA and any other RMA status change: the section documents no such
-operation. (2) The `DiffShippedByPartyAction` marker and `IssueUser`: never sent (**ASSUMPTION:** both are optional). (3) Anything beyond the five documented operations.
+operation. (2) `IssueUser`: never sent (**ASSUMPTION:** optional). (3) `DiffShippedByPartyAction`: the Submit
+RMA page lists it as REQUIRED for a Replacement RMA on an order that has both Shipped-by-Seller (SBS) and
+Shipped-by-Newegg (SBN) items. The SDK does not send it (it cannot detect a mixed order) and instead adds a
+WARNING to every replacement-RMA preview that Newegg may reject it. (4) Anything beyond the five documented
+operations.
 
 **ASSUMPTIONs (unverified, retire when an owner-authorized write is observed):**
 
@@ -2949,6 +2960,7 @@ operation. (2) The `DiffShippedByPartyAction` marker and `IssueUser`: never sent
 - That Edit replaces the whole line set (the page shows a full `RMATransactionList`) rather than patching rows.
 - That receiving a refund RMA is what lets Newegg pay the buyer's refund (the pages do not say so in terms).
 - That a `processing` (status 6) RMA is not editable (SE028 says "open"); the SDK only warns about it.
+- The wire values and semantics of `DiffShippedByPartyAction` (unread; not sent).
 - That omitting `UnOpen` / `FileUrls` / `Memo` for reasons other than 3 / 4 / 6 / 8 is accepted.
 - The 100/hour and 1,000/hour limits on the pages (the live headers on other reads disagree with their
   pages, §19.1).
