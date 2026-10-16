@@ -167,6 +167,10 @@ for (const sample of MUST_PASS) {
     "export interface OrdersApi { list(): void; [k: string]: unknown; }\nexport interface NeweggClient { readonly marketplace: string; readonly orders: OrdersApi; }",
     "export interface OrdersApi extends Base { list(): void; }\nexport interface NeweggClient { readonly marketplace: string; readonly orders: OrdersApi; }",
     "export type NeweggClient = { marketplace: string };",
+    "export interface CatalogApi { resolve(): void; deleteAll(): void; }\nexport interface NeweggClient { readonly marketplace: string; readonly catalog: CatalogApi; }",
+    "export interface ReportsApi { purgeEverything(): void; }\nexport interface NeweggClient { readonly marketplace: string; readonly reports: ReportsApi; }",
+    "export interface FileReportApi { submit(): void; purge(): void; }\nexport interface ReportsApi { itemBasicInfo: FileReportApi; }\nexport interface NeweggClient { readonly marketplace: string; readonly reports: ReportsApi; }",
+    "export interface NewReportApi { submit(): void; }\nexport interface ReportsApi { itemBasicInfo: NewReportApi; }\nexport interface NeweggClient { readonly marketplace: string; readonly reports: ReportsApi; }",
   ];
   for (const sample of failOpenCases) {
     if (clientSurfaceProblems(sample).length === 0) {

@@ -61,13 +61,42 @@ const WRITE_METHOD_NAMES: ReadonlySet<string> = new Set([
  * data). Together with WRITE_NAMESPACE_READS this must cover every `readonly x: <Name>Api` member
  * of `NeweggClient`; clientSurfaceProblems fails when a new namespace is in neither list.
  */
-const READ_ONLY_NAMESPACES: readonly string[] = [
-  "service",
-  "reference",
-  "catalog",
-  "reports",
-  "storefront",
-];
+const READ_ONLY_NAMESPACE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
+  service: ["getStatus"],
+  reference: [
+    "getSellerStatus",
+    "listIndustries",
+    "listSubcategories",
+    "listSubcategoryProperties",
+    "listPropertyValues",
+  ],
+  catalog: ["resolve", "submitLookup", "lookupStatus", "lookupResult"],
+  reports: [
+    "itemBasicInfo",
+    "orderList",
+    "rmaList",
+    "settlementSummary",
+    "settlementTransactions",
+    "dailyInventory",
+    "dailyPrice",
+    "status",
+  ],
+  storefront: ["getOffers"],
+};
+
+/**
+ * The report interfaces that `client.reports.<report>` members are typed with, and their methods.
+ * Report submission creates a report job and mutates nothing on the seller account (contracts
+ * §17); a new method here must be classified before a live file may call it.
+ */
+const REPORT_INTERFACE_MEMBERS: Readonly<Record<string, readonly string[]>> = {
+  FileReportApi: ["submit", "status", "result", "download", "waitForRequest", "waitForResult"],
+  PagedReportApi: ["submit", "status", "result", "waitForRequest", "waitForResult"],
+  SettlementSummaryReportApi: ["submit", "status", "result", "waitForRequest", "waitForResult"],
+  SettlementTransactionReportApi: ["submit", "status", "result", "waitForRequest", "waitForResult"],
+};
+
+const READ_ONLY_NAMESPACES: readonly string[] = Object.keys(READ_ONLY_NAMESPACE_MEMBERS);
 
 // Live files may import exactly these, plus the vitest API below and a few harmless node: modules.
 // Importing SDK internals (e.g. `new RmaApiImpl(...)` from ../../src/rma/api.js) builds a write
@@ -373,13 +402,21 @@ function isAssignmentTarget(node: ts.Node): boolean {
     const parent: ts.Node | undefined = current.parent;
     if (parent === undefined) return false;
     if (ts.isBinaryExpression(parent)) {
-      return parent.operatorToken.kind === ts.SyntaxKind.EqualsToken && parent.left === current;
+      return (
+        parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+        parent.left === current
+      );
     }
     if (ts.isForOfStatement(parent) || ts.isForInStatement(parent)) {
       return parent.initializer === current;
     }
     if (
       ts.isPropertyAssignment(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      ts.isTypeAssertionExpression(parent) ||
+      ts.isSatisfiesExpression(parent) ||
       ts.isObjectLiteralExpression(parent) ||
       ts.isArrayLiteralExpression(parent) ||
       ts.isSpreadAssignment(parent) ||
@@ -494,6 +531,7 @@ export function astViolations(source: string): string[] {
     const resultName = iterable.expression.text;
     if (holders.has(resultName) || holders.has(arg.text)) return false;
     if (arg.text === resultName) return false;
+    if (!resultUsedReadOnly(resultName)) return false;
     // No re-declaration of the loop variable inside the loop body.
     let shadowed = false;
     const scan = (n: ts.Node): void => {
@@ -591,6 +629,88 @@ export function astViolations(source: string): string[] {
     );
   };
 
+  /** Is `node` assigned to, incremented, or deleted (directly or through a destructuring target)? */
+  const isMutated = (node: ts.Node): boolean => {
+    const parent = node.parent;
+    if (
+      (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+      (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+        parent.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      return true;
+    }
+    if (ts.isDeleteExpression(parent)) return true;
+    return isAssignmentTarget(node);
+  };
+
+  /**
+   * The Object.* row exception trusts that `result.rows` still holds only report rows, so every
+   * reference to the result binding must be one of: `result.<field>` read (not `rows`),
+   * `for (const row of result.rows)`, `result.rows.length` read, or `Array.isArray(result.rows)`.
+   * Assigning to it or its members, calling a method on `result.rows` (push, splice, ...), passing
+   * `result` or `result.rows` anywhere else, and aliasing `result` all revoke the exception.
+   */
+  const resultUsedReadOnly = (resultName: string): boolean => {
+    let ok = true;
+    const walk = (n: ts.Node): void => {
+      if (!ok) return;
+      if (ts.isIdentifier(n) && n.text === resultName && isValueReference(n)) {
+        const declaration = n.parent;
+        // The declaration itself (`const result = await ...`).
+        if (ts.isVariableDeclaration(declaration) && declaration.name === n) {
+          ts.forEachChild(n, walk);
+          return;
+        }
+        if (!ts.isPropertyAccessExpression(declaration) || declaration.expression !== n) {
+          ok = false;
+          return;
+        }
+        if (isMutated(declaration)) {
+          ok = false;
+          return;
+        }
+        const next = declaration.parent;
+        if (declaration.name.text === "rows") {
+          const iteratesRows = ts.isForOfStatement(next) && next.expression === declaration;
+          const readsLength =
+            ts.isPropertyAccessExpression(next) &&
+            next.expression === declaration &&
+            next.name.text === "length" &&
+            !isMutated(next);
+          const isArrayCheck =
+            ts.isCallExpression(next) &&
+            next.arguments[0] === declaration &&
+            next.arguments.length === 1 &&
+            ts.isPropertyAccessExpression(next.expression) &&
+            ts.isIdentifier(next.expression.expression) &&
+            next.expression.expression.text === "Array" &&
+            next.expression.name.text === "isArray";
+          if (!iteratesRows && !readsLength && !isArrayCheck) ok = false;
+        } else {
+          // `result.field.deeper.method(...)` or `result.field.x = ...` could mutate a member.
+          let top: ts.Node = declaration;
+          while (
+            (ts.isPropertyAccessExpression(top.parent) ||
+              ts.isElementAccessExpression(top.parent)) &&
+            top.parent.expression === top
+          ) {
+            top = top.parent;
+          }
+          if (
+            (ts.isCallExpression(top.parent) && top.parent.expression === top) ||
+            isMutated(top)
+          ) {
+            ok = false;
+          }
+        }
+        return;
+      }
+      ts.forEachChild(n, walk);
+    };
+    walk(sourceFile);
+    return ok;
+  };
+
   const REPORT_READS: ReadonlySet<string> = new Set(["waitForResult", "waitForRequest", "result"]);
   /** `await <real client>.reports.<report>.<waitForResult|waitForRequest|result>(...)`, nothing else. */
   const isDirectReportRead = (expr: ts.Node): boolean => {
@@ -603,6 +723,39 @@ export function astViolations(source: string): string[] {
     if (!ts.isPropertyAccessExpression(reports) || reports.name.text !== "reports") return false;
     const receiver = reports.expression;
     return ts.isIdentifier(receiver) ? isRealClient(receiver.text) : isFactoryCall(receiver);
+  };
+
+  // JSON.stringify(value, replacer) calls the replacer with every value it visits (a client
+  // included), so only the replacer-free forms are allowed.
+  const checkJsonUse = (node: ts.Identifier): void => {
+    const access = node.parent;
+    const call = access.parent;
+    if (
+      ts.isPropertyAccessExpression(access) &&
+      access.expression === node &&
+      ts.isCallExpression(call) &&
+      call.expression === access
+    ) {
+      const args = call.arguments;
+      if (access.name.text === "parse" && args.length === 1) return;
+      if (access.name.text === "stringify") {
+        if (args.length === 1) return;
+        const [, replacer, space] = args;
+        if (
+          args.length === 3 &&
+          replacer !== undefined &&
+          (replacer.kind === ts.SyntaxKind.NullKeyword ||
+            (ts.isIdentifier(replacer) && replacer.text === "undefined")) &&
+          space !== undefined &&
+          ts.isNumericLiteral(space)
+        ) {
+          return;
+        }
+      }
+    }
+    flag(
+      "JSON used other than JSON.parse(text), JSON.stringify(value) or JSON.stringify(value, null, <number>) — a replacer/reviver function is invoked with every nested value (a client included)",
+    );
   };
 
   const checkObjectUse = (node: ts.Identifier): void => {
@@ -717,6 +870,7 @@ export function astViolations(source: string): string[] {
         flag(`reference to ${node.text} (raw network access or indirect invocation)`);
       }
       if (node.text === "Object" && isValueReference(node)) checkObjectUse(node);
+      if (node.text === "JSON" && isValueReference(node)) checkJsonUse(node);
       if (node.text === "process" && isValueReference(node)) {
         const parent = node.parent;
         if (!(
@@ -843,16 +997,65 @@ export function clientSurfaceProblems(typesSource: string): string[] {
             `client.${name}.${apiName} is in neither the read allowlist nor WRITE_METHOD_NAMES (scripts/live-readonly-ast.ts): classify it`,
           );
         }
-      } else if (WRITE_METHOD_NAMES.has(apiName) && !FUNCTION_HELPERS.has(apiName)) {
-        problems.push(
-          `client.${name}.${apiName} looks like a write method on a namespace classified read-only: reclassify ${name} or rename the method`,
-        );
+      } else {
+        const allowed = READ_ONLY_NAMESPACE_MEMBERS[name] ?? [];
+        if (WRITE_METHOD_NAMES.has(apiName) && !FUNCTION_HELPERS.has(apiName)) {
+          problems.push(
+            `client.${name}.${apiName} looks like a write method on a namespace classified read-only: reclassify ${name} or rename the method`,
+          );
+        } else if (!allowed.includes(apiName)) {
+          problems.push(
+            `client.${name}.${apiName} is not classified: classify this method as read (add it to READ_ONLY_NAMESPACE_MEMBERS in scripts/live-readonly-ast.ts) or write (move ${name} to WRITE_NAMESPACE_READS)`,
+          );
+        }
+        // Nested report interfaces (`client.reports.dailyInventory.submit`).
+        const nested = ts.isPropertySignature(apiMember) ? apiMember.type : undefined;
+        if (
+          nested !== undefined &&
+          ts.isTypeReferenceNode(nested) &&
+          ts.isIdentifier(nested.typeName)
+        ) {
+          const nestedName = nested.typeName.text;
+          const nestedApi = interfaces.get(nestedName);
+          const nestedAllowed = REPORT_INTERFACE_MEMBERS[nestedName];
+          if (nestedApi === undefined || nestedApi.heritageClauses !== undefined) {
+            problems.push(
+              `${nestedName} (client.${name}.${apiName}) is not a plain interface the guard can read`,
+            );
+          } else if (nestedAllowed === undefined) {
+            problems.push(
+              `client.${name}.${apiName}: interface ${nestedName} is not classified: add it to REPORT_INTERFACE_MEMBERS in scripts/live-readonly-ast.ts`,
+            );
+          } else {
+            const nestedNames = new Set<string>();
+            for (const nestedMember of nestedApi.members) {
+              const nestedMemberName = memberName(nestedMember);
+              if (nestedMemberName === undefined) {
+                problems.push(
+                  `${nestedName} has a member the guard cannot name: ${nestedMember.getText(file)}`,
+                );
+                continue;
+              }
+              nestedNames.add(nestedMemberName);
+              if (!nestedAllowed.includes(nestedMemberName)) {
+                problems.push(
+                  `client.${name}.${apiName}.${nestedMemberName} is not classified: classify this method as read (REPORT_INTERFACE_MEMBERS in scripts/live-readonly-ast.ts) or write`,
+                );
+              }
+            }
+            for (const read of nestedAllowed) {
+              if (!nestedNames.has(read))
+                problems.push(`allowlisted ${nestedName}.${read} no longer exists`);
+            }
+          }
+        }
       }
     }
-    if (isWrite) {
-      for (const read of WRITE_NAMESPACE_READS[name] ?? []) {
-        if (!names.has(read)) problems.push(`allowlisted read ${name}.${read} no longer exists`);
-      }
+    const allowlisted = isWrite
+      ? (WRITE_NAMESPACE_READS[name] ?? [])
+      : (READ_ONLY_NAMESPACE_MEMBERS[name] ?? []);
+    for (const read of allowlisted) {
+      if (!names.has(read)) problems.push(`allowlisted member ${name}.${read} no longer exists`);
     }
   }
   for (const name of [...writeNamespaces, ...READ_ONLY_NAMESPACES, ...CLIENT_PLAIN_MEMBERS]) {
