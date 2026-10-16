@@ -3,9 +3,27 @@
 // they must never mutate it. This guard fails CI when a live file gains a
 // mutating SDK call, a raw POST, an ungated describe block, or when the guard
 // itself would pass vacuously (no files found).
+//
+// Three layers, all of which may only get stricter: the per-line denylist below (also run on the
+// comment-stripped source), the whitespace-normalised allowlist rules (live-readonly-rules.ts) and
+// the AST rules (live-readonly-ast.ts: computed access, reflection, destructuring, import
+// allowlist, namespace allowlist). A self-test proves each known bypass is still flagged.
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { MUST_FLAG, MUST_PASS, normalizedViolations } from "./live-readonly-rules.js";
+import {
+  PARSE_FAILURE_REASON,
+  READ_ONLY_NAMESPACES,
+  WRITE_METHOD_NAMES,
+  WRITE_NAMESPACE_READS,
+  astViolations,
+} from "./live-readonly-ast.js";
+import {
+  MUST_FLAG,
+  MUST_NOT_PARSE,
+  MUST_PASS,
+  normalizedViolations,
+  withoutComments,
+} from "./live-readonly-rules.js";
 
 const root = resolve(import.meta.dirname, "..");
 const liveDir = join(root, "packages", "sdk", "test", "live");
@@ -96,20 +114,38 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /["'`]?SellingPrice["'`]?\s*:/, why: "raw price-write body (SellingPrice)" },
 ];
 
-/** Every reason `source` breaks the rule: the per-line denylist plus the normalised allowlist. */
+/**
+ * Reasons beyond the raw per-line denylist: the denylist again on the comment-stripped source (a
+ * comment or line break inside a call chain no longer hides it), then the normalised and AST rules.
+ */
+function structuralViolations(source: string): string[] {
+  const stripped = withoutComments(source);
+  const reasons: string[] = [];
+  for (const { re, why } of FORBIDDEN) if (re.test(stripped)) reasons.push(why);
+  if (/\bfetch\s*\(/.test(stripped)) reasons.push("raw fetch() in the live suite");
+  return [...reasons, ...normalizedViolations(source), ...astViolations(source)];
+}
+
+/** Every reason `source` breaks the rule: the per-line denylist plus the structural rules. */
 function violationsOf(source: string): string[] {
   const reasons: string[] = [];
   for (const line of source.split(/\r?\n/)) {
     for (const { re, why } of FORBIDDEN) if (re.test(line)) reasons.push(why);
   }
-  return [...reasons, ...normalizedViolations(source)];
+  return [...reasons, ...structuralViolations(source)];
 }
 
 // The guard proves itself on every run: each known bypass MUST be flagged and each legitimate read
-// MUST pass, otherwise the guard would be passing vacuously (live-readonly-rules.ts).
+// MUST pass, otherwise the guard would be passing vacuously (live-readonly-rules.ts). A bypass that
+// merely fails to parse is not evidence the guard works, so parse failures do not count here.
 for (const sample of MUST_FLAG) {
-  if (violationsOf(sample).length === 0) {
+  if (violationsOf(sample).filter((why) => why !== PARSE_FAILURE_REASON).length === 0) {
     fail(`self-test: bypass NOT flagged: ${JSON.stringify(sample)}`);
+  }
+}
+for (const sample of MUST_NOT_PARSE) {
+  if (!violationsOf(sample).includes(PARSE_FAILURE_REASON)) {
+    fail(`self-test: unparseable source NOT flagged: ${JSON.stringify(sample)}`);
   }
 }
 for (const sample of MUST_PASS) {
@@ -119,9 +155,55 @@ for (const sample of MUST_PASS) {
   }
 }
 
+// Every namespace on NeweggClient must be classified, so a new write surface cannot appear on the
+// client without the guard noticing.
+{
+  const typesSource = readFileSync(join(root, "packages", "sdk", "src", "types.ts"), "utf8");
+  const body = /export interface NeweggClient \{([\s\S]*?)\n\}/.exec(typesSource)?.[1] ?? "";
+  const members = [...body.matchAll(/^\s*readonly (\w+): \w+Api;/gm)].map((m) => m[1] ?? "");
+  const known = new Set([...Object.keys(WRITE_NAMESPACE_READS), ...READ_ONLY_NAMESPACES]);
+  if (members.length === 0) {
+    fail("could not read the NeweggClient namespaces from packages/sdk/src/types.ts");
+  }
+  for (const member of members) {
+    if (!known.has(member)) {
+      fail(
+        `NeweggClient.${member} is not classified in scripts/live-readonly-ast.ts: add it to WRITE_NAMESPACE_READS (with its read methods) or READ_ONLY_NAMESPACES`,
+      );
+    }
+  }
+  for (const name of known) {
+    if (members.length > 0 && !members.includes(name)) {
+      fail(`scripts/live-readonly-ast.ts lists namespace "${name}", which NeweggClient lacks`);
+    }
+  }
+  // ...and so must every method of a write namespace: a read in its allowlist or a named write.
+  for (const [namespace, reads] of Object.entries(WRITE_NAMESPACE_READS)) {
+    const apiName = new RegExp(`readonly ${namespace}: (\\w+);`).exec(body)?.[1];
+    const apiBody = apiName
+      ? new RegExp(`export interface ${apiName} \\{([\\s\\S]*?)\\r?\\n\\}`).exec(typesSource)?.[1]
+      : undefined;
+    if (apiBody === undefined) {
+      fail(`could not read the ${namespace} API interface from packages/sdk/src/types.ts`);
+      continue;
+    }
+    for (const m of apiBody.matchAll(/^ {2}(\w+)[(<]/gm)) {
+      const method = m[1] ?? "";
+      if (!reads.includes(method) && !WRITE_METHOD_NAMES.has(method)) {
+        fail(
+          `client.${namespace}.${method} is in neither the read allowlist nor WRITE_METHOD_NAMES (scripts/live-readonly-ast.ts): classify it`,
+        );
+      }
+    }
+  }
+}
+
 let files: string[] = [];
 try {
-  files = readdirSync(liveDir).filter((f) => f.endsWith(".ts"));
+  // Recursive and every script-like extension: a nested or .mts / .js file is still live code.
+  files = readdirSync(liveDir, { recursive: true, encoding: "utf8" })
+    .map((f) => f.replaceAll("\\", "/"))
+    .filter((f) => /\.(?:[cm]?[jt]s|[jt]sx)$/.test(f));
 } catch {
   fail(`live test directory missing at ${liveDir} — guard cannot verify anything`);
 }
@@ -146,10 +228,11 @@ for (const file of files) {
       );
     }
   });
-  for (const why of normalizedViolations(source)) {
+  for (const why of new Set(structuralViolations(source))) {
     fail(`${rel} ${why} — the live suite is read-only`);
   }
-  if (isTestFile && !lines.some((l) => l.includes("describe.skipIf(!liveEnabled)"))) {
+  // The gate must be code, not a comment that merely mentions it.
+  if (isTestFile && !withoutComments(source).includes("describe.skipIf(!liveEnabled)")) {
     fail(`${rel} missing the describe.skipIf(!liveEnabled) gate`);
   }
 }

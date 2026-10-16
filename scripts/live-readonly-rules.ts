@@ -1,12 +1,16 @@
 // Allowlist rules of the live read-only guard (see check-live-readonly.ts), applied to the
-// whitespace-normalised source of each live file.
+// comment-stripped, whitespace-normalised source of each live file. The AST rules in
+// live-readonly-ast.ts run alongside these.
 //
 // The per-line method patterns in check-live-readonly.ts are a denylist, which aliasing
 // (`const r = client.rma; r.submit(x)`), destructuring, bracket access, `.bind`, `Reflect.apply`
 // and line-wrapped chains all evade. For the money-moving namespaces the rule is therefore
 // inverted: the ONLY thing a live file may do with `<expr>.rma` / `<expr>.refunds` is call a
 // documented READ. A receiver named `*Page` is exempt (the result pages carry plain `rmas` /
-// `refunds` arrays). Contracts §18 (reads) and §20 (writes).
+// `refunds` arrays). Contracts §18 (reads) and §20 (writes). live-readonly-ast.ts extends the same
+// inversion to every other namespace with write methods (orders, pricing, inventory, listings,
+// feeds).
+import { parseSource, stripComments } from "./live-readonly-ast.js";
 
 const RMA_READS = "list|get|tryGet";
 const REFUND_READS = "list|get|tryGet|listRequests|getRequestStatus";
@@ -49,9 +53,14 @@ function normalizeSource(source: string): string {
     .replace(/\s+/g, " ");
 }
 
-/** Reasons the normalised `source` breaks the allowlist rules. */
+/** `source` with comments blanked out (newlines kept); every text rule must look at this. */
+export function withoutComments(source: string): string {
+  return stripComments(source, parseSource(source));
+}
+
+/** Reasons the comment-stripped, normalised `source` breaks the allowlist rules. */
 export function normalizedViolations(source: string): string[] {
-  const normalized = normalizeSource(source);
+  const normalized = normalizeSource(withoutComments(source));
   return NORMALIZED_RULES.filter(({ re }) => re.test(normalized)).map(({ why }) => why);
 }
 
@@ -71,11 +80,133 @@ export const MUST_FLAG: ReadonlyArray<string> = [
   "run(({ rma }) => rma.process(x));",
   "const r = client.refunds; await r.issue(x);",
   "await client['refunds']['issue'](x);",
+  "const o = makeLiveClient(); await o['orders'].list();",
+  "const o = makeLiveClient(); await o?.['submitInventoryFeed'](x);",
+  "const o = makeLiveClient(); await o['orders'].list();",
+  "const o = makeLiveClient(); await o?.['submitInventoryFeed'](x);",
   "const k = 'rma'; await client[k].submit(x);",
   "await client.refunds\n  .issue(x);",
   "await client.rma.previewSubmit(x);",
   "await client.rma.getEvil(x);",
   "await client.refunds.issue(x);",
+
+  // 1. Computed access on any value, whatever it is called.
+  "const sdk = makeLiveClient(); await sdk['r'+'ma'].submit(x);",
+  "const sdk = makeLiveClient(); await sdk[k].submit(x);",
+  "const sdk = makeLiveClient(); const ns = sdk[name]; await ns.submit(x);",
+  "const api = makeLiveClient(); await api[`r${'ma'}`].submit(x);",
+  "const api = makeLiveClient(); await api['orders']['ship'](x);",
+  "const [a] = pick(makeLiveClient()); await a[m](x);",
+  "await getSdk()?.[ns].submit(x);",
+  "const o = client.orders; await o['sh' + 'ip'](x);",
+  // 2. Reflection that enumerates the namespaces.
+  "const [, rma] = Object.values(client); await rma.submit(x);",
+  "for (const [k, v] of Object.entries(client)) await v.submit?.(x);",
+  "const names = Object.keys(client);",
+  "function f(row) { return Object.values(row); } f(client);",
+  "function f(c) { const [a] = Object.values(c); const [fn] = Object.values(a); fn(x); }",
+  "const run = (c) => Object.entries(c); run(client);",
+  "for (const row of rows) { Object.entries(row); }",
+  "const collected = makeLiveClient(); for (const row of collected.rows) { Object.values(row); }",
+  "const getClient = () => makeLiveClient(); const collected = await getClient(); for (const row of collected.rows) { Object.values(row); }",
+  "function g(collected) { for (const row of collected.rows) { Object.values(row); } }",
+  "const collected = await x(); for (const row of collected.rows) { const f = (row) => Object.values(row); }",
+  "const collected = await x(); for (const row of collected.rows) { const row = client; Object.values(row); }",
+  "const collected = await x(); for (const row of collected.rows) { (() => Object.values(row))(); }",
+  "const collected = await x(); for (const row of collected.rows) { Object.assign(row, client); }",
+  "let collected = await x(); for (const row of collected.rows) { Object.values(row); }",
+  "const sdk = makeLiveClient(); await Object.values(sdk)[0].submit(x);",
+  "const sdk = makeLiveClient(); const c = sdk; Object.entries(c);",
+  "Object.entries(makeLiveClient());",
+  "Object.getOwnPropertyNames(client);",
+  "Object.getOwnPropertyDescriptors(client);",
+  "Object.getOwnPropertyDescriptor(client, 'rma');",
+  "Object.fromEntries(Object.entries(client));",
+  "const O = Object; O.values(client);",
+  "const c = [makeLiveClient()]; for (const x of c) Object.values(x);",
+  "const get = () => makeLiveClient(); Object.values(get());",
+  "client.__lookupGetter__('rma');",
+  "for (const k in client) { client[k].submit(x); }",
+  // 3. Comments inside a call chain.
+  "await client./*c*/rma.submit(x);",
+  "await client.rma./*c*/submit(x);",
+  "await client /*c*/ .rma.submit(x);",
+  "await client\n// line comment\n.rma\n// another\n.submit(x);",
+  "await client.rma.submit/*c*/(x);",
+  "await client.orders.ship/*c*/(x);",
+  "await client.orders.ship\n(x);",
+  "await client.refunds /* x */ .issue(x);",
+  // 4. Importing SDK internals or loading modules dynamically.
+  "import { RmaApiImpl } from '../../src/rma/api.js'; new RmaApiImpl(deps).submit(x);",
+  "import { createNeweggClient } from '../../src/client/index.js';",
+  "import * as sdk from '../../src/index.js'; sdk[k];",
+  "import { x } from '../../../packages/mcp-server/src/index.js';",
+  "import { x } from '@devino/newegg-marketplace-sdk';",
+  "import '../../src/rma/api.js';",
+  "export * from '../../src/rma/api.js';",
+  "export { RmaApiImpl } from '../../src/rma/api.js';",
+  "import { exec } from 'node:child_process';",
+  "import https from 'node:https';",
+  "import { vi } from 'vitest'; await vi.importActual('../../src/rma/api.js');",
+  "import * as v from 'vitest';",
+  "const m = await import('../../src/rma/api.js');",
+  "const m = await import(path);",
+  "const m = require('../../src/rma/api.js');",
+  "import fs = require('node:fs');",
+  "type T = import('../../src/rma/api.js').RmaApiImpl;",
+  // 5. Destructuring in parameter / catch / assignment / for-of position.
+  "function f({ rma }: C) { return rma.submit(x); }",
+  "const f = ({ refunds }) => refunds.issue(x);",
+  "const f = async ({ refunds: r }: C) => r.issue(x);",
+  "const f = ({ orders }) => orders.ship(x);",
+  "const f = ({ pricing }: C) => pricing.update(x);",
+  "const f = ({ inventory }: C) => inventory.updateItem(x);",
+  "const f = ({ listings }: C) => listings.create(x);",
+  "const f = ({ feeds }: C) => feeds.submitInventoryFeed(x);",
+  "let o; ({ orders: o } = client); await o.ship(x);",
+  "let o; ({ orders: o } = client);",
+  "let o; ({ orders } = client);",
+  "for (const { orders } of [client]) {}",
+  "try {} catch ({ rma }) {}",
+  "const { 'rma': r } = client;",
+  "const { [name]: r } = client;",
+  "const f = ({ [name]: r }: C) => r;",
+  "const { a: { rma } } = holder;",
+  // Other write namespaces: aliasing, bind/call/apply, optional-chain and non-null forms.
+  "const o = client.orders; await o.ship(x);",
+  "const ship = client.orders.ship; await ship(x);",
+  "await client.orders.ship.call(client.orders, x);",
+  "await client.orders.ship.apply(client.orders, [x]);",
+  "const s = client.orders.ship.bind(client.orders); await s(x);",
+  "await client.orders!.ship(x);",
+  "await (client.orders as any).ship(x);",
+  "await client.orders.create(x);",
+  "await client.pricing.update(x);",
+  "const p = client.pricing; await p.update(x);",
+  "await client.pricing.previewUpdate(x);",
+  "await client.inventory.updateMany(x);",
+  "const i = client.inventory; await i.updateItem(x);",
+  "await client.listings.create(x);",
+  "await client.listings.previewCreate(x);",
+  "await client.feeds.submitInventoryFeed(x);",
+  "const f = client.feeds; await f.getStatus('1');",
+  "await client.refunds.listRequests.call(client.refunds, {});",
+  "await client.rma.list.bind(client.rma);",
+  // Raw network and code evaluation.
+  "const f = fetch; await f(url, { method: 'PUT' });",
+  "await globalThis.fetch(url);",
+  "await globalThis['fetch'](url);",
+  "const fn = new Function('return 1');",
+  "with (client) { rma.list(); }",
+  "const cp = process.getBuiltinModule('node:child_process');",
+  "const p = process; p.mainModule;",
+  "this.__proto__.constructor;",
+];
+
+/** Unparseable text must not be waved through: every one MUST report the parse failure. */
+export const MUST_NOT_PARSE: ReadonlyArray<string> = [
+  "const = = ;;; {{{",
+  "await client.rma.list(",
 ];
 
 /** Legitimate reads: every one MUST pass. */
@@ -89,4 +220,39 @@ export const MUST_PASS: ReadonlyArray<string> = [
   "expect(Array.isArray(refundsPage.refunds)).toBe(true);",
   "for (const rma of rmasPage.rmas) expect(rma.rmaNumber).toBeTruthy();",
   "await client.reports.rmaList.waitForResult(x);",
+
+  "const page = await client.orders.list({ pageSize: 5 });",
+  "const order = await client.orders.get('1');",
+  "await client.orders.getStatus('1');",
+  "await client.orders.tryGet('1');",
+  "const snapshot = await client.inventory.getItem({ identifier: id });",
+  "await client.inventory.getMany({ identifiers });",
+  "await client.pricing.get({ identifier: id }, { includeRaw: true });",
+  "await client.pricing.getMany({ identifiers });",
+  "await client.pricing.tryGet({ identifier: id });",
+  "const skus = page.orders.map((o) => o.sku);",
+  "const first = page.orders[0]?.orderNumber;",
+  "const first = identifiers[0];",
+  "const m = result.resolutions[0]?.matches[1];",
+  "const collected = await client.reports.x.waitForResult(a); for (const row of collected.rows) { for (const [key, value] of Object.entries(row)) { expect(typeof value).toBe('number'); } }",
+  "const v = process.env[key]; process.env[key] = 'x';",
+  "const { industries } = await client.reference.listIndustries();",
+  "const { properties, subcategoryId } = await client.reference.listSubcategoryProperties(1);",
+  "const result = await client.catalog.resolve({ upc }, { timeoutMs: 150_000 });",
+  "await client.service.getStatus(domain);",
+  "await client.verifyCredentials();",
+  "const collected = await client.reports.settlementSummary.waitForResult({ dateFrom }, { ...BUDGET, maxPages: 1 });",
+  "await client.reports.dailyInventory.waitForResult({}, { maxRows: 5 });",
+  "await client.feeds.getStatus('1');",
+  "await client.reference.getSellerStatus();",
+  "expect(status.marketplace).toBe(marketplace());",
+  "const ids = [{ type: 'sellerPartNumber', value }]; const first = ids[0];",
+  "import { describe, expect, it, beforeAll } from 'vitest'; import { x, type Y } from '../../src/index.js'; import { liveEnabled } from './helpers.js'; import { readFileSync } from 'node:fs'; import { resolve } from 'node:path';",
+  "import type { OrdersPage } from '../../src/index.js';",
+  "// a comment that mentions nothing forbidden\nawait client.rma.list();",
+  "/* about the order list */ await client.orders.list();",
+  "const v = raw?.['AvailableQuantity']; const w = raw?.[\"Active\"];",
+  "const url = 'http://x.test/a'; await client.orders.list();",
+  "const re = /[/*]x/; await client.rma.list();",
+  "const tpl = `a ${total} // b ${total}`; await client.orders.list();",
 ];
