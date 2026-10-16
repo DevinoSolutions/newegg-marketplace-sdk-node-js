@@ -138,6 +138,12 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
   on EXISTING Newegg items through an `ITEM_DATA` feed. It never creates product records.
 - **`client.reference`** - read-only: `getSellerStatus`, `listIndustries`, `listSubcategories`,
   `listSubcategoryProperties`, `listPropertyValues` (requires `subcategoryId`).
+- **`client.sbn`** - read-only Shipped-by-Newegg inbound shipments: `listShipments`,
+  `getRequestStatus`, `getRequestResult`, `listWarehouses` (three are `PUT` on the wire but only
+  read). Newegg.com (`us`) and Newegg Business (`b2b`) only; `ca` throws
+  `UnsupportedMarketplaceOperationError`. Label download URLs may embed credentials and are never
+  returned (`labels` carry type, host and file name only). Creating or voiding an inbound shipment
+  is not implemented.
 - **`client.storefront`** - UNOFFICIAL, read-only reader of the public storefront's buy box and
   competing offers (`getOffers`; `us`/`ca` only; no SLA).
 - **`client.inventory`** — `getItem`, `getMany`, `previewUpdate`, `updateItem`, `updateMany`.

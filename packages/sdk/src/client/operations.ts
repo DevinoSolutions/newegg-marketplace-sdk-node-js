@@ -41,6 +41,12 @@ export const Operation = {
   SubcategoryStatus: "reference.subcategories",
   SubcategoryProperties: "reference.subcategoryProperties",
   PropertyValues: "reference.propertyValues",
+  // Shipped-by-Newegg inbound-shipment READS (contracts §21), Newegg.com / B2B only. Shipment List
+  // and Request Result 500/hr; Request Status and Warehouse List 1,000/min. Three are PUT; none mutate.
+  SbnShipmentList: "sbn.shipments",
+  SbnRequestStatus: "sbn.requestStatus",
+  SbnRequestResult: "sbn.requestResult",
+  SbnWarehouseList: "sbn.warehouses",
   // Catalog resolution via the Item Lookup Report (reportmgmt, §12). Submit 100/hr;
   // status and result 500/hr each.
   CatalogLookupSubmit: "catalog.lookupSubmit",

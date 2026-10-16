@@ -118,7 +118,7 @@ Underscore names, per MCP naming rules. All reads are annotated `readOnlyHint: t
 | `newegg_orders_get`                      | `{ orderNumber: string \| integer }`                                                                                                                        | Read-only. One order's full detail; `found=false` when no such order exists for this seller.                                                                                                                                                                                                                                         |
 | `newegg_orders_get_status`               | `{ orderNumber: string \| integer }`                                                                                                                        | Read-only. Lightweight order status (status code/name, sales channel, fulfillment); `found=false` when absent.                                                                                                                                                                                                                       |
 
-### Catalog, reference and listing tools
+### Catalog, reference, SBN and listing tools
 
 Read-only unless marked **W** (**W** tools exist only with `NEWEGG_MCP_ALLOW_WRITES=true`). Use
 `tools/list` for each tool's exact input schema.
@@ -132,6 +132,10 @@ Read-only unless marked **W** (**W** tools exist only with `NEWEGG_MCP_ALLOW_WRI
 | `newegg_subcategories_list`     | Subcategories and their enabled status.                                                                                             |
 | `newegg_subcategory_properties` | Properties a subcategory takes.                                                                                                     |
 | `newegg_property_values`        | Allowed values for a property; requires a subcategory id.                                                                           |
+| `newegg_sbn_shipments_list`     | Shipped-by-Newegg inbound shipments by id / item / part number, status or last-update range (default last 30 days; max page 100).   |
+| `newegg_sbn_request_status`     | Status of inbound-shipment create/void submissions (SUBMITTED / IN_PROGRESS / FINISHED / CANCELLED).                                |
+| `newegg_sbn_request_result`     | Outcome of one submission: resulting shipment id, errors, and label type/host/file name (download URLs are never returned).         |
+| `newegg_sbn_warehouses_list`    | Newegg's SBN inbound warehouses (bulk/small acceptance, address); optional `warehouseCode`.                                         |
 | `newegg_listing_preview_create` | Offline plan for adding offers on EXISTING Newegg items (never creates a product record). Returns a `previewId` for the apply tool. |
 | `newegg_listing_apply_create`   | **W** Submits exactly the previewed listing feed.                                                                                   |
 
