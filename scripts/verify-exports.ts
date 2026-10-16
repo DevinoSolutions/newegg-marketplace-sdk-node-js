@@ -28,6 +28,7 @@ const packages: PackageSpec[] = [
         "NeweggError",
         "NeweggValidationError",
         "IndeterminateOrderWriteError",
+        "IndeterminateServiceWriteError",
         "CatalogLookupTimeoutError",
         "InMemoryOperationStore",
         "InMemoryRateLimitStore",

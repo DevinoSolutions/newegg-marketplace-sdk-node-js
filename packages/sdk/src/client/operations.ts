@@ -26,6 +26,13 @@ export const Operation = {
   RmaList: "rma.list",
   RefundList: "refunds.list",
   RefundRequestStatus: "refunds.requestStatus",
+  // Service Management WRITES (contracts §20): NON-idempotent, so never auto-retried after dispatch
+  // (ADR 0004). Submit RMA 100/hr; Edit / Receive / Reject RMA and Issue Courtesy Refund 1000/hr.
+  RmaSubmit: "rma.submit",
+  RmaEdit: "rma.edit",
+  RmaReceive: "rma.receive",
+  RmaReject: "rma.reject",
+  RefundIssue: "refunds.issue",
   // Seller / category reference READS (contracts §19). Seller Status Check 500/hr; Get Industry
   // List 10,000/hr; Get Subcategory Status (both variants), Properties and Property Values
   // 100/hr each. Subcategory status shares one key across its two variants.

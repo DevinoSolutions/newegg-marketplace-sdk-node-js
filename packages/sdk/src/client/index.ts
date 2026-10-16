@@ -40,8 +40,10 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
   const pricing = new PricingApiImpl(http);
   const service = new ServiceApiImpl(http);
   const orders = new OrdersApiImpl(http);
-  const rma = new RmaApiImpl(http);
-  const refunds = new RefundsApiImpl(http);
+  // The RMA and courtesy refund WRITES read each other's APIs (duplicate and balance checks), so
+  // each receives the other lazily.
+  const rma: RmaApiImpl = new RmaApiImpl(http, orders, () => refunds);
+  const refunds: RefundsApiImpl = new RefundsApiImpl(http, orders, () => rma);
   const reference = new ReferenceApiImpl(http);
   const catalog = new CatalogApiImpl(http);
   const reports = new ReportsApiImpl(http);

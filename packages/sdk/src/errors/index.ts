@@ -13,6 +13,7 @@ export type NeweggErrorCode =
   | "feed_processing"
   | "feed_cancelled"
   | "order_write_indeterminate"
+  | "service_write_indeterminate"
   | "catalog_lookup_timeout"
   | "report_timeout"
   | "timeout"
@@ -295,5 +296,58 @@ export class UnsupportedMarketplaceOperationError extends NeweggError {
   constructor(message: string, init: NeweggErrorInit = {}) {
     super("unsupported_operation", message, init);
     this.name = "UnsupportedMarketplaceOperationError";
+  }
+}
+
+export interface IndeterminateServiceWriteErrorInit extends NeweggErrorInit {
+  marketplace: NeweggMarketplace;
+  /** The Service Management write that was in flight, e.g. `"rma.receive"`. */
+  operation: string;
+  submittedAtIso: string;
+  orderNumber?: string;
+  rmaNumber?: string;
+  guidance?: string;
+}
+
+/**
+ * Thrown when an RMA or courtesy-refund mutation (submit / edit / receive / reject RMA, issue
+ * courtesy refund) may have reached Newegg but its outcome is unknown: an ambiguous transport
+ * failure (timeout/reset after dispatch), a 408/5xx returned after the body was sent, or a 2xx
+ * response that lacks the identifier proving the write. These writes move customer money or change a
+ * return and are NOT idempotent, so the SDK never auto-retries past this point: resubmitting could
+ * create a second RMA or a second refund. Check the current state (`rma.list` / `rma.get` by order or
+ * RMA number, `refunds.list` / `refunds.listRequests`) before retrying. `retryable` is always `false`.
+ */
+export class IndeterminateServiceWriteError extends NeweggError {
+  readonly marketplace: NeweggMarketplace;
+  readonly operation: string;
+  readonly submittedAtIso: string;
+  readonly orderNumber?: string;
+  readonly rmaNumber?: string;
+  readonly guidance: string;
+  constructor(message: string, init: IndeterminateServiceWriteErrorInit) {
+    super("service_write_indeterminate", message, { ...init, retryable: false });
+    this.name = "IndeterminateServiceWriteError";
+    this.marketplace = init.marketplace;
+    this.operation = init.operation;
+    this.submittedAtIso = init.submittedAtIso;
+    this.orderNumber = init.orderNumber;
+    this.rmaNumber = init.rmaNumber;
+    this.guidance =
+      init.guidance ??
+      "The RMA / courtesy refund write may or may not have reached Newegg. Check the order's RMAs " +
+        "(rma.list with an order-number keyword, or rma.get) and courtesy refunds (refunds.list, " +
+        "refunds.listRequests) before retrying to avoid a duplicate RMA or a double refund.";
+  }
+  override toJSON(): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      marketplace: this.marketplace,
+      operation: this.operation,
+      submittedAtIso: this.submittedAtIso,
+      orderNumber: this.orderNumber,
+      rmaNumber: this.rmaNumber,
+      guidance: this.guidance,
+    };
   }
 }

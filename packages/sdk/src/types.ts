@@ -2048,7 +2048,203 @@ export interface RmasPage {
   raw?: unknown;
 }
 
-/** RMA reads (Get RMA Information, 1000 req/hr). Never mutates. */
+// ----------------------------------------------------------------------------
+// RMA and courtesy refund WRITES (contracts §20)
+// ----------------------------------------------------------------------------
+/**
+ * Per-item reason when SUBMITTING or EDITING an RMA (`RMAReason` 1-10 in the request; the response
+ * list is the 1-9 {@link RmaReason}). Reasons `incompatible`, `noLongerNeeded`, `orderedWrongItem` and
+ * `unsatisfied` require the `unopened` flag and, on Newegg.com / Newegg.ca, a memo and 1-5 image URLs.
+ */
+export type RmaWriteReason =
+  | "itemDamaged"
+  | "defective"
+  | "incompatible"
+  | "noLongerNeeded"
+  | "notAsDescribed"
+  | "orderedWrongItem"
+  | "sentWrongItem"
+  | "unsatisfied"
+  | "extraItemShipped"
+  | "itemNotReceived";
+
+/** One returned line of a submitted or edited RMA (`RMATransaction`). */
+export interface RmaWriteItem {
+  /** Seller part number of an item on the order. */
+  sellerPartNumber: string;
+  /** Units returned (> 0, at most the returnable quantity). */
+  returnQuantity: number;
+  reason: RmaWriteReason;
+  /**
+   * Refund RMAs (required there, forbidden on replacements): refund per unit, > 0, at most 2
+   * decimals, at most the item's unit price. In the marketplace currency.
+   */
+  returnUnitPrice?: number;
+  /** Refund RMAs (required there, forbidden on replacements): shipping refund for the line, >= 0. */
+  refundShippingPrice?: number;
+  /** `UnOpen`: required for reasons incompatible / noLongerNeeded / orderedWrongItem / unsatisfied. */
+  unopened?: boolean;
+  /** Evidence image URLs (1-5, http(s)). Newegg.com and Newegg.ca only. */
+  imageUrls?: string[];
+  /** Evidence memo (<= 1000). Newegg.com and Newegg.ca only. */
+  memo?: string;
+}
+
+/** Input to {@link RmaApi.submit} / {@link RmaApi.previewSubmit} (Submit RMA; contracts §20.2). */
+export interface SubmitRmaInput {
+  /** The order the RMA is issued for (digits). */
+  orderNumber: string | number;
+  type: Exclude<RmaType, "unknown">;
+  items: RmaWriteItem[];
+  /** Seller-defined RMA number: letters and digits only, <= 50. */
+  sellerRmaNumber?: string;
+  /** RMA comment, <= 4000. */
+  note?: string;
+  /**
+   * Receive the RMA on creation (`AutoReceiveMark` = 1): refund RMAs only.
+   * This FINALIZES the refund in the same call. Default false.
+   */
+  autoReceive?: boolean;
+}
+
+/** Input to {@link RmaApi.edit} / {@link RmaApi.previewEdit} (Edit RMA; contracts §20.3). */
+export interface EditRmaInput {
+  rmaNumber: string | number;
+  /** Must equal the RMA's existing type. */
+  type: Exclude<RmaType, "unknown">;
+  /** Required by Newegg, <= 4000. */
+  note: string;
+  items: RmaWriteItem[];
+  sellerRmaNumber?: string;
+}
+
+/** Input to {@link RmaApi.process} / {@link RmaApi.previewProcess} (Process RMA = receive; §20.3). */
+export interface ProcessRmaInput {
+  rmaNumber: string | number;
+}
+
+/** Why a seller rejects a returned item (`RejectReason`; availability differs by marketplace). */
+export type RmaRejectReason =
+  | "physicalDamage"
+  | "itemMissing"
+  | "wrongItemReturned"
+  | "cpuPinDamage"
+  | "missingRetailBox"
+  | "missingUpcCode"
+  | "tamperedSerialNumber"
+  | "missingAccessories"
+  | "consumableItem"
+  | "motherboardSocketPinDamage"
+  | "qaSentWrongItem"
+  | "unlockedCellphone"
+  | "usedItemReturnedAsNew"
+  | "customerRequest"
+  | "missingSerialNumber"
+  | "software";
+
+/** Carrier the rejected item is shipped back with (`ShipCarrier` 1-5). */
+export type RmaRejectCarrier = "ups" | "fedex" | "dhl" | "usps" | "other";
+
+/** Input to {@link RmaApi.reject} / {@link RmaApi.previewReject} (Reject RMA; contracts §20.3). */
+export interface RejectRmaInput {
+  rmaNumber: string | number;
+  reason: RmaRejectReason;
+  carrier: RmaRejectCarrier;
+  /** Required when `carrier` is `"other"`, <= 10. */
+  otherCarrier?: string;
+  /** Shipping service, <= 50. */
+  shipService: string;
+  /** One or more tracking numbers of the shipment back to the customer. */
+  trackingNumbers: string[];
+  /** Required for reasons itemMissing, cpuPinDamage .. motherboardSocketPinDamage; <= 1000. */
+  memo?: string;
+  /** Required with the memo above: 1-5 http(s) image URLs. */
+  imageUrls?: string[];
+}
+
+/** Input to {@link RefundsApi.issue} / {@link RefundsApi.previewIssue} (Issue Courtesy Refund; §20.5). */
+export interface IssueCourtesyRefundInput {
+  orderNumber: string | number;
+  reason: Exclude<CourtesyRefundReason, "unknown">;
+  /** > 0, at most 2 decimals, at most the order total minus prior refunds. In the marketplace currency. */
+  amount: number;
+  /** Note shown to the customer, <= 500. */
+  noteToCustomer?: string;
+}
+
+/** Which write a preview or a thrown indeterminate error refers to. */
+export type ServiceWriteOperation =
+  "rma.submit" | "rma.edit" | "rma.receive" | "rma.reject" | "refunds.issue";
+
+/**
+ * The read-only plan for an RMA / courtesy-refund write: the validated, normalized input, the
+ * money it would move, and every blocker and warning found by reading the order, its RMAs and its
+ * courtesy refunds. A write is allowed only when `blockers` is empty; `submit` / `edit` / `process`
+ * / `reject` / `issue` re-run the same checks and throw {@link NeweggValidationError} otherwise.
+ * No Newegg mutation happens while building it.
+ */
+export interface ServiceWritePreview<N> {
+  marketplace: NeweggMarketplace;
+  operation: ServiceWriteOperation;
+  /** The exact input a later write would send. Round-trips straight into the write method. */
+  normalized: N;
+  currency: RmaCurrency;
+  /** Money the write moves (refund RMA total, or the courtesy refund); undefined when it moves none. */
+  refundTotal?: number;
+  /** Order number the write concerns, when known. */
+  orderNumber?: string;
+  /** Reasons the write MUST NOT be sent. */
+  blockers: string[];
+  /** Things worth a human look; they do not stop the write. */
+  warnings: string[];
+  correlationId: string;
+}
+
+/** Result of a successful RMA write (Submit / Edit / Process / Reject RMA). */
+export interface RmaWriteResult {
+  marketplace: NeweggMarketplace;
+  operation: Exclude<ServiceWriteOperation, "refunds.issue">;
+  rmaNumber: string;
+  type: RmaType;
+  /** Status Newegg reports right after the write (normally `processing`). */
+  status: RmaStatus;
+  statusDescription?: string;
+  sellerRmaNumber?: string;
+  orderNumber?: string;
+  note?: string;
+  items: RmaItem[];
+  currency: RmaCurrency;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+/** Result of {@link RefundsApi.issue}: the refund is asynchronous - poll {@link RefundsApi.getRequestStatus}. */
+export interface CourtesyRefundIssueResult {
+  marketplace: NeweggMarketplace;
+  /** Id for {@link RefundsApi.getRequestStatus}. */
+  requestId: string;
+  requestDate?: { raw: string; iso?: string };
+  /** Normally `submitted`; the final state arrives through the status read. */
+  state: CourtesyRefundRequestState;
+  /** The wire `RequestStatus` label as returned. */
+  stateRaw?: string;
+  memo?: string;
+  orderNumber: string;
+  amount: number;
+  currency: RmaCurrency;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
+/**
+ * RMA reads (Get RMA Information, 1000 req/hr) plus the RMA WRITES (contracts §20). The reads never
+ * mutate. Every write has a `preview*` twin that only READS (the order, its RMAs, its courtesy
+ * refunds) and reports blockers; the write re-runs those checks and throws
+ * {@link NeweggValidationError} on any blocker. Writes are NOT idempotent: an ambiguous failure throws
+ * {@link IndeterminateServiceWriteError} and is never retried.
+ */
 export interface RmaApi {
   /** Search RMAs (single page). Omit `input` to match all RMAs. */
   list(input?: ListRmasInput, options?: RequestOptions): Promise<RmasPage>;
@@ -2056,6 +2252,34 @@ export interface RmaApi {
   get(rmaNumber: string | number, options?: RequestOptions): Promise<Rma>;
   /** Like {@link RmaApi.get} but resolves to `undefined` when no RMA matches. */
   tryGet(rmaNumber: string | number, options?: RequestOptions): Promise<Rma | undefined>;
+  /** Plan a Submit RMA. Reads only. */
+  previewSubmit(
+    input: SubmitRmaInput,
+    options?: RequestOptions,
+  ): Promise<ServiceWritePreview<SubmitRmaInput>>;
+  /** Submit an RMA (WRITE; 100 req/hr). A refund RMA records a refund to the customer. */
+  submit(input: SubmitRmaInput, options?: RequestOptions): Promise<RmaWriteResult>;
+  /** Plan an Edit RMA. Reads only. */
+  previewEdit(
+    input: EditRmaInput,
+    options?: RequestOptions,
+  ): Promise<ServiceWritePreview<EditRmaInput>>;
+  /** Edit an open RMA (WRITE; 1000 req/hr). Changes the refund the customer is owed. */
+  edit(input: EditRmaInput, options?: RequestOptions): Promise<RmaWriteResult>;
+  /** Plan a Process (receive) RMA. Reads only. */
+  previewProcess(
+    input: ProcessRmaInput,
+    options?: RequestOptions,
+  ): Promise<ServiceWritePreview<ProcessRmaInput>>;
+  /** Mark an RMA's items as received (WRITE; 1000 req/hr). Receiving a refund RMA lets Newegg pay the refund (ASSUMPTION, contracts §20.7). */
+  process(input: ProcessRmaInput, options?: RequestOptions): Promise<RmaWriteResult>;
+  /** Plan a Reject RMA. Reads only. */
+  previewReject(
+    input: RejectRmaInput,
+    options?: RequestOptions,
+  ): Promise<ServiceWritePreview<RejectRmaInput>>;
+  /** Reject a returned item and ship it back (WRITE; 1000 req/hr). Denies the customer's refund. */
+  reject(input: RejectRmaInput, options?: RequestOptions): Promise<RmaWriteResult>;
 }
 
 /** Courtesy refund status (`Status`: Open / Close / Void). */
@@ -2162,10 +2386,21 @@ export interface CourtesyRefundRequestsResult {
 
 /**
  * Courtesy refund reads (Get Courtesy Refund Information 30 req/min; Get Courtesy Refund Request
- * Status 10,000 req/hr). Issuing a courtesy refund is a WRITE and is deliberately not part of
- * this API.
+ * Status 10,000 req/hr) plus Issue Courtesy Refund (WRITE, 1000 req/hr; contracts §20.5), which pays
+ * the customer. Like the RMA writes it has a read-only `previewIssue` twin, is NOT idempotent and
+ * throws {@link IndeterminateServiceWriteError} on an ambiguous failure instead of retrying.
  */
 export interface RefundsApi {
+  /** Plan an Issue Courtesy Refund. Reads only. */
+  previewIssue(
+    input: IssueCourtesyRefundInput,
+    options?: RequestOptions,
+  ): Promise<ServiceWritePreview<IssueCourtesyRefundInput>>;
+  /** Issue a courtesy refund (WRITE). Asynchronous: follow it with {@link RefundsApi.getRequestStatus}. */
+  issue(
+    input: IssueCourtesyRefundInput,
+    options?: RequestOptions,
+  ): Promise<CourtesyRefundIssueResult>;
   /** Search courtesy refunds (single page). Omit `input` to match all. */
   list(input?: ListCourtesyRefundsInput, options?: RequestOptions): Promise<CourtesyRefundsPage>;
   /** Fetch one courtesy refund by id. Throws {@link NeweggApiError} when none matches. */
