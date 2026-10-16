@@ -97,6 +97,28 @@ describe("parseUpstreamError rate-limit delay derivation", () => {
     expect(past.retryAfterMs).toBeUndefined();
   });
 
+  it("derives the delay from an offset-less Pacific reset header across DST changes", () => {
+    const delayFor = (now: string, resetHeader: string): number | undefined => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(now));
+      const rateLimit = parseRateLimitHeaders(
+        new Headers({ "x-ratelimit-resettime": resetHeader }),
+      );
+      const error = parseUpstreamError(429, "", new Headers(), {
+        rateLimit,
+        maxRetryAfterMs: 24 * 60 * 60_000,
+      });
+      return (error as NeweggRateLimitError).retryAfterMs;
+    };
+    const hour = 60 * 60_000;
+    // Spring forward 2026-03-08: now is 01:00 PST (09:00Z); 03:30 wall clock is PDT (10:30Z).
+    expect(delayFor("2026-03-08T09:00:00Z", "2026-03-08 03:30:00")).toBe(1.5 * hour);
+    // Fall back 2026-11-01: now is 01:00 PDT (08:00Z); 03:00 wall clock is PST (11:00Z).
+    expect(delayFor("2026-11-01T08:00:00Z", "11/01/2026 03:00:00")).toBe(3 * hour);
+    // Ordinary PDT date: 12:30 PDT is 19:30Z.
+    expect(delayFor("2026-07-01T18:00:00Z", "2026-07-01T12:30:00")).toBe(1.5 * hour);
+  });
+
   it("classifies DF012 on a non-429 status as a rate limit", () => {
     const error = parseUpstreamError(400, '[{"Code":"DF012","Message":"too fast"}]', new Headers());
     expect(error).toBeInstanceOf(NeweggRateLimitError);
