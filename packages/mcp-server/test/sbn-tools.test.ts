@@ -247,6 +247,36 @@ describe("newegg_sbn_request_result", () => {
     }
   });
 
+  it("redacts credential-bearing URLs in error text and submission memos", async () => {
+    const leaky = "failed fetching ftp://u:Pa55word@ftp03.newegg.com/x.pdf";
+    const harness = await startHarness({
+      env: US,
+      routes: [
+        route("GET", RESULT_ROUTE, wrapped({ RequestStatus: "FINISHED", ErrorDescription: leaky })),
+        route(
+          "PUT",
+          STATUS_ROUTE,
+          wrapped({
+            ResponseList: [{ RequestId: "AB12", RequestStatus: "CANCELLED", Memo: leaky }],
+          }),
+        ),
+      ],
+    });
+    try {
+      const result = await callTool(harness.mcp, "newegg_sbn_request_result", {
+        requestId: "AB12",
+      });
+      const status = await callTool(harness.mcp, "newegg_sbn_request_status", {});
+      expect(result.isError).toBe(false);
+      expect(status.isError).toBe(false);
+      expect(JSON.stringify(result)).not.toContain("Pa55word");
+      expect(JSON.stringify(status)).not.toContain("Pa55word");
+      expect(JSON.stringify(result)).toContain("ftp://***@");
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("requires a valid requestId", async () => {
     const harness = await startHarness({ env: US, routes: [] });
     try {

@@ -25,7 +25,7 @@ import { NeweggApiError } from "../errors/index.js";
 import type { NeweggValidationIssue } from "../errors/index.js";
 import { toTimestamp } from "../platform/dates.js";
 import { asArray, asBoolean, asNumber, asString, getField, isRecord } from "../schemas/wire.js";
-import { describeReportFile } from "../reportmgmt/redact.js";
+import { describeReportFile, redactUrlCredentials } from "../reportmgmt/redact.js";
 import {
   checkCriteriaDate,
   listItems,
@@ -226,7 +226,7 @@ function unwrapSbn(json: unknown, correlationId: string): unknown {
       throw new NeweggApiError(`Newegg returned an error list (${code}).`, {
         correlationId,
         neweggErrorCode: code,
-        details: { message: asString(getField(first, "Message")) },
+        details: { message: redact(asString(getField(first, "Message"))) },
       });
     }
   }
@@ -236,6 +236,11 @@ function unwrapSbn(json: unknown, correlationId: string): unknown {
 function text(value: unknown): string | undefined {
   const s = asString(value)?.trim();
   return s === undefined || s === "" ? undefined : s;
+}
+
+/** Strips `user:password@` from any URL inside free text Newegg returned (memos, error text). */
+function redact(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : redactUrlCredentials(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -336,7 +341,7 @@ export function parseShipmentStatus(json: unknown, correlationId: string): SbnRe
       action: actionCode === 1 ? "create" : actionCode === 2 ? "void" : undefined,
       requestedAt: toTimestamp(text(getField(row, "RequestDate"))),
       status: text(getField(row, "RequestStatus")),
-      memo: text(getField(row, "Memo")),
+      memo: redact(text(getField(row, "Memo"))),
     });
   }
   return entries;
@@ -373,7 +378,7 @@ function errorTexts(value: unknown): string[] {
   for (const entry of asArray(value)) {
     const direct = text(entry);
     if (direct !== undefined) {
-      out.push(direct);
+      out.push(redactUrlCredentials(direct));
       continue;
     }
     if (!isRecord(entry)) continue;
@@ -383,7 +388,7 @@ function errorTexts(value: unknown): string[] {
       continue;
     }
     const message = text(entry.ErrorDescription) ?? text(entry.Description) ?? text(entry.Message);
-    if (message !== undefined) out.push(message);
+    if (message !== undefined) out.push(redactUrlCredentials(message));
   }
   return out;
 }

@@ -72,7 +72,7 @@ export class SbnApiImpl implements SbnApi {
       shipments: parseShipmentList(result.json, correlationId),
       correlationId,
       rateLimit: result.rateLimit,
-      raw: options.includeRaw ? result.json : undefined,
+      raw: options.includeRaw ? sanitizeRaw(result.json) : undefined,
     };
   }
 
@@ -95,7 +95,7 @@ export class SbnApiImpl implements SbnApi {
       requests: parseShipmentStatus(result.json, correlationId),
       correlationId,
       rateLimit: result.rateLimit,
-      raw: options.includeRaw ? result.json : undefined,
+      raw: options.includeRaw ? sanitizeRaw(result.json) : undefined,
     };
   }
 
@@ -152,7 +152,7 @@ export class SbnApiImpl implements SbnApi {
       warehouses: parseWarehouseList(result.json, correlationId),
       correlationId,
       rateLimit: result.rateLimit,
-      raw: options.includeRaw ? result.json : undefined,
+      raw: options.includeRaw ? sanitizeRaw(result.json) : undefined,
     };
   }
 

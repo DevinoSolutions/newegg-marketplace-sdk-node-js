@@ -430,6 +430,51 @@ describe("sbn.getRequestResult", () => {
     expect(serialized).toContain("ftp://***@ftp03.newegg.com");
   });
 
+  it("redacts credential-bearing URLs in error text, memos and bare error-list messages", async () => {
+    const leaky = "failed fetching ftp://u:Pa55word@ftp03.newegg.com/x.pdf";
+    const result = makeClient(
+      "us",
+      route("GET", paths.sbnShipmentResult, () => ({
+        status: 200,
+        body: wrapped(
+          {
+            RequestStatus: "FINISHED",
+            ErrorDescription: leaky,
+            Shipment: { ErrorList: { Error: [{ ErrorDescription: leaky }, leaky] } },
+          },
+          "GetShipmentResultResponse",
+        ),
+      })),
+    );
+    const parsed = await result.client.sbn.getRequestResult("AB12", { includeRaw: true });
+    expect(JSON.stringify(parsed)).not.toContain("Pa55word");
+    expect(parsed.errors).toEqual(["failed fetching ftp://***@ftp03.newegg.com/x.pdf"]);
+
+    const status = makeClient(
+      "us",
+      route("PUT", paths.sbnShipmentStatus, () => ({
+        status: 200,
+        body: wrapped(
+          { ResponseList: [{ RequestId: "AB12", RequestStatus: "CANCELLED", Memo: leaky }] },
+          "GetShipmentStatusResponse",
+        ),
+      })),
+    );
+    const requests = await status.client.sbn.getRequestStatus({}, { includeRaw: true });
+    expect(JSON.stringify(requests)).not.toContain("Pa55word");
+    expect(requests.requests[0]?.memo).toContain("ftp://***@");
+
+    const errorList = makeClient(
+      "us",
+      route("PUT", paths.sbnShipmentList, () => ({
+        status: 200,
+        body: [{ Code: "SBN999", Message: leaky }],
+      })),
+    );
+    const failure = await errorList.client.sbn.listShipments().catch((error: unknown) => error);
+    expect(JSON.stringify(failure, Object.getOwnPropertyNames(failure))).not.toContain("Pa55word");
+  });
+
   it("reads the XML-converted shape (LabelURLList, ErrorList) and surfaces error text", async () => {
     const { client } = makeClient(
       "b2b",

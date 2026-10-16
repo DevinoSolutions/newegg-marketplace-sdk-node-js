@@ -249,6 +249,7 @@ export const MUST_FLAG: ReadonlyArray<string> = [
   "await client.sbn.createShipment(x);",
   "await client.sbn.voidShipment(x);",
   "const s = client.sbn; await s.voidShipment(x);",
+  "const s = client.sbn; await s.createShipment(x);",
   "const p = 'sbnmgmt/inboundshipment/shipmentrequest';",
   "const op = 'SubmitShipmentRequest';",
   "const p = 'sbnmgmt/inboundshipment/plansuggestion';",

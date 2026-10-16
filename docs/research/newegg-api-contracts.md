@@ -3021,19 +3021,19 @@ the sample:
     "KeywordsType": 1,
     "KeywordsValue": "2740139",
     "Status": 0,
-    "LastUpdateDateFrom": "2013-01-01 00:00:00",
-    "LastUpdateDateTo": "2013-07-07 00:00:00"
+    "LastUpdateDateFrom": "01/01/2013",
+    "LastUpdateDateTo": "07/07/2013"
   }
 }
 ```
 
-| Field                             | Notes                                                                                                                                                                                                           |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PageInfo.PageIndex` / `PageSize` | Required; page size max 100. The SDK always sends both (default 1 / 100).                                                                                                                                       |
-| `KeywordsType`                    | 0 All (default) · 1 Shipment ID · 2 Newegg Item Number · 3 Seller Part Number.                                                                                                                                  |
-| `KeywordsValue`                   | String matched per `KeywordsType`.                                                                                                                                                                              |
-| `Status`                          | 0 All (default) · 1 Preparing · 2 Shipped · 3 Received · 4 Partially Received · 5 Manually closed · 6 Voided.                                                                                                   |
-| `LastUpdateDateFrom` / `To`       | Pacific time. The "Acceptable Date Format" page lists `YYYY-MM-DD HH:MM:SS`, `MM/DD/YYYY`, … and states no zone rule. Both empty = the last 30 days. The SDK renders a `Date` as `YYYY-MM-DD HH:mm:ss` Pacific. |
+| Field                             | Notes                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PageInfo.PageIndex` / `PageSize` | Required; page size max 100. The SDK always sends both (default 1 / 100).                                                                                                                                                                                                                                                                                                                                                           |
+| `KeywordsType`                    | 0 All (default) · 1 Shipment ID · 2 Newegg Item Number · 3 Seller Part Number.                                                                                                                                                                                                                                                                                                                                                      |
+| `KeywordsValue`                   | String matched per `KeywordsType`.                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `Status`                          | 0 All (default) · 1 Preparing · 2 Shipped · 3 Received · 4 Partially Received · 5 Manually closed · 6 Voided.                                                                                                                                                                                                                                                                                                                       |
+| `LastUpdateDateFrom` / `To`       | Pacific time. The "Acceptable Date Format" page lists `YYYY-MM-DD HH:MM:SS`, `MM/DD/YYYY`, … and states no zone rule. The page's own samples send `"01/01/2013"` / `"07/07/2013"` (JSON) and `"06/01/2013"` / `"06/07/2013"` (XML); `YYYY-MM-DD HH:mm:ss` is the SDK's choice from the Acceptable Date Format list (re-fetched 2026-10-15). Both empty = the last 30 days. The SDK renders a `Date` as that format in Pacific time. |
 
 Response (JSON sample; XML nests `ShipmentList > Shipment`, `PackageList > Package`, `ItemList > Item`):
 
