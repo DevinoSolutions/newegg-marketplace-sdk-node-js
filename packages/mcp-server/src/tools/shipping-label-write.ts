@@ -163,9 +163,7 @@ async function runLabelPreview<K extends ShippingLabelKind>(
   let previewExpiresAt: string | undefined;
   if (eligible) {
     const createdAt = ctx.now();
-    const expiresAt = new Date(
-      createdAt.getTime() + ctx.config.limits.previewTtlSeconds * 1000,
-    );
+    const expiresAt = new Date(createdAt.getTime() + ctx.config.limits.previewTtlSeconds * 1000);
     previewId = randomBytes(32).toString("base64url");
     previewExpiresAt = expiresAt.toISOString();
     const record = {
