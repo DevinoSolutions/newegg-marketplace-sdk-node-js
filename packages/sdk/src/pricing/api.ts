@@ -31,6 +31,7 @@ import {
   NeweggTimeoutError,
 } from "../errors/index.js";
 import { Operation } from "../client/operations.js";
+import { REDIRECT_REFUSED } from "../client/transport.js";
 import { parseOrThrow } from "../inventory/validate.js";
 import { LogEvent } from "../logging/index.js";
 import { rateLimitKey } from "../rate-limit/index.js";
@@ -56,6 +57,8 @@ const PRE_SEND_CAUSE_CODES = new Set(["ENOTFOUND", "ECONNREFUSED", "EAI_AGAIN"])
  */
 function isAmbiguousFailure(error: NeweggError): boolean {
   if (error instanceof NeweggTimeoutError) return true;
+  // A redirect answered the write: Newegg had received it, so it may have been applied.
+  if (isRecord(error.details) && error.details.causeCode === REDIRECT_REFUSED) return true;
   if (error.httpStatus !== undefined) return AMBIGUOUS_HTTP_STATUSES.has(error.httpStatus);
   if (error.retryable && error.code === "api") {
     const causeCode = isRecord(error.details) ? error.details.causeCode : undefined;

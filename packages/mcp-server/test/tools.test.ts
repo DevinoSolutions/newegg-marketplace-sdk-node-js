@@ -27,7 +27,7 @@ async function listTools(env?: Record<string, string | undefined>): Promise<List
 }
 
 describe("tools/list", () => {
-  it("exposes exactly the 42 read tools when writes are disabled", async () => {
+  it("exposes exactly the 41 read tools when writes are disabled", async () => {
     const tools = await listTools(makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "false" }));
     const names = tools.map((tool) => tool.name).sort();
     expect(names).toEqual(
@@ -68,7 +68,6 @@ describe("tools/list", () => {
         "newegg_sbn_shipments_list",
         "newegg_sbn_warehouses_list",
         "newegg_seller_status",
-        "newegg_shipping_label_estimate",
         "newegg_service_status",
         "newegg_subcategories_list",
         "newegg_volume_discount_get",
@@ -76,6 +75,8 @@ describe("tools/list", () => {
         "newegg_subcategory_properties",
       ].sort(),
     );
+    // The estimate is a POST to a write-adjacent service (contracts §23.6): gated with the writes.
+    expect(names).not.toContain("newegg_shipping_label_estimate");
     expect(names).not.toContain("newegg_inventory_apply_update");
     expect(names).not.toContain("newegg_listing_apply_create");
     expect(names).not.toContain("newegg_volume_discount_apply_update");
@@ -102,6 +103,7 @@ describe("tools/list", () => {
     }
     expect(names).toContain("newegg_refund_preview_issue");
     expect(names).toContain("newegg_refund_apply_issue");
+    expect(names).toContain("newegg_shipping_label_estimate");
   });
 
   it("gives every tool a title, description, inputSchema, and outputSchema", async () => {

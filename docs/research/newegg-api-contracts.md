@@ -3381,7 +3381,7 @@ Newegg.com, `b2b/`, `can/`); the pages list Newegg.com, Newegg Business and Newe
 | Function                        | Page (`newegg_shipping_label_service/…`)             | Verb | Path (after prefix)                                   | Rate limit | Class                       | In SDK |
 | ------------------------------- | ---------------------------------------------------- | ---- | ----------------------------------------------------- | ---------- | --------------------------- | ------ |
 | Shipping Label Request          | `shipping_label_request_for_newegg_orders/`          | POST | `shippingservice/shippinglabel/createshippinglabel`   | 1,000/hr   | **WRITE**                   | yes    |
-| Shipping Label Estimate Request | `shipping_label_estimate_request_for_newegg_orders/` | POST | `shippingservice/shippinglabel/estimateshippinglabel` | 1,000/hr   | **READ** (see below)        | yes    |
+| Shipping Label Estimate Request | `shipping_label_estimate_request_for_newegg_orders/` | POST | `shippingservice/shippinglabel/estimateshippinglabel` | 1,000/hr   | **WRITE-GATED** (see below) | yes    |
 | Shipping Label Reprint Request  | `shipping_label_reprint_request/`                    | POST | `shippingservice/shippinglabel/reprintshippinglabel`  | 1,000/hr   | **WRITE** (billing unknown) | yes    |
 | Newegg Partnered Carrier (UPS)  | `newegg_partnered_carrier_ups/`                      | n/a  | n/a (information page: limits, service codes)         | n/a        | n/a                         | n/a    |
 
@@ -3390,9 +3390,12 @@ Classification follows what each page says it does, not the verb (all three are 
 - **Create** buys a UPS label, bills the seller's Newegg account and ships the order. It is a WRITE and is
   never called live.
 - **Estimate** is described as "for estimation only": the same request as create, answered with an
-  `EstimatedRate` per package, no tracking number and no label. It is classified a **READ**. **ASSUMPTION:**
-  that it has no side effect and no charge (the page wording is the only evidence; it has never been called).
-  Because it needs an order number and is unverified, it is still blocked in the live suite.
+  `EstimatedRate` per package, no tracking number and no label. Because the "no side effect and no charge"
+  claim rests on the page wording alone (**ASSUMPTION**, see §23.6) and the call has never been made, the
+  SDK treats it like a write: it is sent as a **single attempt, never retried** (a timeout or 5xx is reported,
+  not resent), and the MCP tool `newegg_shipping_label_estimate` registers only when
+  `NEWEGG_MCP_ALLOW_WRITES=true`. It is still blocked in the live suite (it needs an order number and is
+  unverified).
 - **Reprint** re-issues the label of a confirmed order. The page does not say whether a reprint is billed, so
   it is treated as a **WRITE** that may cost money (**ASSUMPTION**: billing unknown).
 
@@ -3506,23 +3509,35 @@ Canadian labels really behave).
 
 | SDK                                                            | MCP tool                                                                        | Class                         |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------- |
-| `client.shippingLabels.estimate(input)`                        | `newegg_shipping_label_estimate` (always registered)                            | READ (assumed)                |
+| `client.shippingLabels.estimate(input)`                        | `newegg_shipping_label_estimate` (writes enabled only)                          | single attempt, write-gated   |
 | `client.shippingLabels.previewCreate(input)` / `create(input)` | `newegg_shipping_label_preview_create` / `newegg_shipping_label_apply_create`   | preview read-only / **WRITE** |
 | `client.shippingLabels.previewReprint(n)` / `reprint(n)`       | `newegg_shipping_label_preview_reprint` / `newegg_shipping_label_apply_reprint` | preview read-only / **WRITE** |
 
-The four write tools exist only with `NEWEGG_MCP_ALLOW_WRITES=true`, and apply takes only a `previewId`
-(ADR 0005). Both previews read the order (Get Order Information, a read) and report blockers mirroring
+The four write tools and the estimate tool exist only with `NEWEGG_MCP_ALLOW_WRITES=true`, and apply takes
+only a `previewId` (ADR 0005). Both previews read the order (Get Order Information, a read) and report blockers mirroring
 `SL002`, `SL003`, `SL004`, `SL005`, `SL010` and `SL015` (create), or an order that has not shipped (reprint);
 `create` and `reprint` re-run the same checks and refuse to send on any blocker. Both writes are
 non-idempotent (ADR 0004): only a provably-unsent transport failure is retried; a timeout or reset after
 dispatch, an abort after dispatch, an HTTP 408 or any 5xx, or a 2xx that carries no package (or another
 order's) throws `IndeterminateOrderWriteError` with label-specific guidance (check the order, then use
-reprint to fetch the label instead of buying another). There is no void / refund-a-label operation in the
-documented API and no server-side cost ceiling; the quote comes from the estimate.
+reprint to fetch the label instead of buying another). The estimate goes through the SDK's single-attempt
+path (`HttpClient.requestOnce`): one request, no retry, errors mapped. There is no void / refund-a-label
+operation in the documented API.
+
+**Opt-in cost ceiling (MCP only).** `NEWEGG_MCP_MAX_LABEL_AMOUNT` (unset by default, a number above 0 and at
+most 99,999.99, in the marketplace currency) mirrors `NEWEGG_MCP_MAX_REFUND_AMOUNT` but is off unless set;
+with it unset nothing changes and no estimate is requested by the previews. When set: the create preview
+requests one estimate, reports it as `estimatedCost` (with `maxLabelAmount`) and is blocked, with no
+`previewId`, when the total is above the cap; the quoted cost (cents) is part of the stored preview's hash;
+`apply_create` asks for a **fresh** estimate (the carrier rate can move) and refuses with `preview_stale`,
+sending nothing, when it is above the cap. It fails closed: a quote that errors, a quote for a different
+number of packages than the purchase, a package Newegg did not rate, or a total that is not above 0 blocks the preview and the apply. A **reprint** has no quote (its
+request carries only the order number) and may be billed, so while the cap is set a reprint preview is
+blocked as an undeterminable cost. The SDK enforces no ceiling; SDK callers are the operator.
 
 ### 23.6 ASSUMPTIONs (retire only with an owner-authorized live probe)
 
-1. Estimate has no side effect and no charge (page wording only).
+1. Estimate has no side effect and no charge (page wording only). Hence it is write-gated and sent once, never retried.
 2. Reprint is billed or not (unknown; treated as billable).
 3. `ShipFromZipCode` (samples) over `ShpFromZipCode` (field table); `PackingListUrl` (samples) over `PackageListUrl` (table).
 4. The reprint response root `NeweggAPIRequest` with no `IsSuccess`.
@@ -3569,6 +3584,12 @@ and `ResponseDate`. The SDK accepts the recipient fields nested (as the sample s
 
 This data is personal (ID numbers, ID image links); the live suite asserts only on types, and nothing from a
 real response is stored in the repo.
+
+**MCP exposure.** The SDK returns the data unchanged. `newegg_orders_get_additional_info` masks
+`recipientIdNumber` to its last 4 characters (`********6789`; a number of 4 or fewer characters is masked
+entirely) and omits `idCopyFront` / `idCopyBack` unless the caller passes `includeIdImages: true`; the
+output says `idImagesWithheld: true` when links exist but were left out. The ID image links are bearer
+links to a copy of an identity document, which is why they are opt-in.
 
 **ASSUMPTIONs (unverified until a live read returns a non-empty record):** the nested-vs-flat recipient
 layout; that `Status` 5 and `Type` 3 behave as documented; the `VoidSoon` filter (not exposed).

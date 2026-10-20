@@ -104,12 +104,18 @@ export type ShippingLabelKind = keyof ShippingLabelInputs;
 /**
  * A stored label purchase or reprint. Buying a label charges the seller's account and ships the
  * order, so the `input` here is authoritative at apply time and `hash` (sha-256 of the canonical
- * kind + marketplace + input) is re-checked before anything is sent.
+ * kind + marketplace + input + costCents) is re-checked before anything is sent.
  */
 export type ShippingLabelPreviewRecord = {
   [K in ShippingLabelKind]: PreviewRecordBase & {
     readonly kind: K;
     readonly input: ShippingLabelInputs[K];
+    /**
+     * The quoted cost of the previewed label in whole cents, recorded only when
+     * `NEWEGG_MCP_MAX_LABEL_AMOUNT` was set at preview time (undefined otherwise). Part of the
+     * hash so it cannot be edited in the store.
+     */
+    readonly costCents?: number;
   };
 }[ShippingLabelKind];
 

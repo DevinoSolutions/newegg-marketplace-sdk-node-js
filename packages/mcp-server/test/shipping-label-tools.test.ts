@@ -28,6 +28,7 @@ const TOOLS = {
   applyReprint: "newegg_shipping_label_apply_reprint",
 } as const;
 const WRITE_TOOLS = [
+  TOOLS.estimate,
   TOOLS.previewCreate,
   TOOLS.applyCreate,
   TOOLS.previewReprint,
@@ -146,7 +147,7 @@ const labelArgs = {
 };
 
 describe("shipping label tools - registration gate", () => {
-  it("registers only the estimate read tool when writes are disabled", async () => {
+  it("registers none of the label tools, the estimate included, when writes are disabled", async () => {
     for (const env of [
       makeEnv(),
       makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "false" }),
@@ -156,10 +157,11 @@ describe("shipping label tools - registration gate", () => {
       try {
         const { tools } = (await harness.mcp.listTools()) as { tools: Array<{ name: string }> };
         const names = tools.map((tool) => tool.name);
-        expect(names).toContain(TOOLS.estimate);
         for (const name of WRITE_TOOLS) expect(names, name).not.toContain(name);
-        const direct = await callTool(harness.mcp, TOOLS.applyCreate, { previewId: "x" });
-        expect(direct.isError).toBe(true);
+        for (const name of [TOOLS.estimate, TOOLS.applyCreate]) {
+          const direct = await callTool(harness.mcp, name, { previewId: "x" });
+          expect(direct.isError).toBe(true);
+        }
         expect(harness.calls).toHaveLength(0);
       } finally {
         await harness.close();
@@ -167,7 +169,7 @@ describe("shipping label tools - registration gate", () => {
     }
   });
 
-  it("registers all four with writes enabled: previews read-only, applies destructive and non-idempotent", async () => {
+  it("registers all five with writes enabled: previews read-only, applies destructive and non-idempotent", async () => {
     const harness = await startHarness({ env: writesEnv(), routes: [] });
     try {
       const { tools } = (await harness.mcp.listTools()) as {
@@ -182,8 +184,11 @@ describe("shipping label tools - registration gate", () => {
         }>;
       };
       const estimate = tools.find((tool) => tool.name === TOOLS.estimate);
-      expect(estimate?.annotations?.readOnlyHint).toBe(true);
-      for (const name of WRITE_TOOLS) {
+      // A quote is a POST that Newegg may log or bill, so it is not advertised as read-only.
+      expect(estimate?.annotations?.readOnlyHint).toBe(false);
+      expect(estimate?.annotations?.destructiveHint).toBe(false);
+      expect(estimate?.annotations?.idempotentHint).toBe(false);
+      for (const name of WRITE_TOOLS.filter((tool) => tool !== TOOLS.estimate)) {
         const tool = tools.find((candidate) => candidate.name === name);
         expect(tool, name).toBeDefined();
         const isApply = name.includes("_apply_");
@@ -204,9 +209,9 @@ describe("shipping label tools - registration gate", () => {
 });
 
 describe("newegg_shipping_label_estimate", () => {
-  it("quotes with a single estimate POST and works with writes disabled", async () => {
+  it("quotes with a single estimate POST when writes are enabled", async () => {
     const harness = await startHarness({
-      env: makeEnv(),
+      env: writesEnv(),
       routes: [
         postRoute(ESTIMATE, 200, {
           NeweggAPIResponse: {
@@ -246,7 +251,7 @@ describe("newegg_shipping_label_estimate", () => {
   });
 
   it("rejects a package over the UPS limit at the schema, before any call", async () => {
-    const harness = await startHarness({ env: makeEnv(), routes: [] });
+    const harness = await startHarness({ env: writesEnv(), routes: [] });
     try {
       const res = await callTool(harness.mcp, TOOLS.estimate, {
         ...labelArgs,
@@ -602,6 +607,325 @@ describe("label reprint: preview -> apply", () => {
     } finally {
       await harness.close();
     }
+  });
+});
+
+const estimateBody = (total: string, result = "Success") => ({
+  NeweggAPIResponse: {
+    IsSuccess: "true",
+    ResponseBody: {
+      Shipment: {
+        OrderNumber: ORDER_NUMBER,
+        PackageList: {
+          Package: {
+            ProcessResult: result,
+            EstimatedRate: { EstimatedShippingAmount: total, EstimatedTotal: total },
+          },
+        },
+      },
+    },
+  },
+});
+
+const capEnv = (cap = "20") => writesEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: cap });
+
+const wasCreateSent = (harness: Harness) =>
+  posts(harness).some((call) => CREATE.test(call.url.pathname));
+
+describe("NEWEGG_MCP_MAX_LABEL_AMOUNT cost cap", () => {
+  it("leaves the purchase flow unchanged when the cap is unset (no quote call)", async () => {
+    const harness = await harnessFor([
+      postRoute(ESTIMATE, 200, estimateBody("999.99")),
+      postRoute(CREATE, 200, createBody()),
+    ]);
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(true);
+      expect(preview.json.estimatedCost).toBeUndefined();
+      expect(preview.json.maxLabelAmount).toBeUndefined();
+      const applied = await callTool(harness.mcp, TOOLS.applyCreate, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(false);
+      const paths = posts(harness).map((call) => call.url.pathname.split("/").pop());
+      expect(paths).toEqual(["createshippinglabel"]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("carries the quote on a preview within the cap and applies after a fresh re-quote", async () => {
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 200, estimateBody("12.34")), postRoute(CREATE, 200, createBody())],
+      capEnv("20"),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json).toMatchObject({
+        eligible: true,
+        estimatedCost: 12.34,
+        maxLabelAmount: 20,
+        blockers: [],
+      });
+      expect(posts(harness)).toHaveLength(1);
+
+      const applied = await callTool(harness.mcp, TOOLS.applyCreate, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(false);
+      const paths = posts(harness).map((call) => call.url.pathname.split("/").pop());
+      expect(paths).toEqual([
+        "estimateshippinglabel",
+        "estimateshippinglabel",
+        "createshippinglabel",
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("allows a cost exactly at the cap and blocks one cent above it", async () => {
+    const atCap = await harnessFor([postRoute(ESTIMATE, 200, estimateBody("20.00"))], capEnv("20"));
+    try {
+      const preview = await callTool(atCap.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(true);
+    } finally {
+      await atCap.close();
+    }
+    const above = await harnessFor([postRoute(ESTIMATE, 200, estimateBody("20.01"))], capEnv("20"));
+    try {
+      const preview = await callTool(above.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(false);
+    } finally {
+      await above.close();
+    }
+  });
+
+  it("blocks a preview above the cap and issues no previewId", async () => {
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 200, estimateBody("45.00")), postRoute(CREATE, 200, createBody())],
+      capEnv("20"),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(false);
+      expect(preview.json.previewId).toBeUndefined();
+      expect(preview.json.estimatedCost).toBe(45);
+      expect(preview.json.maxLabelAmount).toBe(20);
+      expect((preview.json.blockers as string[]).join("\n")).toContain(
+        "NEWEGG_MCP_MAX_LABEL_AMOUNT",
+      );
+      const applied = await callTool(harness.mcp, TOOLS.applyCreate, { previewId: "none" });
+      expect(applied.json.errorCode).toBe("preview_not_found");
+      expect(wasCreateSent(harness)).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("fails closed when the quote errors, with no retry and no purchase", async () => {
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 503, { message: "down" }), postRoute(CREATE, 200, createBody())],
+      capEnv("20"),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(false);
+      expect(preview.json.previewId).toBeUndefined();
+      expect((preview.json.blockers as string[]).join("\n")).toContain("could not be quoted");
+      const sent = posts(harness);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.url.pathname).toMatch(/estimateshippinglabel$/);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("fails closed when Newegg does not rate the package or the total is not positive", async () => {
+    for (const body of [estimateBody("9.99", "Failed"), estimateBody("0.00")]) {
+      const harness = await harnessFor([postRoute(ESTIMATE, 200, body)], capEnv("20"));
+      try {
+        const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+        expect(preview.json.eligible).toBe(false);
+        expect(preview.json.previewId).toBeUndefined();
+        expect((preview.json.blockers as string[]).join("\n")).toContain(
+          "NEWEGG_MCP_MAX_LABEL_AMOUNT",
+        );
+      } finally {
+        await harness.close();
+      }
+    }
+  });
+
+  it("fails closed when Newegg quotes fewer packages than the purchase would create", async () => {
+    const twoPackages = {
+      ...labelArgs,
+      packages: [
+        { ...labelArgs.packages[0], items: [{ sellerPartNumber: SKU, quantity: 1 }] },
+        { ...labelArgs.packages[0], items: [{ sellerPartNumber: SKU, quantity: 1 }] },
+      ],
+    };
+    // One 5.00 quote against a 10.00 cap would pass if the missing package were ignored.
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 200, estimateBody("5.00")), postRoute(CREATE, 200, createBody())],
+      capEnv("10"),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, twoPackages);
+      expect(preview.json.eligible).toBe(false);
+      expect(preview.json.previewId).toBeUndefined();
+      expect((preview.json.blockers as string[]).join("\n")).toContain("different number");
+      expect(wasCreateSent(harness)).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("does not quote a plan that something else already blocks", async () => {
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 200, estimateBody("5.00"))],
+      capEnv("20"),
+      undefined,
+      true,
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(false);
+      expect(preview.json.estimatedCost).toBeUndefined();
+      expect(posts(harness)).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("blocks a reprint while the cap is set, and allows it when the cap is unset", async () => {
+    const capped = await harnessFor(
+      [postRoute(REPRINT, 200, reprintBody)],
+      capEnv("20"),
+      undefined,
+      true,
+    );
+    try {
+      const preview = await callTool(capped.mcp, TOOLS.previewReprint, {
+        orderNumber: ORDER_NUMBER,
+      });
+      expect(preview.json.eligible).toBe(false);
+      expect(preview.json.previewId).toBeUndefined();
+      expect(preview.json.maxLabelAmount).toBe(20);
+      expect((preview.json.blockers as string[]).join("\n")).toContain(
+        "NEWEGG_MCP_MAX_LABEL_AMOUNT",
+      );
+      expect(posts(capped)).toHaveLength(0);
+    } finally {
+      await capped.close();
+    }
+    const open = await harnessFor(
+      [postRoute(REPRINT, 200, reprintBody)],
+      writesEnv(),
+      undefined,
+      true,
+    );
+    try {
+      const preview = await callTool(open.mcp, TOOLS.previewReprint, { orderNumber: ORDER_NUMBER });
+      expect(preview.json.eligible).toBe(true);
+    } finally {
+      await open.close();
+    }
+  });
+
+  it("apply re-quotes and refuses with preview_stale when the rate rose above the cap", async () => {
+    let quotes = 0;
+    const estimateRoute: MockRoute = {
+      method: "POST",
+      pathPattern: ESTIMATE,
+      reply: () => {
+        quotes += 1;
+        return { status: 200, body: estimateBody(quotes === 1 ? "12.00" : "30.00") };
+      },
+    };
+    const harness = await harnessFor(
+      [estimateRoute, postRoute(CREATE, 200, createBody())],
+      capEnv("20"),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(true);
+      const applied = await callTool(harness.mcp, TOOLS.applyCreate, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(applied.text).toContain("Nothing was sent");
+      expect(wasCreateSent(harness)).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("apply refuses when the re-quote fails, and the preview is consumed", async () => {
+    let quotes = 0;
+    const estimateRoute: MockRoute = {
+      method: "POST",
+      pathPattern: ESTIMATE,
+      reply: () => {
+        quotes += 1;
+        return quotes === 1
+          ? { status: 200, body: estimateBody("12.00") }
+          : { status: 500, body: { message: "boom" } };
+      },
+    };
+    const harness = await harnessFor(
+      [estimateRoute, postRoute(CREATE, 200, createBody())],
+      capEnv("20"),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      const id = preview.json.previewId as string;
+      const applied = await callTool(harness.mcp, TOOLS.applyCreate, { previewId: id });
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(wasCreateSent(harness)).toBe(false);
+      const replay = await callTool(harness.mcp, TOOLS.applyCreate, { previewId: id });
+      expect(replay.isError).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("includes the quoted cost in the tamper hash", async () => {
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 200, estimateBody("12.00")), postRoute(CREATE, 200, createBody())],
+      capEnv("20"),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      const id = preview.json.previewId as string;
+      const stored = (await harness.previewStore.get(id)) as unknown as { costCents?: number };
+      expect(stored.costCents).toBe(1200);
+      stored.costCents = 1;
+      const applied = await callTool(harness.mcp, TOOLS.applyCreate, { previewId: id });
+      expect(applied.json.errorCode).toBe("preview_tampered");
+      expect(wasCreateSent(harness)).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe("NEWEGG_MCP_MAX_LABEL_AMOUNT config", () => {
+  it("is unset by default and accepts a decimal", () => {
+    expect(loadMcpConfigFromEnv(makeEnv()).limits.maxLabelAmount).toBeUndefined();
+    expect(
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: "" })).limits.maxLabelAmount,
+    ).toBeUndefined();
+    expect(
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: "25.5" })).limits.maxLabelAmount,
+    ).toBe(25.5);
+  });
+
+  it.each(["0", "-1", "abc", "100000"])("rejects %s", (value) => {
+    expect(() => loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: value }))).toThrow(
+      /NEWEGG_MCP_MAX_LABEL_AMOUNT/,
+    );
   });
 });
 

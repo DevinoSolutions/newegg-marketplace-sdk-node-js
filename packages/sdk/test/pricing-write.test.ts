@@ -265,6 +265,46 @@ describe("pricing.update - ambiguous failures (ADR 0004: retry-safe absolute ass
     expect(result.items[0]?.status).toBe("unknown");
   });
 
+  it("treats a redirect answered to the write as unknown, not failed, and never retries it", async () => {
+    let attempts = 0;
+    const book = priceBook(
+      { A: 10 },
+      {
+        writeReply: () => {
+          attempts += 1;
+          book.prices.A = 7; // Newegg applied the write before answering with the redirect
+          return {
+            status: 307,
+            headers: { Location: "https://elsewhere.example/moved" },
+            body: undefined,
+          };
+        },
+      },
+    );
+    const { client } = makeClient("ca", book.routes);
+    const result = await client.pricing.update(caUpdate("A", 7));
+    expect(attempts).toBe(1);
+    // The read-back resolves what the redirect left open.
+    expect(result.items[0]).toMatchObject({ status: "verified", observedSellingPrice: 7 });
+  });
+
+  it("reports unknown when a redirected price write cannot be read back", async () => {
+    const book = priceBook(
+      { A: 10 },
+      {
+        writeReply: () => ({
+          status: 308,
+          headers: { Location: "https://elsewhere.example/moved" },
+          body: undefined,
+        }),
+      },
+    );
+    const { client } = makeClient("ca", book.routes);
+    const result = await client.pricing.update(caUpdate("A", 7), { verify: false });
+    expect(result.items[0]?.status).toBe("unknown");
+    expect(result.items[0]?.message).toContain("redirect");
+  });
+
   it("treats a refused connection (provably unsent) as failed", async () => {
     const book = priceBook(
       { A: 10 },

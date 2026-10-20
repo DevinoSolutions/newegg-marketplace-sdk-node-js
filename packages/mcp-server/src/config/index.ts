@@ -39,6 +39,13 @@ export interface McpLimits {
    * currency; a bigger one is blocked at preview time (fat-finger / runaway-agent guard). Default 500.
    */
   readonly maxRefundAmount: number;
+  /**
+   * Opt-in ceiling on what ONE shipping label purchase (all its packages together) may cost, in the
+   * marketplace currency; a dearer purchase is blocked at preview and again at apply. Unset (the
+   * default) means no cap and the label tools behave as before. When set, a cost that cannot be
+   * determined is blocked too (fail closed).
+   */
+  readonly maxLabelAmount?: number;
   /** Uppercased warehouse codes; empty means "all warehouses allowed". */
   readonly allowedWarehouses: string[];
   /** Normalized marketplace codes; empty means "all marketplaces allowed". */
@@ -175,6 +182,23 @@ function numberEnv(name: string, fallback: number, check: (n: number) => boolean
     });
 }
 
+/** Optional finite number with NO default (undefined when unset/blank); must satisfy `check`. */
+function optionalNumberEnv(name: string, check: (n: number) => boolean, hint: string) {
+  return z
+    .string()
+    .optional()
+    .transform((raw, ctx) => {
+      const trimmed = raw?.trim();
+      if (trimmed === undefined || trimmed === "") return undefined;
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed) || !check(parsed)) {
+        ctx.addIssue({ code: "custom", message: `${name} must be ${hint}.` });
+        return z.NEVER;
+      }
+      return parsed;
+    });
+}
+
 /** Optional boolean accepting only "true"/"false" (case-insensitive); default `fallback`. */
 function boolEnv(name: string, fallback: boolean) {
   return z
@@ -292,6 +316,11 @@ const envSchema = z.object({
     (n) => n > 0 && n <= 99_999.99,
     "a number greater than 0 and at most 99999.99",
   ),
+  NEWEGG_MCP_MAX_LABEL_AMOUNT: optionalNumberEnv(
+    "NEWEGG_MCP_MAX_LABEL_AMOUNT",
+    (n) => n > 0 && n <= 99_999.99,
+    "a number greater than 0 and at most 99999.99",
+  ),
   NEWEGG_MCP_ALLOWED_WAREHOUSES: csvEnv({ uppercase: true }),
   NEWEGG_MCP_HTTP_HOST: z
     .string()
@@ -350,6 +379,7 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     allowZeroQuantity: parsed.NEWEGG_MCP_ALLOW_ZERO_QUANTITY,
     maxPriceChangePercent: parsed.NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT,
     maxRefundAmount: parsed.NEWEGG_MCP_MAX_REFUND_AMOUNT,
+    maxLabelAmount: parsed.NEWEGG_MCP_MAX_LABEL_AMOUNT,
     allowedWarehouses: parsed.NEWEGG_MCP_ALLOWED_WAREHOUSES,
     allowedMarketplaces,
   };
