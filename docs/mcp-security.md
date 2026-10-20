@@ -59,6 +59,11 @@ Tools (underscore names, per MCP naming rules):
 | `newegg_subcategories_list`              | read               | Newegg subcategories and whether each is enabled for the seller (Get Subcategory Status; `countryCode` is Newegg.com only). Capped by `limit`, with `totalCount` / `truncated`.                                                                                                                                                                      |
 | `newegg_subcategory_properties`          | read               | Item properties of one subcategory (name, required / group-by / advanced-search flags).                                                                                                                                                                                                                                                              |
 | `newegg_property_values`                 | read               | Allowed values of one item property, per subcategory. Values capped per property by `limit`, with `valueCount` / `truncated`.                                                                                                                                                                                                                        |
+| `newegg_ads_campaigns_list`              | read               | Sponsored Ads campaigns (Newegg.com only): status, budget, daily budget, group count.                                                                                                                                                                                                                                                    |
+| `newegg_ads_campaign_get`                | read               | One Sponsored Ads campaign by number; `found=false` when absent.                                                                                                                                                                                                                                                                         |
+| `newegg_ads_groups_list`                 | read               | Ad groups of one campaign: default and suggested bids, keyword / product counts, item numbers.                                                                                                                                                                                                                                           |
+| `newegg_ads_keywords_list`               | read               | Keywords of a campaign or ad group: match type, bid, suggested bids, competition.                                                                                                                                                                                                                                                        |
+| `newegg_ads_report`                      | read               | Synchronous group / product / keyword performance report: spend, sales, ACoS, clicks, orders.                                                                                                                                                                                                                                            |
 | `newegg_feed_status`                     | read               | Feed status by request ID.                                                                                                                                                                                                                                                                                                                           |
 | `newegg_feed_result`                     | read               | Feed processing report by request ID.                                                                                                                                                                                                                                                                                                                |
 | `newegg_service_status`                  | read               | Newegg service-domain availability.                                                                                                                                                                                                                                                                                                                  |
@@ -118,6 +123,19 @@ Tools (underscore names, per MCP naming rules):
 > URL (credentials embedded, host `mktpftpreport.newegg.com`) is never returned or logged. Amounts
 > are confidential business data (USD / CAD, reported in `currency`). All three tools only create
 > report jobs; none writes to the account.
+
+> **Sponsored Ads tools: spend and bid data, no PII.** The five `newegg_ads_*` tools (contracts §25)
+> return the seller's own advertising data: campaign budgets, bids and suggested bids, keyword lists
+> and performance (spend, sales, ACoS, clicks, orders). That is confidential commercial data (it
+> shows what the seller pays and targets), but it carries no buyer data and no credentials. They are
+> READS although Newegg answers every Sponsored Ads operation with `POST`. Creating or changing a
+> campaign, group, product, keyword or bid spends money: it is not implemented in the SDK, not
+> exposed as a tool (so there is no write gate to open), and the live suite is forbidden from
+> naming any of those operations (`npm run check:live-readonly`). Inputs are strict schemas, every
+> request goes to one of 12 fixed read endpoints (no path is built from tool input), outputs map
+> fields explicitly, free-text decline reasons are clipped, and SDK `raw` payloads are never
+> requested. Newegg.com is the only supported marketplace; Business and CAN fail before a request
+> is sent.
 
 Resources:
 
