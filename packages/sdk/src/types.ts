@@ -3196,7 +3196,7 @@ export interface ShippingLabelReprintInput {
 // ----------------------------------------------------------------------------
 /** Paging and sorting shared by every Sponsored Ads list/report input. */
 export interface AdsPagingInput {
-  /** 1-based page (default 1). */
+  /** 1-based page (default 1, at most 10,000: an SDK sanity bound, not a documented Newegg limit). */
   page?: number;
   /** Rows per page (default 100; the maximum is 100 for campaigns/groups, 9,999,999 elsewhere). */
   pageSize?: number;

@@ -44,3 +44,5 @@ export const ADS_PAGE_SIZE_DEFAULT = 100;
 export const ADS_PAGE_SIZE_MAX = 9_999_999;
 /** Documented ceiling of the campaign / group lists. */
 export const ADS_LIST_PAGE_SIZE_MAX = 100;
+/** Highest `page` the SDK will send; the pages document no ceiling, so this is a sanity bound. */
+export const ADS_PAGE_MAX = 10_000;

@@ -37,11 +37,46 @@ import { TOOL_NAMES } from "./names.js";
 // ---------------------------------------------------------------------------
 // shared schemas + helpers
 // ---------------------------------------------------------------------------
+/** Highest page index accepted (mirrors the SDK's ADS_PAGE_MAX sanity bound). */
+const PAGE_MAX = 10_000;
+
+/** True for a real calendar day, so `2026-13-45` and `2026-02-30` are refused. */
+function isCalendarDay(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match === null) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
+}
+
 const dayString = (what: string) =>
   z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD")
+    .refine(isCalendarDay, "must be a real calendar date, YYYY-MM-DD")
     .describe(`${what} (YYYY-MM-DD).`);
+
+const pageSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(PAGE_MAX)
+  .optional()
+  .describe(`1-based page index (default 1, max ${PAGE_MAX}).`);
+
+/** Refuses a date range whose start falls after its end (both already valid days). */
+function checkDateOrder(
+  value: { fromDate?: string | undefined; toDate?: string | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.fromDate !== undefined && value.toDate !== undefined && value.fromDate > value.toDate) {
+    ctx.addIssue({ code: "custom", path: ["fromDate"], message: "must not be after toDate" });
+  }
+}
 
 const campaignNumberSchema = z
   .number()
@@ -81,6 +116,7 @@ const pageOutput = {
   page: z.number().optional(),
   pageSize: z.number().optional(),
   message: z.string().optional(),
+  bizCode: z.string().optional(),
   correlationId: z.string(),
   rateLimit: rateLimitOutputSchema.optional(),
 };
@@ -92,6 +128,7 @@ function pageFields<T>(result: AdsPage<T>) {
     page: result.page,
     pageSize: result.pageSize,
     message: clip(result.message),
+    bizCode: clip(result.bizCode, 40),
     correlationId: result.correlationId,
     rateLimit: serializeRateLimit(result.rateLimit),
   };
@@ -166,7 +203,7 @@ const campaignsListInputSchema = z
       .describe("0 Sponsored Products, 1 Headlines, 2 Video, 3 Display, 4 Offsite Ads."),
     fromDate: dayString("Campaign start filter").optional(),
     toDate: dayString("Campaign end filter").optional(),
-    page: z.number().int().min(1).optional().describe("1-based page index (default 1)."),
+    page: pageSchema,
     pageSize: z
       .number()
       .int()
@@ -181,6 +218,7 @@ const campaignsListInputSchema = z
       .describe("Field to sort by (default InDate)."),
     sortOrder: sortOrderSchema,
   })
+  .superRefine(checkDateOrder)
   .describe("Sponsored Ads campaign list criteria; all fields optional.");
 
 const campaignsListOutputSchema = z.object({
@@ -303,7 +341,7 @@ const groupsListInputSchema = z
       .describe("Group name, or number(s) per searchBy."),
     searchBy: nameOrNumberSchema,
     activeStatus: activeStatusSchema,
-    page: z.number().int().min(1).optional().describe("1-based page index (default 1)."),
+    page: pageSchema,
     pageSize: z
       .number()
       .int()
@@ -415,7 +453,7 @@ const keywordsListInputSchema = z
     groupNumber: groupNumberSchema.optional(),
     keyword: z.string().min(1).max(200).optional().describe("Keyword text to match (fuzzy)."),
     activeStatus: activeStatusSchema,
-    page: z.number().int().min(1).optional().describe("1-based page index (default 1)."),
+    page: pageSchema,
     pageSize: z
       .number()
       .int()
@@ -536,7 +574,7 @@ const performanceInputSchema = z
         "Group name filter (group level), item filter (product) or keyword text (keyword).",
       ),
     activeStatus: activeStatusSchema,
-    page: z.number().int().min(1).optional().describe("1-based page index (default 1)."),
+    page: pageSchema,
     pageSize: z
       .number()
       .int()
@@ -551,6 +589,7 @@ const performanceInputSchema = z
       .describe("Field to sort by (default InDate)."),
     sortOrder: sortOrderSchema,
   })
+  .superRefine(checkDateOrder)
   .describe("Synchronous Sponsored Ads performance report criteria.");
 
 const metricFields = {
