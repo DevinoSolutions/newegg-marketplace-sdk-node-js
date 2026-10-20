@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type {
+  AdditionalOrderInfo,
+  AdditionalOrderInfoPage,
   CancelOrderInput,
   CancelOrderResult,
   ConfirmOrdersInput,
   ConfirmOrdersResult,
+  ListAdditionalOrderInfoInput,
   ListOrdersInput,
   Order,
   OrdersApi,
@@ -24,17 +27,24 @@ import { TransportError } from "../client/transport.js";
 import { rateLimitKey } from "../rate-limit/index.js";
 import { delay, isAbortError } from "../util.js";
 import {
+  assertOrderAdditionalInfoSupported,
+  getOrderAdditionalInfoPlatform,
+} from "../platform/order-additional-info.js";
+import {
+  ORDER_ADDITIONAL_INFO_PATH,
   ORDER_INFO_VERSION,
   ORDER_NOT_FOUND_ERROR_CODES,
   ORDER_STATUS_VERSION,
   ORDER_WRITE_VERSION,
 } from "./constants.js";
 import {
+  buildAdditionalOrderInfoRequest,
   buildCancelRequest,
   buildConfirmRequest,
   buildOrderInfoRequest,
   buildRemoveItemsRequest,
   buildShipRequest,
+  parseAdditionalOrderInfoResponse,
   parseCancelResponse,
   parseConfirmResponse,
   parseOrderStatus,
@@ -166,6 +176,73 @@ export class OrdersApiImpl implements OrdersApi {
       }
       throw err;
     }
+  }
+
+  async listAdditionalInfo(
+    input: ListAdditionalOrderInfoInput = {},
+    options: RequestOptions = {},
+  ): Promise<AdditionalOrderInfoPage> {
+    const { marketplace, sellerId } = this.#config;
+    assertOrderAdditionalInfoSupported(getOrderAdditionalInfoPlatform(marketplace));
+    const correlationId = options.correlationId ?? randomUUID();
+    const { body, pageIndex, pageSize } = buildAdditionalOrderInfoRequest(input);
+    // A POST, but a READ (contracts §24): no mutation, so the normal retrying read path applies.
+    const spec: RequestSpec = {
+      method: "POST",
+      path: `${this.#http.adapter.prefix}${ORDER_ADDITIONAL_INFO_PATH}`,
+      body,
+    };
+    const result = await this.#http.request(spec, {
+      operation: Operation.OrderAdditionalInfo,
+      correlationId,
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+      rateLimitKey: rateLimitKey(marketplace, sellerId, Operation.OrderAdditionalInfo),
+    });
+    const parsed = parseAdditionalOrderInfoResponse(result.json);
+    return {
+      marketplace,
+      records: parsed.records,
+      page: parsed.page.pageIndex || pageIndex,
+      pageSize: parsed.page.pageSize || pageSize,
+      totalCount: parsed.page.totalCount,
+      totalPageCount: parsed.page.totalPageCount,
+      correlationId,
+      rateLimit: result.rateLimit,
+      raw: options.includeRaw ? result.json : undefined,
+    };
+  }
+
+  async getAdditionalInfo(
+    orderNumber: string | number,
+    options: RequestOptions = {},
+  ): Promise<AdditionalOrderInfo> {
+    const page = await this.listAdditionalInfo(
+      { orderNumbers: [orderNumber], pageSize: 1 },
+      options,
+    );
+    const record = page.records[0];
+    if (!record) {
+      throw new NeweggApiError(
+        "Newegg returned no additional info for the requested order number.",
+        {
+          correlationId: page.correlationId,
+          details: { orderNumber: String(orderNumber) },
+        },
+      );
+    }
+    return record;
+  }
+
+  async tryGetAdditionalInfo(
+    orderNumber: string | number,
+    options: RequestOptions = {},
+  ): Promise<AdditionalOrderInfo | undefined> {
+    const page = await this.listAdditionalInfo(
+      { orderNumbers: [orderNumber], pageSize: 1 },
+      options,
+    );
+    return page.records[0];
   }
 
   async ship(input: ShipOrderInput, options: RequestOptions = {}): Promise<ShipOrderResult> {

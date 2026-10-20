@@ -41,6 +41,7 @@ describe("tools/list", () => {
         "newegg_inventory_preview_update",
         "newegg_listing_preview_create",
         "newegg_orders_get",
+        "newegg_orders_get_additional_info",
         "newegg_orders_get_status",
         "newegg_orders_list",
         "newegg_pricing_get",
@@ -76,10 +77,10 @@ describe("tools/list", () => {
     ).toEqual([]);
   });
 
-  it("adds the write tools when writes are enabled (47 tools)", async () => {
+  it("adds the write tools when writes are enabled (48 tools)", async () => {
     const tools = await listTools(makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "true" }));
     const names = tools.map((tool) => tool.name);
-    expect(names).toHaveLength(47);
+    expect(names).toHaveLength(48);
     expect(names).toContain("newegg_inventory_apply_update");
     expect(names).toContain("newegg_listing_apply_create");
     expect(names).toContain("newegg_pricing_preview_update");

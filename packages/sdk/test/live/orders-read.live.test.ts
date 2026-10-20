@@ -66,4 +66,19 @@ describe.skipIf(!liveEnabled)("live (read-only): order reads", () => {
     expect(typeof snapshot.status).toBe("string");
     expect(snapshot.status.length).toBeGreaterThan(0);
   });
+
+  it("additional info is a read that answers for a discovered order (us only)", async (ctx) => {
+    if (!firstOrderNumber || marketplace() !== "us") {
+      ctx.skip();
+      return;
+    }
+    const client = makeLiveClient();
+    const page = await client.orders.listAdditionalInfo({
+      orderNumbers: [firstOrderNumber],
+      pageSize: 1,
+    });
+    expect(page.marketplace).toBe("us");
+    expect(Array.isArray(page.records)).toBe(true);
+    for (const record of page.records) expect(typeof record.orderNumber).toBe("string");
+  });
 });

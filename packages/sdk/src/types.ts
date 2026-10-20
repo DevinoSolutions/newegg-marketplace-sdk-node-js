@@ -737,6 +737,72 @@ export interface RemoveOrderItemsResult {
   raw?: unknown;
 }
 
+/** Recipient details as Newegg stores them for an additional-info record (contracts §24). */
+export interface AdditionalOrderRecipient {
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  stateCode?: string;
+  zipCode?: string;
+  countryCode?: string;
+  phoneNumber?: string;
+}
+
+/**
+ * One order's extra compliance data from Get Additional Order Information (contracts §24):
+ * recipient identity document, the original (pre-NISP / as-entered) recipient addresses, and the
+ * China tax/import designations. Contains personal data (ID numbers, ID image links).
+ */
+export interface AdditionalOrderInfo {
+  orderNumber: string;
+  /** Customer ID document type (e.g. `CPF`, `CNPJ`, `Passport`, `Identification Card`). */
+  recipientIdType?: string;
+  recipientIdNumber?: string;
+  /** Original recipient for NISP-shipped orders. */
+  nispOriginal?: AdditionalOrderRecipient;
+  /** Recipient exactly as the customer entered it. */
+  originalInput?: AdditionalOrderRecipient;
+  /** `DDU` / `DDP` / `ATI` / `Default`. */
+  taxDutyTypeChina?: string;
+  /** `EE` / `EEP` / `Default`. */
+  importTypeChina?: string;
+  idCopyFront?: string;
+  idCopyBack?: string;
+  /** Non-empty `AddInfo1`-`AddInfo3` values (reserved by Newegg; usually none). */
+  reserved: string[];
+}
+
+/** Criteria for {@link OrdersApi.listAdditionalInfo}; same filter semantics as {@link ListOrdersInput}. */
+export interface ListAdditionalOrderInfoInput {
+  orderNumbers?: Array<string | number>;
+  status?: Exclude<OrderStatus, "unknown" | "paymentPending">;
+  /** Wire `Type` 0/1/2/3 (`nisp` here, unlike Get Order Information's codes 3/4). */
+  type?: "all" | "sbn" | "sbs" | "nisp";
+  includeDownloaded?: boolean;
+  dateFrom?: Date | string;
+  dateTo?: Date | string;
+  /** ISO 3-letter country code. */
+  countryCode?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+/** One page of {@link OrdersApi.listAdditionalInfo} results. */
+export interface AdditionalOrderInfoPage {
+  marketplace: NeweggMarketplace;
+  records: AdditionalOrderInfo[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPageCount: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+
 export interface OrdersApi {
   /** Search orders by criteria (single page). Omit `input` to match all orders. */
   list(input?: ListOrdersInput, options?: RequestOptions): Promise<OrdersPage>;
@@ -757,6 +823,25 @@ export interface OrdersApi {
     orderNumber: string | number,
     options?: RequestOptions,
   ): Promise<OrderStatusSnapshot | undefined>;
+  /**
+   * Get Additional Order Information (contracts §24 - a READ despite the POST): recipient ID
+   * document, original recipient addresses and China tax/import designations. Newegg.com only;
+   * B2B and CAN throw {@link UnsupportedMarketplaceOperationError} before sending (ADR 0002).
+   */
+  listAdditionalInfo(
+    input?: ListAdditionalOrderInfoInput,
+    options?: RequestOptions,
+  ): Promise<AdditionalOrderInfoPage>;
+  /** Additional info for one order; throws {@link NeweggError} when none is returned. */
+  getAdditionalInfo(
+    orderNumber: string | number,
+    options?: RequestOptions,
+  ): Promise<AdditionalOrderInfo>;
+  /** Like {@link OrdersApi.getAdditionalInfo} but resolves to `undefined` when not found. */
+  tryGetAdditionalInfo(
+    orderNumber: string | number,
+    options?: RequestOptions,
+  ): Promise<AdditionalOrderInfo | undefined>;
   /**
    * Ship one order in one or more packages (Ship Order, `Action` = 2 — a WRITE via PUT to the
    * order-status endpoint). Newegg's envelope `IsSuccess` is always `true`, so the real outcome

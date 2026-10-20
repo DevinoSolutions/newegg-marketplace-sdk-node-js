@@ -13,7 +13,12 @@ export { pricingApplyTool } from "./pricing-apply.js";
 export { feedStatusTool, feedStatusInputSchema } from "./feed-status.js";
 export { feedResultTool } from "./feed-result.js";
 export { serviceStatusTool } from "./service-status.js";
-export { ordersListTool, ordersGetTool, ordersGetStatusTool } from "./orders.js";
+export {
+  ordersListTool,
+  ordersGetTool,
+  ordersGetStatusTool,
+  ordersGetAdditionalInfoTool,
+} from "./orders.js";
 export { rmaListTool, rmaGetTool, refundListTool, refundStatusTool } from "./rma.js";
 export {
   createRmaPreviewSubmitTool,

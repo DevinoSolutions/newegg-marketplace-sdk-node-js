@@ -15,6 +15,8 @@ export const Operation = {
   OrderList: "orders.list",
   // Get Order Status is a separate endpoint with its own 500/hr budget.
   OrderStatus: "orders.status",
+  // Get Additional Order Information (§24): a POST read on its own endpoint; 10,000/hr budget.
+  OrderAdditionalInfo: "orders.additionalInfo",
   // Order writes. Ship/Cancel PUT the shared orderstatus/orders/{n} endpoint (Action selects the
   // mutation); Confirm POSTs …/orders/confirmation; RemoveItem PUTs ordermgmt/killitem/… (§11).
   OrderShip: "orders.ship",

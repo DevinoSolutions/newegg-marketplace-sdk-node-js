@@ -57,11 +57,16 @@ Tools (underscore names, per MCP naming rules):
 | `newegg_orders_list`                     | read               | Paged order search (Get Order Information). Returns order, line-item, package, and customer ship-to detail.                                                                                                                                                                                                                              |
 | `newegg_orders_get`                      | read               | One order's full detail by order number.                                                                                                                                                                                                                                                                                                 |
 | `newegg_orders_get_status`               | read               | Lightweight order status by order number.                                                                                                                                                                                                                                                                                                |
+| `newegg_orders_get_additional_info`      | read               | Recipient ID document, original recipient addresses and China tax/import data for one order (Newegg.com only; personal data).                                                                                                                                                                                                            |
 
 > **Buyer data.** The order read tools return the seller's own order data, which includes
 > customer ship-to name/address/phone and Newegg's masked relay email. This is the data a
 > seller needs to fulfill orders; it is never a credential, but operators wiring these tools
-> into a shared assistant should treat that output as buyer PII.
+> into a shared assistant should treat that output as buyer PII. `newegg_orders_get_additional_info`
+> is more sensitive still: it returns the recipient's ID document type and **number**, the original
+> recipient addresses and phone numbers, and **download links to ID-document images**
+> (`idCopyFront` / `idCopyBack`), all unredacted. Only wire it into assistants that are cleared to
+> see government-ID data, and never log or persist its output.
 
 > **Report tools and the FTP URL secret.** Newegg answers the file-style reports (Daily
 > Inventory, Daily Price) with an `ftp://user:password@host/file` URL that embeds

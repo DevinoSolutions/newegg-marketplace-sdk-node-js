@@ -129,7 +129,7 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
   throw `IndeterminateServiceWriteError` and are never auto-retried. Amounts are USD (Newegg.com,
   B2B) or CAD (Newegg.ca); `Rma.customer` holds buyer PII that the MCP tools deliberately never
   surface.
-- **`client.orders`** - reads `list`, `get`, `tryGet`, `getStatus`, `tryGetStatus` (order info is a
+- **`client.orders`** - reads `list`, `get`, `tryGet`, `getStatus`, `tryGetStatus`, `listAdditionalInfo`, `getAdditionalInfo`, `tryGetAdditionalInfo` (Newegg.com only; order info is a
   read even though Newegg uses `PUT`); **writes** `ship`, `cancel`, `confirmDownload`,
   `removeItems`. Orders carry buyer PII in `customer`.
 - **`client.catalog`** - read-only Item Lookup Report: `resolve` (UPC / manufacturer part number /
