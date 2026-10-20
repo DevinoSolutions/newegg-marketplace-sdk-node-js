@@ -14,7 +14,12 @@ const roundToCent = (value: number): number => Math.round(value * 100) / 100;
 
 const tierSchema = z.strictObject({
   quantity: z.number().int().min(VOLUME_DISCOUNT_MIN_QUANTITY).max(VOLUME_DISCOUNT_MAX_QUANTITY),
-  sellingPrice: z.number().positive().finite().max(VOLUME_DISCOUNT_MAX_SELLING_PRICE),
+  sellingPrice: z
+    .number()
+    .positive()
+    .finite()
+    .max(VOLUME_DISCOUNT_MAX_SELLING_PRICE)
+    .refine((value) => roundToCent(value) > 0, { message: "Price rounds to 0.00." }),
   freeShipping: z.boolean().optional(),
 });
 
@@ -127,17 +132,15 @@ export function volumeDiscountWarnings(items: NormalizedVolumeDiscountUpdate[]):
       "tier quantity must not be below the item's minimum purchase quantity (CT058).",
     "An active Newegg promotion priced below tier 1 disables the volume discount for shoppers.",
   ];
-  const odd = items.filter((item) =>
-    item.tiers.some((tier, t) => {
-      const previous = item.tiers[t - 1];
-      return previous !== undefined && tier.freeShipping && !previous.freeShipping;
-    }),
+  const mixed = items.filter((item) =>
+    item.tiers.some((tier) => tier.freeShipping !== item.tiers[0]?.freeShipping),
   ).length;
-  if (odd > 0) {
+  if (mixed > 0) {
     warnings.push(
-      `${odd} item(s) turn free shipping on at a higher tier after a lower tier without it; the ` +
-        "docs state the shipping value must satisfy tier-1 >= tier-2 >= tier-3 (0 default, 1 " +
-        "free), so Newegg may reject these (CT063).",
+      `${mixed} item(s) mix free and default shipping across tiers. The docs allow a tier's ` +
+        "shipping only to match or beat the previous tier's for the buyer (Default/Free valid, " +
+        "Default/Free/Default invalid), yet a live feed with Free then Default was accepted; " +
+        "Newegg may reject a mixed set with CT063.",
     );
   }
   return warnings;

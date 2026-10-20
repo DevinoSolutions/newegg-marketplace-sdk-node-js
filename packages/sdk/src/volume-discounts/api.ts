@@ -50,7 +50,7 @@ export class VolumeDiscountsApiImpl implements VolumeDiscountsApi {
     input: GetVolumeDiscountInput,
     options: RequestOptions = {},
   ): Promise<VolumeDiscountSnapshot> {
-    if (input.neweggItemNumber === undefined && input.sellerPartNumber === undefined) {
+    if (!input.neweggItemNumber && !input.sellerPartNumber) {
       throw new NeweggValidationError("volumeDiscounts.get input validation failed.", [
         { path: "", message: "Provide neweggItemNumber or sellerPartNumber." },
       ]);

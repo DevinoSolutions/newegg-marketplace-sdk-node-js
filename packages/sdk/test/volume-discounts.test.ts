@@ -154,7 +154,17 @@ describe("volumeDiscounts.previewUpdate", () => {
     expect(preview.warnings.length).toBeGreaterThan(0);
   });
 
-  it("warns when a higher tier turns free shipping on after a lower one lacks it", () => {
+  it("rejects a price that rounds to 0.00", () => {
+    const { client } = makeClient("ca", []);
+    expect(() =>
+      client.volumeDiscounts.previewUpdate({
+        sellerPartNumber: "FAKE-SKU-1",
+        tiers: [{ quantity: 2, sellingPrice: 0.004 }],
+      }),
+    ).toThrow(NeweggValidationError);
+  });
+
+  it("warns when tiers mix free and default shipping", () => {
     const { client } = makeClient("ca", []);
     const preview = client.volumeDiscounts.previewUpdate({
       neweggItemNumber: ITEM,

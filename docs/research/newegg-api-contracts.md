@@ -3266,7 +3266,10 @@ DiscountSetting { Tier[] { Priority, Quantity, SellingPrice, EnableFreeShipping 
 - Quantity: `1 pc < tier-1 < tier-2 < tier-3` (the page also writes "minimum purchase quantity (if any) <=
   tier-1"). Errors `CT058` (invalid first-tier quantity), `CT061` (quantities not ascending).
 - Price: regular selling price `> tier-1 > tier-2 > tier-3`. Error `CT062`.
-- Shipping: `EnableFreeShipping` 0 = default, 1 = free; `tier-1 >= tier-2 >= tier-3` (a higher tier cannot have free shipping if a lower one does not). Error `CT063` (invalid shipping method).
+- Shipping: `EnableFreeShipping` 0 = default, 1 = free. Each tier must match or beat the previous tier's for the
+  buyer (the page's examples, re-read 2026-10-20: Default/Default/Free and Default/Free/Free valid,
+  Default/Free/Default invalid), but the live feed of §22.3 (Free then Default) was accepted, so the direction is
+  unsettled. Error `CT063` (invalid shipping method).
 - `CT064` tiers fractured (set them from tier 1 in order); `CT066` item restricted; `CT059` identifier missing.
 - An ongoing promotion price below the tier-1 price disables the volume discount for customers; the discount is
   documented as applying to US shipping destinations only. Rate limit 100 requests/hour.
@@ -3342,8 +3345,8 @@ ascending; `sellingPrice` finite, `> 0`, at most 99999.99 and, after cent roundi
 `freeShipping` optional (default false); at least one of `neweggItemNumber` / `sellerPartNumber` per item (seller
 part number <= 40 characters); no two inputs for the same item; unknown keys rejected. The rules that need the
 item's regular price (`regular > tier-1`, `CT062`) and its minimum purchase quantity (`CT058`) cannot be checked
-offline: they surface as warnings on the preview and as feed-result errors. A tier with free shipping after a lower tier
-without it (breaking `tier-1 >= tier-2 >= tier-3`, `CT063`) produces a warning.
+offline: they surface as warnings on the preview and as feed-result errors. A set that mixes free and default shipping across
+tiers produces a warning (`CT063`; the docs and the live feed disagree on the direction, §22.2).
 
 Writes are enabled only for the Canadian marketplace, the only one verified live; US and B2B throw
 `UnsupportedMarketplaceOperationError` from `previewUpdate` / `update` (reads work on all three).
