@@ -757,6 +757,30 @@ describe("NEWEGG_MCP_MAX_LABEL_AMOUNT cost cap", () => {
     }
   });
 
+  it("fails closed when Newegg quotes fewer packages than the purchase would create", async () => {
+    const twoPackages = {
+      ...labelArgs,
+      packages: [
+        { ...labelArgs.packages[0], items: [{ sellerPartNumber: SKU, quantity: 1 }] },
+        { ...labelArgs.packages[0], items: [{ sellerPartNumber: SKU, quantity: 1 }] },
+      ],
+    };
+    // One 5.00 quote against a 10.00 cap would pass if the missing package were ignored.
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 200, estimateBody("5.00")), postRoute(CREATE, 200, createBody())],
+      capEnv("10"),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, twoPackages);
+      expect(preview.json.eligible).toBe(false);
+      expect(preview.json.previewId).toBeUndefined();
+      expect((preview.json.blockers as string[]).join("\n")).toContain("different number");
+      expect(wasCreateSent(harness)).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("does not quote a plan that something else already blocks", async () => {
     const harness = await harnessFor(
       [postRoute(ESTIMATE, 200, estimateBody("5.00"))],

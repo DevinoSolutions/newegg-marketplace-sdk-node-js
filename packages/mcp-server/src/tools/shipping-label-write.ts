@@ -155,6 +155,14 @@ async function quoteCreateCost(ctx: ToolContext, input: ShippingLabelInput): Pro
         "NEWEGG_MCP_MAX_LABEL_AMOUNT.",
     };
   }
+  // A quote for fewer packages than the purchase would undercount the cost.
+  if (estimate.packages.length !== input.packages.length) {
+    return {
+      problem:
+        "Newegg quoted a different number of packages than the purchase would create, so the " +
+        "label cost cannot be checked against NEWEGG_MCP_MAX_LABEL_AMOUNT.",
+    };
+  }
   let total = 0;
   for (const pkg of estimate.packages) {
     const packageTotal = pkg.rate?.total;
@@ -384,7 +392,8 @@ export const shippingLabelPreviewCreateTool: ToolDefinition<
     "(unknown order, Newegg-fulfilled, not unshipped, seller part number not on the order, " +
     "quantity not the whole line, non-US destination) and WARNINGS (existing packages, uncovered " +
     "lines, signature surcharge). When NEWEGG_MCP_MAX_LABEL_AMOUNT is set it also quotes the label " +
-    "cost (estimatedCost) and blocks a cost above the cap or one that cannot be determined. Only a " +
+    "cost (estimatedCost; one estimate request, which Newegg documents as side-effect free but is " +
+    "unverified live) and blocks a cost above the cap or one that cannot be determined. Only a " +
     `clean plan gets a single-use previewId for newegg_shipping_label_apply_create. ${COST_WARNING} ` +
     "No Newegg mutation happens here.",
   annotations: { readOnlyHint: true, openWorldHint: true },

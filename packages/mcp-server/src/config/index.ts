@@ -40,9 +40,10 @@ export interface McpLimits {
    */
   readonly maxRefundAmount: number;
   /**
-   * Opt-in ceiling on what ONE shipping label may cost, in the marketplace currency; a dearer label
-   * is blocked at preview and again at apply. Unset (the default) means no cap and the label tools
-   * behave as before. When set, a cost that cannot be determined is blocked too (fail closed).
+   * Opt-in ceiling on what ONE shipping label purchase (all its packages together) may cost, in the
+   * marketplace currency; a dearer purchase is blocked at preview and again at apply. Unset (the
+   * default) means no cap and the label tools behave as before. When set, a cost that cannot be
+   * determined is blocked too (fail closed).
    */
   readonly maxLabelAmount?: number;
   /** Uppercased warehouse codes; empty means "all warehouses allowed". */

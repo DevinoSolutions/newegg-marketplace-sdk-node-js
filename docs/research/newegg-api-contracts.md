@@ -3530,8 +3530,8 @@ with it unset nothing changes and no estimate is requested by the previews. When
 requests one estimate, reports it as `estimatedCost` (with `maxLabelAmount`) and is blocked, with no
 `previewId`, when the total is above the cap; the quoted cost (cents) is part of the stored preview's hash;
 `apply_create` asks for a **fresh** estimate (the carrier rate can move) and refuses with `preview_stale`,
-sending nothing, when it is above the cap. It fails closed: a quote that errors, a package Newegg did not
-rate, or a total that is not above 0 blocks the preview and the apply. A **reprint** has no quote (its
+sending nothing, when it is above the cap. It fails closed: a quote that errors, a quote for a different
+number of packages than the purchase, a package Newegg did not rate, or a total that is not above 0 blocks the preview and the apply. A **reprint** has no quote (its
 request carries only the order number) and may be billed, so while the cap is set a reprint preview is
 blocked as an undeterminable cost. The SDK enforces no ceiling; SDK callers are the operator.
 
