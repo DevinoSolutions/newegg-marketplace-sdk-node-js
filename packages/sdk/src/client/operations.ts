@@ -49,6 +49,11 @@ export const Operation = {
   SbnRequestStatus: "sbn.requestStatus",
   SbnRequestResult: "sbn.requestResult",
   SbnWarehouseList: "sbn.warehouses",
+  // Newegg Shipping Label Service (contracts §23): three POSTs, 1,000/hr each. Estimate is a quote
+  // (a READ by the page's wording); Create BUYS a UPS label and ships the order; Reprint is billable.
+  ShippingLabelEstimate: "shippingLabels.estimate",
+  ShippingLabelCreate: "shippingLabels.create",
+  ShippingLabelReprint: "shippingLabels.reprint",
   // Catalog resolution via the Item Lookup Report (reportmgmt, §12). Submit 100/hr;
   // status and result 500/hr each.
   CatalogLookupSubmit: "catalog.lookupSubmit",
