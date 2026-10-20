@@ -338,6 +338,53 @@ describe("label purchase: preview -> apply", () => {
     }
   });
 
+  it.each([
+    "http://labels.newegg.com/label.pdf",
+    "https://newegg.com.evil.example/label.pdf",
+    "https://evilnewegg.com/label.pdf",
+    "https://labels.newegg.com@evil.example/label.pdf",
+    "https://evil.example@labels.newegg.com/label.pdf",
+    "https://labels.newegg.com./label.pdf",
+    "https://.newegg.com/label.pdf",
+    "label.pdf",
+  ])("withholds the lookalike or non-https label link %s", async (link) => {
+    const harness = await harnessFor([
+      postRoute(CREATE, 200, createBody(labelPackage({ LabelUrl: link }))),
+    ]);
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      const applied = await callTool(harness.mcp, TOOLS.applyCreate, {
+        previewId: preview.json.previewId as string,
+      });
+      const pkg = (applied.json.packages as Array<Record<string, unknown>>)[0];
+      expect(pkg?.labelUrl).toBeUndefined();
+      expect(pkg?.urlWithheld).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("returns a plain https newegg.com subdomain link in any case", async () => {
+    const harness = await harnessFor([
+      postRoute(
+        CREATE,
+        200,
+        createBody(labelPackage({ LabelUrl: "HTTPS://Labels.Newegg.com/label.pdf?t=1" })),
+      ),
+    ]);
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      const applied = await callTool(harness.mcp, TOOLS.applyCreate, {
+        previewId: preview.json.previewId as string,
+      });
+      const pkg = (applied.json.packages as Array<Record<string, unknown>>)[0];
+      expect(pkg?.labelUrl).toBe("https://labels.newegg.com/label.pdf?t=1");
+      expect(pkg?.urlWithheld).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("issues no previewId when the SDK finds a blocker (order already shipped)", async () => {
     const harness = await harnessFor(
       [postRoute(CREATE, 200, createBody())],

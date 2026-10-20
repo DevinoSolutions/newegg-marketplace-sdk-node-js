@@ -113,12 +113,23 @@ function hashInput(kind: ShippingLabelKind, marketplace: string, input: unknown)
     .digest("hex");
 }
 
-/** A Newegg download link is returned only when it is an https `*.newegg.com` URL. */
+/**
+ * A Newegg download link is returned only when it is an https `*.newegg.com` URL with a real
+ * subdomain label and no userinfo (`https://evil.example@x.newegg.com/` is a lookalike in a
+ * rendered link, even though the host is Newegg's).
+ */
 function safeLink(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   try {
     const url = new URL(value);
-    if (url.protocol === "https:" && url.hostname.toLowerCase().endsWith(".newegg.com")) {
+    const host = url.hostname.toLowerCase();
+    if (
+      url.protocol === "https:" &&
+      url.username === "" &&
+      url.password === "" &&
+      host.endsWith(".newegg.com") &&
+      !host.startsWith(".")
+    ) {
       return url.toString();
     }
   } catch {
