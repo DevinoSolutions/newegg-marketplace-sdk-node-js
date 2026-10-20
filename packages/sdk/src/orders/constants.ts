@@ -21,6 +21,12 @@ export const ORDER_INFO_VERSION = "315";
 /** Version pin for Get Order Status (the only documented version). */
 export const ORDER_STATUS_VERSION = "304";
 
+/** Path (after the marketplace prefix) of Get Additional Order Information (POST read, §24). */
+export const ORDER_ADDITIONAL_INFO_PATH = "ordermgmt/order/addorderinfo";
+
+/** `OperationType` of the Get Additional Order Information request body. */
+export const ORDER_ADDITIONAL_INFO_OPERATION = "GetAddOrderInfoRequest";
+
 /** Maximum `PageSize` Get Order Information accepts. */
 export const ORDERS_PAGE_SIZE_MAX = 100;
 

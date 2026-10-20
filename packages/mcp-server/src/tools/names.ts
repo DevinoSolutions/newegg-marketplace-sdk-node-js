@@ -25,6 +25,7 @@ export const TOOL_NAMES = {
   ordersList: "newegg_orders_list",
   ordersGet: "newegg_orders_get",
   ordersGetStatus: "newegg_orders_get_status",
+  ordersGetAdditionalInfo: "newegg_orders_get_additional_info",
   rmaList: "newegg_rma_list",
   rmaGet: "newegg_rma_get",
   refundList: "newegg_refund_list",

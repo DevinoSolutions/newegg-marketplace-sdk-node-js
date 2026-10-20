@@ -3206,3 +3206,47 @@ rate-limit header read 100 per window against the page's 500/hr (the same page-v
 Inbound Shipment Status Request and Get Inbound Shipment Request Result (§21.3, §21.4), including that absent
 optional filters are accepted there and the `ErrorList` entry shape; the list filters and dates (§21.2); the
 non-empty shipment row shape; and that `ShippingMethodCode` takes only 1 or 2.
+
+## 24. Order Management — Get Additional Order Information (read)
+
+Source: `https://developer.newegg.com/newegg_marketplace_api/order_management/get_additional_order_information/` (2026-10-20).
+
+```
+POST https://api.newegg.com/marketplace/ordermgmt/order/addorderinfo?sellerid={SellerID}
+```
+
+**A READ despite the POST** (classify by the docs, not the verb): it returns compliance data for orders
+and mutates nothing. Newegg.com only - the page lists this single URL (three times) and no `b2b/` or
+`can/` variant, so the SDK throws `UnsupportedMarketplaceOperationError` on B2B and CAN before sending
+(`platform/order-additional-info.ts`, ADR 0002). Rate limit **10,000/hr** (own `orders.additionalInfo`
+budget). The path must be lowercase except the Seller ID.
+
+Request body (same envelope as §10.1): `{ "OperationType": "GetAddOrderInfoRequest", "RequestBody": {
+"PageIndex", "PageSize" (max 100), "RequestCriteria": { "OrderNumberList": { "OrderNumber": [...] },
+"Status", "Type", "OrderDownloaded", "OrderDateFrom", "OrderDateTo", "CountryCode" } } }`. The field table
+documents a flat `OrderNumber` but both samples use the `OrderNumberList` wrapper; the SDK sends the
+wrapper (same as §10.1). Differences from §10.1: `Status` 0 Unshipped, 1 Partially Shipped, 2 Shipped,
+3 Invoiced, 4 Voided, **5 All** (blank returns Unshipped); `Type` 0 All, 1 SBN, 2 SBS, **3 NISP**
+(§10.1's codes 3/4 are multi-channel/NWS); `VoidSoon` (24/48 h) and `IssueUser` are documented but not
+exposed.
+
+Response: `ResponseBody > { PageInfo { TotalCount, TotalPageCount, PageSize, PageIndex }, AddOrderInfoList >
+AddOrderInfo }` (single object or array). Record: `OrderNumber`, `RecipientIDType` (Brazil CPF / CNPJ /
+Passport; China Identification Card; Saudi National ID / Resident ID), `RecipientIDNumber`,
+`NISPOriginalInfo` (`NISPOriFirstName`, `...LastName`, `...CompanyName`, `...Address1/2`, `...City`,
+`...State`, `...ZipCode`, `...CountryCode`, `...PhoneNumber`), `OriginalInputInfo` (same fields with the
+`Original` prefix), `AddInfo1-3` (reserved, empty), `TaxDutyTypeChina` (DDU / DDP / ATI / Default),
+`ImportTypeChina` (EE / EEP / Default), `IDCopyFront`, `IDCopyBack` (download links), plus envelope `Memo`
+and `ResponseDate`. The SDK accepts the recipient fields nested (as the sample shows) or flat
+(as the field table lists). Documented error example: `CE001` (SellerID null or empty).
+
+This data is personal (ID numbers, ID image links); the live suite asserts only on types, and nothing from a
+real response is stored in the repo.
+
+**ASSUMPTIONs (unverified until a live read returns a non-empty record):** the nested-vs-flat recipient
+layout; that `Status` 5 and `Type` 3 behave as documented; the `VoidSoon` filter (not exposed).
+
+**Live-verified 2026-10-20 (usa, read-only):** `POST {prefix}ordermgmt/order/addorderinfo` with the
+`GetAddOrderInfoRequest` envelope and an `OrderNumberList` criterion is accepted and answers 200 for an
+order discovered via `orders.list`; the SDK parses the envelope without error. The `OrderNumberList` wrapper
+(vs the flat `OrderNumber` in the field table) is therefore settled as accepted. B2B / CAN were not probed.

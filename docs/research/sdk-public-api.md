@@ -690,6 +690,19 @@ export interface OrdersApi {
     orderNumber: string | number,
     options?: RequestOptions,
   ): Promise<OrderStatusSnapshot | undefined>; // SO003 => undefined
+  // Get Additional Order Information (contracts §24; a POST READ; Newegg.com only, b2b/ca throw UnsupportedMarketplaceOperationError)
+  listAdditionalInfo(
+    input?: ListAdditionalOrderInfoInput,
+    options?: RequestOptions,
+  ): Promise<AdditionalOrderInfoPage>;
+  getAdditionalInfo(
+    orderNumber: string | number,
+    options?: RequestOptions,
+  ): Promise<AdditionalOrderInfo>; // throws if none
+  tryGetAdditionalInfo(
+    orderNumber: string | number,
+    options?: RequestOptions,
+  ): Promise<AdditionalOrderInfo | undefined>;
   // writes — NON-idempotent; an ambiguous transport failure throws IndeterminateOrderWriteError (no retry)
   ship(input: ShipOrderInput, options?: RequestOptions): Promise<ShipOrderResult>; // Action 2
   cancel(input: CancelOrderInput, options?: RequestOptions): Promise<CancelOrderResult>; // Action 1
@@ -2104,7 +2117,7 @@ export interface RecordedCall {
 8. **No network / credentials at import time.** Config validated in `createNeweggClient`
    (throws `NeweggConfigurationError`).
 9. **ESM**, Node ≥ 22, relative imports carry `.js` extensions, no `any` in src.
-10. **Orders (reads)**: `orders.list`/`get`/`tryGet`/`getStatus`/`tryGetStatus` never mutate.
+10. **Orders (reads)**: `orders.list`/`get`/`tryGet`/`getStatus`/`tryGetStatus`/`listAdditionalInfo`/`getAdditionalInfo`/`tryGetAdditionalInfo` never mutate (additional info is a POST read, Newegg.com only, 10,000 req/hr, contracts §24).
     `list` and `get` share Get Order Information (version 315, 1000 req/hr); `getStatus` uses Get
     Order Status (version 304, 500 req/hr). Enum wire codes normalize to string unions,
     unrecognized → `"unknown"` (never throws). `get` throws `NeweggApiError` when no order

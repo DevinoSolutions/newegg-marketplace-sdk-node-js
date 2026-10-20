@@ -1,11 +1,16 @@
 /**
  * Read-only order tools: `newegg_orders_list`, `newegg_orders_get`, and
- * `newegg_orders_get_status`. All three consume only the SDK's public `OrdersApi` (which never
+ * `newegg_orders_get_status`, plus `newegg_orders_get_additional_info`. All consume only the SDK's public `OrdersApi` (which never
  * mutates) and map fields explicitly — SDK `raw` payloads are never requested or returned.
  * Because they are reads, they register unconditionally (independent of write-gating).
  */
 import { z } from "zod";
-import type { ListOrdersInput, Order, OrderStatusSnapshot } from "@devino/newegg-marketplace-sdk";
+import type {
+  AdditionalOrderInfo,
+  ListOrdersInput,
+  Order,
+  OrderStatusSnapshot,
+} from "@devino/newegg-marketplace-sdk";
 import {
   errorResult,
   marketplaceSchema,
@@ -371,4 +376,88 @@ export const ordersGetStatusTool: ToolDefinition<
   inputSchema: getStatusInputSchema,
   outputSchema: getStatusOutputSchema,
   handler: getStatusHandler,
+};
+
+// ---------------------------------------------------------------------------
+// newegg_orders_get_additional_info
+// ---------------------------------------------------------------------------
+const getAdditionalInfoInputSchema = z
+  .strictObject({ orderNumber: orderNumberSchema })
+  .describe("The order number to fetch additional (compliance) information for.");
+
+const additionalRecipientSchema = z.object({
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  companyName: z.string().optional(),
+  address1: z.string().optional(),
+  address2: z.string().optional(),
+  city: z.string().optional(),
+  stateCode: z.string().optional(),
+  zipCode: z.string().optional(),
+  countryCode: z.string().optional(),
+  phoneNumber: z.string().optional(),
+});
+
+const additionalInfoSchema = z.object({
+  orderNumber: z.string(),
+  recipientIdType: z.string().optional(),
+  recipientIdNumber: z.string().optional(),
+  nispOriginal: additionalRecipientSchema.optional(),
+  originalInput: additionalRecipientSchema.optional(),
+  taxDutyTypeChina: z.string().optional(),
+  importTypeChina: z.string().optional(),
+  idCopyFront: z.string().optional(),
+  idCopyBack: z.string().optional(),
+  reserved: z.array(z.string()),
+});
+
+const getAdditionalInfoOutputSchema = z.object({
+  found: z.boolean(),
+  additionalInfo: additionalInfoSchema.optional(),
+});
+
+function serializeAdditionalInfo(info: AdditionalOrderInfo): Record<string, unknown> {
+  return {
+    orderNumber: info.orderNumber,
+    recipientIdType: info.recipientIdType,
+    recipientIdNumber: info.recipientIdNumber,
+    nispOriginal: info.nispOriginal,
+    originalInput: info.originalInput,
+    taxDutyTypeChina: info.taxDutyTypeChina,
+    importTypeChina: info.importTypeChina,
+    idCopyFront: info.idCopyFront,
+    idCopyBack: info.idCopyBack,
+    reserved: info.reserved,
+  };
+}
+
+async function getAdditionalInfoHandler(
+  input: z.infer<typeof getAdditionalInfoInputSchema>,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  try {
+    const info = await ctx.client.orders.tryGetAdditionalInfo(input.orderNumber);
+    return info === undefined
+      ? okResult({ found: false })
+      : okResult({ found: true, additionalInfo: serializeAdditionalInfo(info) });
+  } catch (error) {
+    return errorResult(mapErrorToPayload(error, ctx.logger));
+  }
+}
+
+export const ordersGetAdditionalInfoTool: ToolDefinition<
+  typeof getAdditionalInfoInputSchema,
+  typeof getAdditionalInfoOutputSchema
+> = {
+  name: TOOL_NAMES.ordersGetAdditionalInfo,
+  title: "Get Newegg additional order information",
+  description:
+    "Fetch the additional compliance data Newegg holds for one order: recipient ID document " +
+    "type/number, original recipient addresses, China tax/import designations and ID image " +
+    "links (contains personal data). Newegg.com (us) only; other marketplaces return an " +
+    "unsupported-operation error. Returns found=false when none exists. Read-only.",
+  annotations: { readOnlyHint: true, openWorldHint: true },
+  inputSchema: getAdditionalInfoInputSchema,
+  outputSchema: getAdditionalInfoOutputSchema,
+  handler: getAdditionalInfoHandler,
 };

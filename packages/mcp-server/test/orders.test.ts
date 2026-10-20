@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MockRoute } from "@devino/newegg-marketplace-sdk/testing";
-import { callTool, startHarness } from "./helpers.js";
+import { callTool, makeEnv, startHarness } from "./helpers.js";
 
 const ORDER_INFO_BODY = {
   IsSuccess: true,
@@ -174,6 +174,50 @@ describe("newegg_orders_get_status", () => {
       expect(res.isError).toBe(false);
       expect(res.json.found).toBe(false);
       expect(res.json.orderStatus).toBeUndefined();
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe("newegg_orders_get_additional_info", () => {
+  const route = (body: unknown): MockRoute => ({
+    method: "POST",
+    pathPattern: /ordermgmt\/order\/addorderinfo/,
+    reply: () => ({ status: 200, body }),
+  });
+  const body = {
+    ResponseBody: {
+      AddOrderInfoList: { AddOrderInfo: { OrderNumber: 7, RecipientIDType: "Passport" } },
+    },
+  };
+
+  it("returns found=true on us", async () => {
+    const harness = await startHarness({
+      env: makeEnv({ NEWEGG_MARKETPLACE: "us" }),
+      routes: [route(body)],
+    });
+    try {
+      const res = await callTool(harness.mcp, "newegg_orders_get_additional_info", {
+        orderNumber: 7,
+      });
+      expect(res.isError).toBe(false);
+      expect(res.json.found).toBe(true);
+      const info = res.json.additionalInfo as { recipientIdType?: string };
+      expect(info.recipientIdType).toBe("Passport");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("is an error on ca (unsupported marketplace)", async () => {
+    const harness = await startHarness({ routes: [route(body)] });
+    try {
+      const res = await callTool(harness.mcp, "newegg_orders_get_additional_info", {
+        orderNumber: 7,
+      });
+      expect(res.isError).toBe(true);
+      expect(harness.calls).toHaveLength(0);
     } finally {
       await harness.close();
     }
