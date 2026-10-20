@@ -2735,7 +2735,8 @@ export interface ShippingLabelsApi {
    `redirect: "error"`: a 3xx (301/302/307/308 alike) is never followed or retried and surfaces as a
    non-retryable error. Where the request may have reached the server, the write-specific indeterminate
    error applies (ADR 0004); the generic retrying path reports a non-retryable `NeweggApiError` that says
-   the write may have been applied.
+   the write may have been applied. `pricing.update` treats that redirect as an ambiguous failure (read-back,
+   else `unknown`), never as `failed`.
 6. **Rate limiting**: feed submissions locally budgeted at 10/min + 100,000 records/hour per
    `${marketplace}:${sellerId}`; 429/DF012 surface as `NeweggRateLimitError` with reset info.
 7. **Secrets**: `Authorization`/`SecretKey` header values, apiKey, secretKey never appear in
