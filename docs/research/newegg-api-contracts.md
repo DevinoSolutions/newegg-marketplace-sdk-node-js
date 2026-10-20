@@ -3713,7 +3713,7 @@ same way.
 - that an empty result is `"rows": []` (the readers also accept `""` and a single object);
 - what `bizCode` values mean (only `025` with `msg: "success"` appears in the samples);
 - a **200 that carries a `rows` member next to an error-looking `header`** (for example `msg: "seller not
-  enrolled"`, `bizCode: "403"`) is **not** thrown. Decision: no page documents which `bizCode` values mean
+enrolled"`, `bizCode: "403"`) is **not** thrown. Decision: no page documents which `bizCode` values mean
   failure (the success codes already differ per endpoint: `025` and `061`), so the SDK cannot classify the
   header reliably and a wrong guess would turn real data into an error. It returns the page with `rows` as sent
   and surfaces `message` and `bizCode`; the MCP list and report tools expose both next to each other so the
