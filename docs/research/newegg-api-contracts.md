@@ -3223,7 +3223,9 @@ budget). The path must be lowercase except the Seller ID.
 
 Request body (same envelope as §10.1): `{ "OperationType": "GetAddOrderInfoRequest", "RequestBody": {
 "PageIndex", "PageSize" (max 100), "RequestCriteria": { "OrderNumberList": { "OrderNumber": [...] },
-"Status", "Type", "OrderDownloaded", "OrderDateFrom", "OrderDateTo", "CountryCode" } } }`. The field table
+"Status", "Type", "OrderDownloaded", "OrderDateFrom", "OrderDateTo", "CountryCode" } } }`. The page states that a specified order
+number makes Newegg ignore the other criteria (so an omitted `Status` does not hide a shipped order
+when looking one up). The field table
 documents a flat `OrderNumber` but both samples use the `OrderNumberList` wrapper; the SDK sends the
 wrapper (same as §10.1). Differences from §10.1: `Status` 0 Unshipped, 1 Partially Shipped, 2 Shipped,
 3 Invoiced, 4 Voided, **5 All** (blank returns Unshipped); `Type` 0 All, 1 SBN, 2 SBS, **3 NISP**

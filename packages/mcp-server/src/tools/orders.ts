@@ -1,7 +1,8 @@
 /**
  * Read-only order tools: `newegg_orders_list`, `newegg_orders_get`, and
- * `newegg_orders_get_status`, plus `newegg_orders_get_additional_info`. All consume only the SDK's public `OrdersApi` (which never
- * mutates) and map fields explicitly — SDK `raw` payloads are never requested or returned.
+ * `newegg_orders_get_status`, plus `newegg_orders_get_additional_info`. All consume only the SDK's
+ * public `OrdersApi` (which never mutates) and map fields explicitly — SDK `raw` payloads are never
+ * requested or returned.
  * Because they are reads, they register unconditionally (independent of write-gating).
  */
 import { z } from "zod";
