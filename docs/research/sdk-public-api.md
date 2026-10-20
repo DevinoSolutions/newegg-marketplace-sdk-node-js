@@ -2731,7 +2731,20 @@ export interface ShippingLabelsApi {
    `IndeterminateFeedSubmissionError`; retry only on pre-send failures (DNS/connect refused)
    or definitive rejection (4xx).
    **Redirects**: a read (by operation, `isReadOperation` in `client/operations.ts`, not by HTTP verb;
-   unknown operations count as writes) follows redirects as before. Every other request is sent with
+   unknown operations count as writes) is sent with `redirect: "manual"` and follows a 301/302/303/307/308
+   itself, only when the `Location` (relative references resolved against the current URL) has the same
+   origin (scheme, host, port) as the original request URL, never from https to http, and for at most 5
+   hops (`client/redirect.ts`). The follow-up keeps the credential headers, which is safe because no other
+   host sees them (undici strips only `Authorization`, `Cookie` and `Proxy-Authorization` across origins,
+   so `SecretKey` would otherwise leak). Method and body follow the fetch standard: 301/302/307/308 keep
+   them (so order-info, a read via PUT, is re-sent as the same PUT with its body), a 301/302 turns only a
+   POST into a GET, and a 303 becomes a body-less GET. Anything else (another origin, a downgrade, a sixth
+   hop, an unparsable or credential-bearing `Location`) is not followed and throws a non-retryable
+   `NeweggApiError` whose `details.causeCode` is `REDIRECT_REFUSED_CROSS_ORIGIN`,
+   `REDIRECT_REFUSED_DOWNGRADE`, `REDIRECT_REFUSED_TOO_MANY` or `REDIRECT_REFUSED_INVALID_LOCATION`.
+   There is no `*.newegg.com` allowlist: a redirect to another Newegg host is cross-origin and refused. An
+   http base URL is accepted only for loopback (tests), where a same-origin http redirect is followed. A 3xx
+   without a `Location` is not a redirect and is mapped like any other non-2xx answer. Every other request is sent with
    `redirect: "error"`: a 3xx (301/302/307/308 alike) is never followed or retried and surfaces as a
    non-retryable error. Where the request may have reached the server, the write-specific indeterminate
    error applies (ADR 0004); the generic retrying path reports a non-retryable `NeweggApiError` that says

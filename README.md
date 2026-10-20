@@ -538,7 +538,7 @@ constraint in code:
 - **Preview → apply.** Writes require a two-step flow; apply takes only a single-use,
   TTL-bounded `previewId` and cannot alter the previewed plan. Price changes and refunds are
   also capped (`NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT`, `NEWEGG_MCP_MAX_REFUND_AMOUNT`, and the opt-in
-  `NEWEGG_MCP_MAX_LABEL_AMOUNT`). No write follows an HTTP redirect.
+  `NEWEGG_MCP_MAX_LABEL_AMOUNT`). No write follows an HTTP redirect, and a read follows one only to the same origin.
 - **No credentials via MCP.** Callers can never supply credentials, base URLs, hostnames, or
   `Overwrite` values; raw upstream bodies never cross the MCP boundary.
 - **`Overwrite: "Yes"` is impossible** — the feed envelope hard-codes `"No"`, so catalog-wide

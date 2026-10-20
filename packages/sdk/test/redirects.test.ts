@@ -14,7 +14,7 @@ import { ORDER_NUMBER, SKU, orderResponse } from "./service-write-helpers.js";
 
 /**
  * A write must never follow a redirect: a 307/308 would replay the POST/PUT body (and the credential
- * headers) at whatever host the response names. Reads keep following redirects. Which is which is
+ * headers) at whatever host the response names. Reads follow only same-origin redirects (read-redirects.test.ts). Which is which is
  * decided per operation, never by the HTTP verb: the US inventory URL is read-on-PUT / write-on-POST
  * and order-info is a READ via PUT. Nothing here touches Newegg; the end-to-end cases talk to a
  * server on 127.0.0.1.
@@ -161,7 +161,7 @@ describe("redirect mode per request", () => {
   it("follows redirects on a read, even one sent with PUT (order-info)", async () => {
     const { client, modes } = spyClient([orderRoute]);
     await client.orders.get(ORDER_NUMBER);
-    expect(modes).toEqual(["follow"]);
+    expect(modes).toEqual(["manual"]);
   });
 
   it("follows redirects on the US inventory read (PUT) but not on its write (POST)", async () => {
@@ -181,7 +181,7 @@ describe("redirect mode per request", () => {
       quantity: 5,
       warehouseLocation: "USA",
     });
-    expect(modes).toEqual(["follow", "error"]);
+    expect(modes).toEqual(["manual", "error"]);
   });
 
   it("refuses redirects on the label estimate and purchase", async () => {
@@ -201,7 +201,7 @@ describe("redirect mode per request", () => {
     await client.shippingLabels.estimate(input).catch(() => undefined);
     await client.shippingLabels.create(input).catch(() => undefined);
     // [estimate POST, order read, create POST]
-    expect(modes).toEqual(["error", "follow", "error"]);
+    expect(modes).toEqual(["error", "manual", "error"]);
   });
 });
 
