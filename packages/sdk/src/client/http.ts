@@ -9,7 +9,29 @@ import { parseRateLimitHeaders } from "../rate-limit/index.js";
 import { delay, isAbortError } from "../util.js";
 import { computeRetryDelay } from "./retry.js";
 import { isReadOperation } from "./operations.js";
+import {
+  isFollowedRedirect,
+  MAX_READ_REDIRECTS,
+  REDIRECT_REFUSED_CROSS_ORIGIN,
+  REDIRECT_REFUSED_DOWNGRADE,
+  REDIRECT_REFUSED_INVALID_LOCATION,
+  REDIRECT_REFUSED_TOO_MANY,
+  redirectedMethod,
+  resolveRedirectTarget,
+  type RedirectRefusal,
+} from "./redirect.js";
 import { classifyTransport, REDIRECT_REFUSED, TransportError } from "./transport.js";
+
+const REDIRECT_REFUSAL_MESSAGE: Record<RedirectRefusal, string> = {
+  [REDIRECT_REFUSED_CROSS_ORIGIN]:
+    "Newegg answered a read with a redirect to a different origin. It was not followed, so the " +
+    "API credentials were not sent there.",
+  [REDIRECT_REFUSED_DOWNGRADE]:
+    "Newegg answered a read with a redirect from https to http. It was not followed.",
+  [REDIRECT_REFUSED_TOO_MANY]: `Newegg answered a read with more than ${MAX_READ_REDIRECTS} redirects. The chain was not followed any further.`,
+  [REDIRECT_REFUSED_INVALID_LOCATION]:
+    "Newegg answered a read with a redirect whose Location could not be used. It was not followed.",
+};
 
 /** Per-request context threaded through the client. */
 export interface RequestContext {
@@ -107,10 +129,13 @@ export class NeweggHttpClient {
    * responses, a {@link TransportError} for fetch-level failures, or re-throws a caller abort.
    * Does not retry and does not acquire rate-limit budget.
    *
-   * Reads follow redirects. Every other operation is sent with `redirect: "error"`, so a 307/308
-   * can never replay a write body (or the credential headers) at another host; the refusal is an
-   * ambiguous {@link TransportError}, because Newegg had already received the request. Whether an
-   * operation is a read is decided by {@link isReadOperation}, never by the HTTP verb.
+   * Reads handle redirects manually (see `#fetchRead`): only a same-origin
+   * redirect is followed, at most {@link MAX_READ_REDIRECTS} times and never from https to http, so
+   * the credential headers never reach another host. Every other operation is sent with
+   * `redirect: "error"`, so a 307/308 can never replay a write body (or the credential headers) at
+   * another host; the refusal is an ambiguous {@link TransportError}, because Newegg had already
+   * received the request. Whether an operation is a read is decided by {@link isReadOperation},
+   * never by the HTTP verb.
    */
   async executeOnce(spec: RequestSpec, ctx: RequestContext): Promise<HttpResult> {
     const url = this.buildUrl(spec);
@@ -136,20 +161,33 @@ export class NeweggHttpClient {
     const target: string | URL =
       spec.rawQuerySuffix !== undefined ? `${url.toString()}&${spec.rawQuerySuffix}` : url;
 
-    const redirect = isReadOperation(ctx.operation) ? "follow" : "error";
+    const isRead = isReadOperation(ctx.operation);
+    const redirect = isRead ? "manual" : "error";
 
     let response: Response;
     let bodyStr: string;
     try {
-      response = await this.config.fetch(target, {
-        method: spec.method,
-        headers,
-        body: bodyText,
-        signal,
-        redirect,
-      });
-      bodyStr = await response.text();
+      if (isRead) {
+        ({ response, bodyStr } = await this.#fetchRead(
+          target,
+          spec.method,
+          headers,
+          bodyText,
+          signal,
+          ctx,
+        ));
+      } else {
+        response = await this.config.fetch(target, {
+          method: spec.method,
+          headers,
+          body: bodyText,
+          signal,
+          redirect,
+        });
+        bodyStr = await response.text();
+      }
     } catch (err) {
+      if (err instanceof NeweggError) throw err;
       const classified = classifyTransport(err, ctx.signal?.aborted ?? false);
       throw classified;
     }
@@ -206,6 +244,78 @@ export class NeweggHttpClient {
       rateLimit,
       correlationId: ctx.correlationId,
     };
+  }
+
+  /**
+   * Sends a read, following redirects by hand. A redirect is followed only when its `Location`
+   * resolves (relative references included) to the same origin as the original URL, never from
+   * https to http, and within {@link MAX_READ_REDIRECTS} hops; anything else throws a
+   * non-retryable {@link NeweggApiError} carrying a `REDIRECT_REFUSED_*` cause code. The follow-up
+   * keeps the credential headers (same origin, so no other host sees them) and the fetch-standard
+   * method/body rewrite of {@link redirectedMethod}.
+   */
+  async #fetchRead(
+    target: string | URL,
+    method: string,
+    headers: Record<string, string>,
+    bodyText: string | undefined,
+    signal: AbortSignal,
+    ctx: RequestContext,
+  ): Promise<{ response: Response; bodyStr: string }> {
+    const original = new URL(target);
+    let current = original;
+    let currentMethod = method;
+    let currentBody = bodyText;
+    let currentHeaders = headers;
+    for (let hops = 0; ; hops++) {
+      const response = await this.config.fetch(current, {
+        method: currentMethod,
+        headers: currentHeaders,
+        body: currentBody,
+        signal,
+        redirect: "manual",
+      });
+      const location = response.headers.get("location");
+      if (!isFollowedRedirect(response.status, location)) {
+        return { response, bodyStr: await response.text() };
+      }
+      await response.body?.cancel().catch(() => undefined);
+      const next =
+        hops >= MAX_READ_REDIRECTS
+          ? REDIRECT_REFUSED_TOO_MANY
+          : resolveRedirectTarget(original, current, location ?? "");
+      if (typeof next === "string") throw this.#redirectRefused(next, response.status, hops, ctx);
+      const rewritten = redirectedMethod(response.status, currentMethod);
+      currentMethod = rewritten.method;
+      if (rewritten.dropBody) {
+        currentBody = undefined;
+        currentHeaders = Object.fromEntries(
+          Object.entries(currentHeaders).filter(([name]) => name.toLowerCase() !== "content-type"),
+        );
+      }
+      current = next;
+    }
+  }
+
+  #redirectRefused(
+    reason: RedirectRefusal,
+    status: number,
+    hops: number,
+    ctx: RequestContext,
+  ): NeweggApiError {
+    this.config.logger.warn(LogEvent.RequestCompleted, {
+      ...this.#logFields(ctx),
+      status,
+      outcome: "redirect_refused",
+      redirectRefusal: reason,
+      redirectsFollowed: hops,
+    });
+    return new NeweggApiError(REDIRECT_REFUSAL_MESSAGE[reason], {
+      correlationId: ctx.correlationId,
+      httpStatus: status,
+      retryable: false,
+      details: { causeCode: reason, redirectsFollowed: hops },
+    });
   }
 
   /** Normalizes any thrown value to a {@link NeweggError} for direct-operation retries. */
