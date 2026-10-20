@@ -51,6 +51,13 @@ export {
   sbnRequestResultTool,
   sbnWarehousesListTool,
 } from "./sbn.js";
+export {
+  adsCampaignsListTool,
+  adsCampaignGetTool,
+  adsGroupsListTool,
+  adsKeywordsListTool,
+  adsPerformanceReportTool,
+} from "./ads.js";
 export { catalogResolveTool, catalogLookupStatusTool } from "./catalog.js";
 export {
   reportsSettlementSummaryTool,

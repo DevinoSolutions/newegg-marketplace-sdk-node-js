@@ -127,7 +127,7 @@ Underscore names, per MCP naming rules. All reads are annotated `readOnlyHint: t
 | `newegg_orders_get_status`               | `{ orderNumber: string \| integer }`                                                                                                                        | Read-only. Lightweight order status (status code/name, sales channel, fulfillment); `found=false` when absent.                                                                                                                                                                                                                       |
 | `newegg_orders_get_additional_info`      | `{ orderNumber: string \| integer }`                                                                                                                        | Read-only. Additional order info (recipient ID document, original addresses, China tax/import data; contains personal data); Newegg.com only; `found=false` when absent.                                                                                                                                                             |
 
-### Catalog, reference, SBN and listing tools
+### Catalog, reference, SBN, Sponsored Ads and listing tools
 
 Read-only unless marked **W** (**W** tools exist only with `NEWEGG_MCP_ALLOW_WRITES=true`). Use
 `tools/list` for each tool's exact input schema.
@@ -145,6 +145,11 @@ Read-only unless marked **W** (**W** tools exist only with `NEWEGG_MCP_ALLOW_WRI
 | `newegg_sbn_request_status`     | Status of inbound-shipment create/void submissions (SUBMITTED / IN_PROGRESS / FINISHED / CANCELLED).                                |
 | `newegg_sbn_request_result`     | Outcome of one submission: resulting shipment id, errors, and label type/host/file name (download URLs are never returned).         |
 | `newegg_sbn_warehouses_list`    | Newegg's SBN inbound warehouses (bulk/small acceptance, address); optional `warehouseCode`.                                         |
+| `newegg_ads_campaigns_list`     | Sponsored Ads campaigns (Newegg.com only): status, budget, group count; filter by name/number, status, dates.                       |
+| `newegg_ads_campaign_get`       | One Sponsored Ads campaign by number (`found: false` when absent).                                                                  |
+| `newegg_ads_groups_list`        | Ad groups of one Sponsored Ads campaign: default bid, keyword/product counts, item numbers, status.                                 |
+| `newegg_ads_keywords_list`      | Keywords of a Sponsored Ads campaign or ad group: match type, bid, suggested bids, competition.                                     |
+| `newegg_ads_report`             | Sponsored Ads performance report (`level` group/product/keyword; `YYYY-MM-DD` range): spend, sales, ACoS, clicks.                   |
 | `newegg_listing_preview_create` | Offline plan for adding offers on EXISTING Newegg items (never creates a product record). Returns a `previewId` for the apply tool. |
 | `newegg_listing_apply_create`   | **W** Submits exactly the previewed listing feed.                                                                                   |
 
