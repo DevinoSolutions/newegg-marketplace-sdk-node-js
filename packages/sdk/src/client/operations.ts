@@ -81,3 +81,82 @@ export const Operation = {
   // Get Volume Discount (contracts §22.1) - a READ via PUT; 100 requests/hour.
   VolumeDiscountGet: "volumeDiscounts.get",
 } as const;
+
+/** Union of every operation identifier above. */
+type OperationName = (typeof Operation)[keyof typeof Operation];
+
+/**
+ * Whether an operation only reads. The HTTP verb does not decide this (order-info is a read via
+ * PUT; the US inventory URL is read-on-PUT, write-on-POST), so every operation is classified here
+ * by what it does on the wire (contracts doc). Typed as a total record: adding an `Operation`
+ * without classifying it fails the build.
+ *
+ * Report and catalog-lookup submissions are reads: they create a report job and mutate nothing on
+ * the seller account (contracts §12.4, §17). The shipping label estimate is treated as a write
+ * until an owner-authorized probe proves it has no side effect (contracts §23.6).
+ */
+const OPERATION_KIND: Record<OperationName, "read" | "write"> = {
+  [Operation.GetItem]: "read",
+  [Operation.GetMany]: "read",
+  [Operation.UpdateDirect]: "write",
+  [Operation.PriceGet]: "read",
+  [Operation.PriceUpdate]: "write",
+  [Operation.FeedSubmit]: "write",
+  [Operation.FeedStatus]: "read",
+  [Operation.FeedResult]: "read",
+  [Operation.ServiceStatus]: "read",
+  [Operation.OrderList]: "read",
+  [Operation.OrderStatus]: "read",
+  [Operation.OrderAdditionalInfo]: "read",
+  [Operation.OrderShip]: "write",
+  [Operation.OrderCancel]: "write",
+  [Operation.OrderConfirm]: "write",
+  [Operation.OrderRemoveItem]: "write",
+  [Operation.RmaList]: "read",
+  [Operation.RefundList]: "read",
+  [Operation.RefundRequestStatus]: "read",
+  [Operation.RmaSubmit]: "write",
+  [Operation.RmaEdit]: "write",
+  [Operation.RmaReceive]: "write",
+  [Operation.RmaReject]: "write",
+  [Operation.RefundIssue]: "write",
+  [Operation.SellerStatus]: "read",
+  [Operation.IndustryList]: "read",
+  [Operation.SubcategoryStatus]: "read",
+  [Operation.SubcategoryProperties]: "read",
+  [Operation.PropertyValues]: "read",
+  [Operation.SbnShipmentList]: "read",
+  [Operation.SbnRequestStatus]: "read",
+  [Operation.SbnRequestResult]: "read",
+  [Operation.SbnWarehouseList]: "read",
+  [Operation.ShippingLabelEstimate]: "write",
+  [Operation.ShippingLabelCreate]: "write",
+  [Operation.ShippingLabelReprint]: "write",
+  [Operation.AdsCampaigns]: "read",
+  [Operation.AdsGroups]: "read",
+  [Operation.AdsProducts]: "read",
+  [Operation.AdsKeywords]: "read",
+  [Operation.AdsKeywordSuggest]: "read",
+  [Operation.AdsNegativeKeywords]: "read",
+  [Operation.AdsMatchTypes]: "read",
+  [Operation.AdsTargetingCategories]: "read",
+  [Operation.AdsTargetingItems]: "read",
+  [Operation.AdsGroupPerformance]: "read",
+  [Operation.AdsProductPerformance]: "read",
+  [Operation.AdsKeywordPerformance]: "read",
+  [Operation.CatalogLookupSubmit]: "read",
+  [Operation.CatalogLookupStatus]: "read",
+  [Operation.CatalogLookupResult]: "read",
+  [Operation.ReportSubmit]: "read",
+  [Operation.ReportStatus]: "read",
+  [Operation.ReportResult]: "read",
+  [Operation.VolumeDiscountGet]: "read",
+};
+
+/**
+ * True only for an operation classified as a read. Fails closed: an unknown operation string is
+ * treated as a write, so it never follows a redirect.
+ */
+export function isReadOperation(operation: string): boolean {
+  return (OPERATION_KIND as Record<string, "read" | "write" | undefined>)[operation] === "read";
+}

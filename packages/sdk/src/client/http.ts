@@ -8,7 +8,8 @@ import { LogEvent } from "../logging/index.js";
 import { parseRateLimitHeaders } from "../rate-limit/index.js";
 import { delay, isAbortError } from "../util.js";
 import { computeRetryDelay } from "./retry.js";
-import { classifyTransport, TransportError } from "./transport.js";
+import { isReadOperation } from "./operations.js";
+import { classifyTransport, REDIRECT_REFUSED, TransportError } from "./transport.js";
 
 /** Per-request context threaded through the client. */
 export interface RequestContext {
@@ -105,6 +106,11 @@ export class NeweggHttpClient {
    * Executes a single request attempt. Throws a mapped {@link NeweggError} for non-2xx
    * responses, a {@link TransportError} for fetch-level failures, or re-throws a caller abort.
    * Does not retry and does not acquire rate-limit budget.
+   *
+   * Reads follow redirects. Every other operation is sent with `redirect: "error"`, so a 307/308
+   * can never replay a write body (or the credential headers) at another host; the refusal is an
+   * ambiguous {@link TransportError}, because Newegg had already received the request. Whether an
+   * operation is a read is decided by {@link isReadOperation}, never by the HTTP verb.
    */
   async executeOnce(spec: RequestSpec, ctx: RequestContext): Promise<HttpResult> {
     const url = this.buildUrl(spec);
@@ -130,6 +136,8 @@ export class NeweggHttpClient {
     const target: string | URL =
       spec.rawQuerySuffix !== undefined ? `${url.toString()}&${spec.rawQuerySuffix}` : url;
 
+    const redirect = isReadOperation(ctx.operation) ? "follow" : "error";
+
     let response: Response;
     let bodyStr: string;
     try {
@@ -138,11 +146,23 @@ export class NeweggHttpClient {
         headers,
         body: bodyText,
         signal,
+        redirect,
       });
       bodyStr = await response.text();
     } catch (err) {
       const classified = classifyTransport(err, ctx.signal?.aborted ?? false);
       throw classified;
+    }
+
+    // `redirect: "error"` makes fetch reject, but a fetch implementation that hands the redirect
+    // back (a custom fetch, `redirect: "manual"` semantics) must not be mistaken for a result.
+    if (redirect === "error" && response.status >= 300 && response.status < 400) {
+      throw new TransportError(
+        "ambiguous",
+        false,
+        new Error(`Newegg answered a write with an HTTP ${response.status} redirect.`),
+        REDIRECT_REFUSED,
+      );
     }
 
     const rateLimit = parseRateLimitHeaders(response.headers);
@@ -192,6 +212,19 @@ export class NeweggHttpClient {
   #toNeweggError(err: unknown, ctx: RequestContext): NeweggError {
     if (err instanceof NeweggError) return err;
     if (err instanceof TransportError) {
+      if (err.causeCode === REDIRECT_REFUSED) {
+        return new NeweggApiError(
+          "Newegg answered a write request with an HTTP redirect. The redirect was not followed " +
+            "and the request was not retried, but Newegg had already received it, so the write " +
+            "may have been applied: check the current state before sending it again.",
+          {
+            correlationId: ctx.correlationId,
+            retryable: false,
+            details: { causeCode: err.causeCode },
+            cause: err.cause,
+          },
+        );
+      }
       if (err.timeout) {
         return new NeweggTimeoutError("Newegg request timed out.", {
           correlationId: ctx.correlationId,
@@ -239,6 +272,21 @@ export class NeweggHttpClient {
         await delay(delayMs, ctx.signal);
         attempt++;
       }
+    }
+  }
+
+  /**
+   * Executes a request exactly once: local rate-limit acquisition, then a single attempt with NO
+   * automatic retry. For calls whose side effects are not proven absent, where a silent resend could
+   * repeat them. Every failure is mapped to a {@link NeweggError} (a caller abort is re-thrown).
+   */
+  async requestOnce(spec: RequestSpec, ctx: RequestContext): Promise<HttpResult> {
+    await this.acquireRateLimit(ctx);
+    try {
+      return await this.executeOnce(spec, ctx);
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      throw this.#toNeweggError(err, ctx);
     }
   }
 }
