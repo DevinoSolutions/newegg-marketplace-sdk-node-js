@@ -167,7 +167,9 @@ function checkDay(
   if (typeof value === "string") {
     if (isCalendarDay(value)) return value;
   } else if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return formatPacificWallClock(value).slice(0, 10);
+    // A Date outside years 1000-9999 renders a malformed day; the same check refuses it.
+    const day = formatPacificWallClock(value).slice(0, 10);
+    if (isCalendarDay(day)) return day;
   }
   issues.push({ path, message: "must be a YYYY-MM-DD date" });
   return undefined;

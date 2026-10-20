@@ -814,6 +814,41 @@ describe("ads input validation", () => {
     );
   });
 
+  it("sends a Date input as its Pacific calendar day and refuses one that cannot render as a day", async () => {
+    const { client, calls } = makeClient("us", route("/search", ok([])));
+    // 03:00Z on the 1st is still the evening of Aug 31 in Pacific time.
+    await client.ads.listCampaigns({
+      fromDate: new Date("2026-09-01T03:00:00Z"),
+      toDate: new Date("2026-09-30T12:00:00Z"),
+    });
+    expect(calls[0]?.bodyJson).toMatchObject({ fromDate: "2026-08-31", toDate: "2026-09-30" });
+    await expect(client.ads.listCampaigns({ fromDate: new Date(8.64e15) })).rejects.toBeInstanceOf(
+      NeweggValidationError,
+    );
+    await expect(
+      client.ads.listCampaigns({ fromDate: new Date(Number.NaN) }),
+    ).rejects.toBeInstanceOf(NeweggValidationError);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("rejects non-canonical day strings", async () => {
+    const { client, calls } = makeClient("us", route("/search", ok([])));
+    for (const bad of [
+      "1900-02-29",
+      "2100-02-29",
+      " 2026-09-01",
+      "2026-09-01 ",
+      "2026-09-01\n",
+      "2026-9-1",
+    ]) {
+      await expect(client.ads.listCampaigns({ fromDate: bad })).rejects.toBeInstanceOf(
+        NeweggValidationError,
+      );
+    }
+    await client.ads.listCampaigns({ fromDate: "2000-02-29" });
+    expect(calls).toHaveLength(1);
+  });
+
   it("bounds page at 10000 and rejects page 0", async () => {
     const { client, calls } = makeClient("us", route("/search", ok([])));
     await client.ads.listCampaigns({ page: 10_000 });
