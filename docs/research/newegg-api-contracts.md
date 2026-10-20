@@ -3362,6 +3362,176 @@ Writes are enabled only for the Canadian marketplace, the only one verified live
 - The upper bound of 99999.99 on `sellingPrice` and 1,000,000 on `quantity` are SDK sanity limits, not documented.
 - The read's behaviour for a deactivated item or for an item the seller does not own (assumed `CT001`/`CT060`).
 
+## 23. Shipping Label Service — estimate, create and reprint
+
+Extracted 2026-10-20 from the three operation pages and the carrier page under
+`https://developer.newegg.com/newegg_marketplace_api/newegg_shipping_label_service/`:
+`shipping_label_request_for_newegg_orders/`, `shipping_label_estimate_request_for_newegg_orders/`,
+`shipping_label_reprint_request/` and `newegg_partnered_carrier_ups/`. **The official pages answered 404 on
+the access date, so every shape below is taken from Wayback Machine snapshots of those same URLs** (create
+2026-05-14, estimate 2026-05-14, reprint 2026-01-25; the error-code list reads "Last updated: March 15,
+2021"). Nothing here was called live: every operation needs a real order number, and buying or reprinting a
+label costs money, so the live suite never touches it (guarded in `scripts/check-live-readonly.ts` and
+`scripts/live-readonly-ast.ts`). The pages contradict themselves in places (flagged below). All examples use
+fictional identifiers. The wire domain is `shippingservice/shippinglabel/` with the standard prefix (none on
+Newegg.com, `b2b/`, `can/`); the pages list Newegg.com, Newegg Business and Newegg.ca service codes.
+
+### 23.1 Operation inventory and classification
+
+| Function                        | Page (`newegg_shipping_label_service/…`)             | Verb | Path (after prefix)                                   | Rate limit | Class                       | In SDK |
+| ------------------------------- | ---------------------------------------------------- | ---- | ----------------------------------------------------- | ---------- | --------------------------- | ------ |
+| Shipping Label Request          | `shipping_label_request_for_newegg_orders/`          | POST | `shippingservice/shippinglabel/createshippinglabel`   | 1,000/hr   | **WRITE**                   | yes    |
+| Shipping Label Estimate Request | `shipping_label_estimate_request_for_newegg_orders/` | POST | `shippingservice/shippinglabel/estimateshippinglabel` | 1,000/hr   | **READ** (see below)        | yes    |
+| Shipping Label Reprint Request  | `shipping_label_reprint_request/`                    | POST | `shippingservice/shippinglabel/reprintshippinglabel`  | 1,000/hr   | **WRITE** (billing unknown) | yes    |
+| Newegg Partnered Carrier (UPS)  | `newegg_partnered_carrier_ups/`                      | n/a  | n/a (information page: limits, service codes)         | n/a        | n/a                         | n/a    |
+
+Classification follows what each page says it does, not the verb (all three are `POST`):
+
+- **Create** buys a UPS label, bills the seller's Newegg account and ships the order. It is a WRITE and is
+  never called live.
+- **Estimate** is described as "for estimation only": the same request as create, answered with an
+  `EstimatedRate` per package, no tracking number and no label. It is classified a **READ**. **ASSUMPTION:**
+  that it has no side effect and no charge (the page wording is the only evidence; it has never been called).
+  Because it needs an order number and is unverified, it is still blocked in the live suite.
+- **Reprint** re-issues the label of a confirmed order. The page does not say whether a reprint is billed, so
+  it is treated as a **WRITE** that may cost money (**ASSUMPTION**: billing unknown).
+
+### 23.2 Request
+
+All three bodies are wrapped in the envelope the pages' JSON samples show, with every value a string:
+
+```json
+{
+  "NeweggAPIRequest": {
+    "OperationType": "CreateShippingLabel",
+    "SellerID": "A006",
+    "RequestBody": {
+      "Shipment": {
+        "OrderNumber": "900000002",
+        "ShippingCarrierCode": "100",
+        "ShippingServiceCode": "101",
+        "ShipFromFirstName": "Test",
+        "ShipFromLastName": "Sender",
+        "ShipFromPhoneNumber": "5550100",
+        "ShipFromAddress1": "1 Placeholder Way",
+        "ShipFromCityName": "Testville",
+        "ShipFromStateCode": "CA",
+        "ShipFromZipCode": "90001",
+        "ShipFromCountryCode": "USA",
+        "PackageList": {
+          "Package": {
+            "PackageWeight": "3.5",
+            "PackageLength": "12",
+            "PackageHeight": "4",
+            "PackageWidth": "8",
+            "SignatureOptions": "Regular",
+            "ItemList": { "Item": { "SellerPartNumber": "SKU-PLACEHOLDER", "Quantity": "2" } }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+`OperationType` is `CreateShippingLabel`, `EstimateShippingLabel` or `ReprintShippingLabel`; estimate sends the
+same `Shipment` as create, reprint sends `{ "OrderNumber": … }` only. `Package` and `Item` are an object for one
+element and an array for several. `SignatureOptions: "Regular"` is sent only when a signature is required.
+
+- **`ShippingCarrierCode`**: `100` = Newegg Partnered Carrier (UPS), the only documented carrier. The SDK always
+  sends it.
+- **`ShippingServiceCode`** (optional; omitted lets Newegg map the service the customer bought): Newegg.com and
+  Newegg Business `101` UPS Ground, `102` 3 Day Select, `103` 2nd Day Air, `104` Next Day Air Saver,
+  `105` Next Day Air; Newegg.ca `111` Standard, `112` Express, `113` Expedited, `114` Express Saver. The SDK
+  rejects a code of the other marketplace before sending (`platform/shipping-label.ts`, ADR 0002). Error
+  `SL030` is Newegg's answer to an unrecognised code.
+- **`OrderNumber`** is an integer from 1 to 2147483647 (error `SL001` sample text).
+- **Weights and sizes:** `PackageWeight`, `PackageLength`, `PackageWidth`, `PackageHeight` are required for
+  carrier 100 (`SL006`). The error texts give pounds (kg) and inches (cm); **ASSUMPTION:** pounds and inches
+  are what is sent (the SDK input is `weightLb`, `lengthIn`, `widthIn`, `heightIn`).
+- **UPS limits** (carrier page and `SL007`/`SL008`/`SL009`): weight at most 150 lb, longest side at most
+  108 in, and length + 2 x width + 2 x height at most 165 in. The SDK checks them locally. The package count
+  (20) and items per package (100) ceilings are the SDK's own, not Newegg's.
+- **Ship-from:** the field table says `ShpFromZipCode` while both samples (XML and JSON) say `ShipFromZipCode`;
+  the SDK sends `ShipFromZipCode` (**ASSUMPTION**). `ShipFromCountryCode` is `USA` or `CAN`; the SDK defaults
+  it from the marketplace and rejects the other.
+
+### 23.3 Responses
+
+Create and estimate answer under `NeweggAPIResponse { IsSuccess, OperationType, SellerID, ResponseBody { Shipment } }`.
+Create's `Shipment` has `OrderNumber`, `ShipDate` and `PackageList > Package[]` with
+`TrackingNumber`, `ProcessResult` (`Success` or a failure), `ErrorMessage`, `SignatureOptions`, `LabelUrl`,
+`PackingListUrl`, `Rate { ShipWeight, ArriveBy, ShippingAmount, SignatureOptions, Total }` and `ItemList`.
+Estimate's `Shipment` has `EstimatedDate` and, per package, the sent dimensions plus
+`EstimatedRate { EstimatedShipWeight, EstimatedArriveBy, EstimatedShippingAmount, EstimatedSignatureOptions,
+EstimatedTotal }`. A request can succeed for some packages and fail for others, so the SDK reports each
+package (`succeeded`, `errorMessage`) and a `succeededCount` / `failedCount`; only an answer in which **every**
+package failed is thrown (`NeweggApiError`, definitive).
+
+Reprint's page shows the response root as `NeweggAPIRequest` (not `NeweggAPIResponse`), with `OrderStatus` in
+the `Shipment` and no `IsSuccess`; the SDK accepts either root. **ASSUMPTION:** that this root is real and not
+a copy-paste slip.
+
+The packing-list link is `PackageListUrl` in the field table and `PackingListUrl` in both samples; the SDK
+reads either (**ASSUMPTION**). `LabelUrl` and `PackingListUrl` are download links; they are treated as bearer
+links (the SDK exposes them to the caller, the MCP returns them only for `https://*.newegg.com` hosts). Amounts
+are strings; the **currency is not stated** (**ASSUMPTION:** USD on Newegg.com and Business, CAD on Newegg.ca).
+
+### 23.4 Errors (`SL0xx`)
+
+Error bodies are the usual JSON array `[{ "Code": "SL001", "Message": "…" }]` or XML `<Errors><Error>` (§1);
+`errors/parse-upstream.ts` handles both. The list the pages give:
+
+| Code  | Meaning                                                                                                                             |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| SL001 | Items of the order have been shipped or voided (table); the sample message says the order number must be an integer 1 to 2147483647 |
+| SL002 | No data found, or the order does not belong to this seller                                                                          |
+| SL003 | Only unshipped orders can request a label                                                                                           |
+| SL004 | Only shipped-by-seller orders can request a label                                                                                   |
+| SL005 | Each seller part number must be shipped for its entire quantity on the order                                                        |
+| SL006 | Package weight, length, height and width are required for carrier 100                                                               |
+| SL007 | Package weight above the carrier maximum                                                                                            |
+| SL008 | Package length above the carrier maximum                                                                                            |
+| SL009 | Length + 2 x width + 2 x height above the carrier maximum                                                                           |
+| SL010 | Seller part number(s) do not belong to the order                                                                                    |
+| SL015 | Only USA domestic transportation is supported (revise ship-from or ship-to)                                                         |
+| SL027 | The seller has not signed up (Seller Portal > Add-on Services > Newegg Shipping Label Service)                                      |
+| SL030 | Shipping service code not recognised for the carrier                                                                                |
+
+(Codes between these were not shown in the snapshots.) `SL015` contradicts the documented Newegg.ca service
+codes and `CAN` country code; the SDK still allows Newegg.ca and warns in the preview (**ASSUMPTION:** how
+Canadian labels really behave).
+
+### 23.5 SDK and MCP mapping
+
+| SDK                                                            | MCP tool                                                                        | Class                         |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------- |
+| `client.shippingLabels.estimate(input)`                        | `newegg_shipping_label_estimate` (always registered)                            | READ (assumed)                |
+| `client.shippingLabels.previewCreate(input)` / `create(input)` | `newegg_shipping_label_preview_create` / `newegg_shipping_label_apply_create`   | preview read-only / **WRITE** |
+| `client.shippingLabels.previewReprint(n)` / `reprint(n)`       | `newegg_shipping_label_preview_reprint` / `newegg_shipping_label_apply_reprint` | preview read-only / **WRITE** |
+
+The four write tools exist only with `NEWEGG_MCP_ALLOW_WRITES=true`, and apply takes only a `previewId`
+(ADR 0005). Both previews read the order (Get Order Information, a read) and report blockers mirroring
+`SL002`, `SL003`, `SL004`, `SL005`, `SL010` and `SL015` (create), or an order that has not shipped (reprint);
+`create` and `reprint` re-run the same checks and refuse to send on any blocker. Both writes are
+non-idempotent (ADR 0004): only a provably-unsent transport failure is retried; a timeout or reset after
+dispatch, an abort after dispatch, an HTTP 408 or any 5xx, or a 2xx that carries no package (or another
+order's) throws `IndeterminateOrderWriteError` with label-specific guidance (check the order, then use
+reprint to fetch the label instead of buying another). There is no void / refund-a-label operation in the
+documented API and no server-side cost ceiling; the quote comes from the estimate.
+
+### 23.6 ASSUMPTIONs (retire only with an owner-authorized live probe)
+
+1. Estimate has no side effect and no charge (page wording only).
+2. Reprint is billed or not (unknown; treated as billable).
+3. `ShipFromZipCode` (samples) over `ShpFromZipCode` (field table); `PackingListUrl` (samples) over `PackageListUrl` (table).
+4. The reprint response root `NeweggAPIRequest` with no `IsSuccess`.
+5. Whether Newegg.ca labels work given `SL015`, and the CAN service codes 111 to 114.
+6. Units (pounds, inches) and currency (USD / CAD by marketplace).
+7. The `NeweggAPIRequest` + `SellerID` request envelope (other service-management writes in this repo send none); only the page samples show it.
+8. Rate-limit keying per operation and the 1,000/hr figure (never read from a live header).
+9. Every response shape (`ProcessResult` values, `Rate`, `EstimatedRate`) is from the page samples and has never been seen live.
+
 ## 24. Order Management — Get Additional Order Information (read)
 
 Source: `https://developer.newegg.com/newegg_marketplace_api/order_management/get_additional_order_information/` (2026-10-20).
