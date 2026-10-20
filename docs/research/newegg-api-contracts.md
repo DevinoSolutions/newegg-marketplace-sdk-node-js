@@ -3577,3 +3577,180 @@ layout; that `Status` 5 and `Type` 3 behave as documented; the `VoidSoon` filter
 `GetAddOrderInfoRequest` envelope and an `OrderNumberList` criterion is accepted and answers 200 for an
 order discovered via `orders.list`; the SDK parses the envelope without error. The `OrderNumberList` wrapper
 (vs the flat `OrderNumber` in the field table) is therefore settled as accepted. B2B / CAN were not probed.
+
+## 25. Sponsored Ads — reads
+
+Extracted 2026-10-20 from the official Sponsored Ads Management pages, all under
+`https://developer.newegg.com/newegg_marketplace_api/sponsored-ads-management/<slug>/`. The live site returned
+404 to the fetch tool on 2026-10-20, so every page was read from the Wayback Machine snapshot
+**20260207173846** (`https://web.archive.org/web/20260207173846/<page URL>`); the pages read "Last updated" June 29, 2022
+(22 pages) or October 3, 2022 (5 pages). The wire domain is `sponsoredmgmt/campaign/`. **Every page lists the Newegg.com URL only**
+(`https://api.newegg.com/marketplace/sponsoredmgmt/campaign/...?sellerid={sellerid}`); Newegg Business and
+Canada are not listed, so the SDK fails on `b2b` and `ca` with `UnsupportedMarketplaceOperationError` before
+sending (`platform/ads.ts`, ADR 0002). **Nothing here was called live**: the credentials available to this
+repo are for Canada, which the pages do not cover, so every shape below is the pages' samples
+(**ASSUMPTION** until a US call confirms it). Every example uses fictional identifiers.
+
+This family differs from the rest of the API:
+
+- Requests are camelCase JSON. Responses are `{ "header": [ { "msg": "...", "bizCode": "..." } ],
+"rows": [...], "totalRows": N }`; there is **no** `NeweggAPIResponse` envelope, no `OperationType`
+  and no `RequestBody` wrapper. The seller goes in the query (`?sellerid=`) and again in the body
+  (`sellerId`; the Auto Targeting Match Type page spells it `sellerID`).
+- **Every operation is a `POST`**, reads included. The verb says nothing about safety (same trap as
+  order info, §10); classification below follows what each page says it does.
+- Rate limit: the pages state **1,000 requests/hour** (not per operation as far as the pages say).
+  The SDK keys its limiter per operation and does not enforce this number.
+- Identifiers are numbers in the list samples and strings in the performance samples; the readers accept
+  either. Dates in criteria are `YYYY-MM-DD`; dates in rows are Java-style Pacific text
+  (`Wed May 04 03:57:04 PDT 2022`) or `YYYY-MM-DD HH:mm:ss`, which the SDK returns as sent.
+
+### 25.1 Operation inventory and classification
+
+Slugs are relative to `sponsored-ads-management/`; paths are after `https://api.newegg.com/marketplace/`.
+
+| Function                         | Slug                                         | Path (`sponsoredmgmt/campaign/…`)       | Class     | In SDK                         |
+| -------------------------------- | -------------------------------------------- | --------------------------------------- | --------- | ------------------------------ |
+| Campaign List                    | `campaign-list/`                             | `search`                                | **READ**  | yes `listCampaigns`            |
+| Campaign Performance Report      | `campaign-performance-report/`               | `search` (same URL and fields as above) | **READ**  | yes, via `listCampaigns`       |
+| Group List                       | `group-list/`                                | `group/search`                          | **READ**  | yes `listGroups`               |
+| Product List                     | `product-list/`                              | `product/search`                        | **READ**  | yes `listProducts`             |
+| Keywords List                    | `keywords-list/`                             | `keyword/search`                        | **READ**  | yes `listKeywords`             |
+| Keywords Suggest                 | `keywords-suggest/`                          | `keyword/getsuggest`                    | **READ**  | yes `suggestKeywords`          |
+| Negative Keyword List            | `negative-keyword-list/`                     | `negativekeyword/search`                | **READ**  | yes `listNegativeKeywords`     |
+| Auto Targeting Match Type List   | `auto-targeting-match-type-list/`            | `autotargeting/matchtypesearch`         | **READ**  | yes `listMatchTypes`           |
+| Product Targeting Categories     | `product-targeting-categories/`              | `producttargeting/categoriessearch`     | **READ**  | yes `suggestCategoryTargeting` |
+| Product Targeting Individual     | `product-targeting-individual/`              | `producttargeting/individualsearch`     | **READ**  | yes `suggestItemTargeting`     |
+| Group Performance Report         | `group-performance-report/`                  | `group/performance`                     | **READ**  | yes `getGroupPerformance`      |
+| Product Performance Report       | `product-performance-report/`                | `product/performance`                   | **READ**  | yes `getProductPerformance`    |
+| Keywords Performance Report      | `keywords-performance-report/`               | `keyword/performance`                   | **READ**  | yes `getKeywordPerformance`    |
+| Create a New Campaign            | `create-a-new-campaign/`                     | `create`                                | **WRITE** | **no**                         |
+| Update Campaign Info             | `update-campaign-info/`                      | `update`                                | **WRITE** | **no**                         |
+| Change Campaign Status           | `change-campaign-status/`                    | `changestatus`                          | **WRITE** | **no**                         |
+| Add Group to Campaign            | `add-group-to-campaign/`                     | `group/add`                             | **WRITE** | **no**                         |
+| Update Group Info                | `update-group-info/`                         | `group/update`                          | **WRITE** | **no**                         |
+| Change Group Status              | `change-group-status/`                       | `group/changestatus`                    | **WRITE** | **no**                         |
+| Add Product to Group             | `add-product-to-group/`                      | `product/add`                           | **WRITE** | **no**                         |
+| Change Product Status            | `change-product-status/`                     | `product/changestatus`                  | **WRITE** | **no**                         |
+| Add Keyword to Group             | `add-keyword-to-group/`                      | `keyword/add`                           | **WRITE** | **no**                         |
+| Update Keyword Info              | `update-keyword-info/`                       | `keyword/update`                        | **WRITE** | **no**                         |
+| Change Keyword Status            | `change-keyword-status/`                     | `keyword/changestatus`                  | **WRITE** | **no**                         |
+| Add Negative Keyword             | `add-negative-keyword/`                      | `negativekeyword/add`                   | **WRITE** | **no**                         |
+| Add Product Targeting            | `add-product-targeting/`                     | `producttargeting/add`                  | **WRITE** | **no**                         |
+| Update Auto Targeting Match Type | `update-auto-targeting-match-type-bid-info/` | `autotargeting/matchtypeupdate`         | **WRITE** | **no**                         |
+| Change Auto Targeting Match Type | `change-auto-targeting-match-type-status/`   | `autotargeting/matchtypechangestatus`   | **WRITE** | **no**                         |
+
+28 operations: 13 reads, 15 writes. The 15 writes create or change a campaign, a bid, a budget or a status
+and therefore spend money; they are deliberately **not implemented** and are classified in the live
+read-only guard (`scripts/check-live-readonly.ts` by URL and by method shape, `scripts/live-readonly-ast.ts`
+by reserved method name) so none can land in a live test. **Keywords Suggest, Product Targeting Categories
+and Product Targeting Individual** are classified READ: their pages describe recommendations (suggested
+keywords, bid ranges) and nothing in them creates or stores anything. **ASSUMPTION:** they are side-effect
+free, taken from the page text alone.
+
+**Campaign Performance Report** documents the same URL, request fields and response fields as Campaign List
+(its page lists no metric columns), so `listCampaigns` covers it and there is no separate method. If a live
+call ever shows metrics on the campaign rows they will show up under `raw` (`includeRaw`).
+
+### 25.2 Common request and response shape
+
+Request: JSON `POST` with `?sellerid=`. Optional criteria are sent as explicit `null` (that is what the samples
+do; omitting them is **ASSUMPTION**-ally equivalent). Paging, where present:
+
+```json
+"pageInfo": { "pageIndex": 1, "pageSize": 100, "sortField": null, "sortType": null }
+```
+
+`sortType` is `"Asc"` or `"Desc"`; `sortField` is a column name (the pages' default is `InDate`). Page-size
+ceilings: the campaign, group, product and group-performance pages state **100**; the keyword,
+negative-keyword and product/keyword-performance pages state `9999999`. The SDK applies those ceilings and
+defaults to 100.
+
+Response:
+
+```json
+{
+  "header": [{ "msg": "success", "bizCode": "025" }],
+  "rows": [{ "...": "..." }],
+  "totalRows": 1
+}
+```
+
+`totalRows` may arrive as a number or a string. **ASSUMPTIONs (unprobed):**
+
+- the **failure** shape. No page documents one. The SDK treats a response that has no `rows` member (an
+  error `header`, or a bare `[ { "Code": "...", "Message": "..." } ]` list as the other families use) as a
+  `NeweggApiError` carrying `bizCode` as `neweggErrorCode`, so a failure can never read as an empty result;
+- that an empty result is `"rows": []` (the readers also accept `""` and a single object);
+- what `bizCode` values mean (only `025` with `msg: "success"` appears in the samples).
+
+### 25.3 List reads
+
+Common row fields (names as sent): `campaignNumber`, `campaignName`, `groupNumber`, `groupName`,
+`countryCode`, `activeStatus` (`Active` / `Inactive`), `status` (Pending, Delivering, Processing, Out of
+budget, Inactive, Ended), `inDate`, `declineReason`, `costModel` (0 CPM, 1 CPC).
+
+| SDK method             | Request body (besides `sellerId`)                                                                                                                                        | Notable row fields                                                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `listCampaigns`        | `countryCode`, `searchKeywordType` (`CAMPAIGN_NAME` / `CAMPAIGN_NUM`), `keyword`, `type`, `sponsorType`, `displayType`, `activeStatus`, `fromDate`, `toDate`, `pageInfo` | `type` (0 manual, 1 auto, 2/3 headlines, 4/5 video, 6 display), `startDate`, `endDate`, `budget`, `dailyBudget`, `groupCount`, `displayType`, `LastEditDate`                   |
+| `listGroups`           | `countryCode`, `campaignNumber`, `searchKeywordType` (`GROUP_NAME` / `GROUP_NUM`), `keyword`, `activeStatus`, `fromDate`, `toDate`, `pageInfo`                           | `defaultBid`, `offSiteBid`, `type`, `suggBid`, `suggBidLowest`, `suggBidMost`, `keywordSize`, `productSize`, `productList` (item numbers), `landingPageType`, `landingPageUrl` |
+| `listProducts`         | `countryCode`, `campaignNumber`, `groupNumber`, `searchKeywordType`, `keyword`, `activeStatus`, `countries`, `pageInfo`                                                  | `itemNumber`, `itemTitle`, `sellingPrice`, `sellerPartNumber`, `itemStatus`                                                                                                    |
+| `listKeywords`         | `campaignNumber`, `groupNumber` (**ASSUMPTION:** optional), `searchKeywordType` (`KEYWORD`), `keyword`, `activeStatus`, `pageInfo`                                       | `keyword`, `matchType` (0 exact, 1 broad, 6 phrase), `normalizedKeyword`, `keywordUrl`, `searchVolume`, `competition` (Low / Medium / High), `bid`, `suggBid*`                 |
+| `listNegativeKeywords` | `campaignNumber`, `groupNumber`, `searchKeywordType` (`NEGATIVE_NAME` / `NEGATIVE_NUM`), `keyword`, `status` (1 active / 0 deactivated), `pageInfo`                      | `transactionNumber`, `keyword`, `formatKeyword`, `keywordType` (0 exact, 6 phrase), `status`                                                                                   |
+| `listMatchTypes`       | `sellerID` (sic), `campaignNumber`, `groupNumber`; no paging                                                                                                             | `matchType` (2 close, 3 loose, 4 substitutes, 5 complements), `matchTypeName`, `bid`, `suggBid*`, `activeStatus`, `status`                                                     |
+
+The product list defaults `countryCode` to `USA` and sends it also as `countries: ["USA"]`, as the sample does.
+The keyword list sends `searchKeywordType: "KEYWORD"` only when a keyword filter is given (**ASSUMPTION**).
+The campaign/group "fromDate/toDate" are marked required in the field tables but are `null` in the samples; the
+SDK sends them as optional criteria (**ASSUMPTION**: null means "no date filter").
+
+### 25.4 Suggestion reads
+
+- `suggestKeywords` -> `keyword/getsuggest`: `{ sellerId, itemList: [item numbers], keywordList: [seed keywords],
+sponsorType (default 0), type (0 manual, 1 auto), costModel (0 CPM / 1 CPC / null) }`. The rows are
+  `{ keyword, normalizedKeyword, itemNumbers[], keywordUrl, matchType, searchVolume, competition, bid,
+suggBid* }`; the page also returns a campaign-level suggested bid and the available match types, surfaced as
+  `suggestedBid` and `matchTypes` on the SDK result (**ASSUMPTION** for those two members: only the sample
+  shows them).
+- `suggestCategoryTargeting` -> `producttargeting/categoriessearch`: `{ type (0 recommend, 1 search),
+productType (1 product targeting, 2 display on-site, 3 display off-site), categoryList: [category numbers],
+countryCode }`. Rows: `relatedSubCode` (the category number), `priceSuggestBid`, `priceLowerBound`, `priceHigherBound`,
+  `lastEditDate`; success `bizCode` is `061`. No `sellerId` in the body.
+- `suggestItemTargeting` -> `producttargeting/individualsearch`: same, with `itemNumberList`. Rows: `itemNumber`,
+  `relatedPrimaryItem`, `priceSuggestBid`, `priceLowerBound`, `priceHigherBound`. No `sellerId` in the body.
+
+### 25.5 Performance reports (synchronous)
+
+The three reports are plain synchronous `POST`s, not report jobs (contrast §17): there is nothing to poll. Each
+body carries a fixed `extUrl` discriminator and **required** `fromDate` / `toDate` (`YYYY-MM-DD`).
+
+| SDK method              | Path                  | `extUrl`                      | Required ids                    |
+| ----------------------- | --------------------- | ----------------------------- | ------------------------------- |
+| `getGroupPerformance`   | `group/performance`   | `group/searchGroupByCampaign` | none (campaign number optional) |
+| `getProductPerformance` | `product/performance` | `product/searchItems`         | `campaignNumber`, `groupNumber` |
+| `getKeywordPerformance` | `keyword/performance` | `keyword/searchKeywordList`   | `campaignNumber`, `groupNumber` |
+
+The performance samples send `campaignNumber` / `groupNumber` as strings (the SDK mirrors that). Rows are the
+list rows of 25.3 plus metrics: `spend`, `sales`, `acos`, `impressions`, `clicks`, `ctr`, `orders`, `cr`
+(conversion rate), `cpc`. **ASSUMPTIONs:** the metric spelling (`acos`; the readers also accept `ACoS`),
+that ids may be numbers instead of strings, and that metric values arrive as numbers or numeric strings.
+
+### 25.6 SDK and MCP surface
+
+SDK: `client.ads` (`AdsApi`, 12 methods: `listCampaigns`, `listGroups`, `listProducts`, `listKeywords`,
+`listNegativeKeywords`, `listMatchTypes`, `suggestKeywords`, `suggestCategoryTargeting`,
+`suggestItemTargeting`, `getGroupPerformance`, `getProductPerformance`, `getKeywordPerformance`). Every method
+returns `AdsPage<T>` (`rows`, `totalRows`, `page`, `pageSize`, `message`, `bizCode`, `correlationId`,
+`rateLimit`, optional sanitized `raw`). Paging is explicit (`page` / `pageSize`); there is no auto-paging.
+
+MCP (read-only, always registered, never write-gated): `newegg_ads_campaigns_list`,
+`newegg_ads_campaign_get`, `newegg_ads_groups_list`, `newegg_ads_keywords_list` and `newegg_ads_report`
+(`level`: `group` / `product` / `keyword`). The remaining SDK reads are SDK-only for now.
+
+### 25.7 Live verification
+
+Not performed against Newegg.com (no US credentials). On the Canada credentials the live suite
+(`test/live/ads-read.live.test.ts`) asserts that the SDK rejects every ads read with
+`UnsupportedMarketplaceOperationError` before sending a request; the Newegg.com branch of that file lists
+campaigns, then one campaign's groups and a 30-day group performance report (three reads, shapes only) and
+skips itself on `b2b` / `ca`.

@@ -2,6 +2,7 @@ import type { NeweggClient, NeweggClientConfig } from "../types.js";
 import { getAdapter } from "../platform/index.js";
 import { rateLimitKey } from "../rate-limit/index.js";
 import { FEED_RECORDS_PER_HOUR, FEED_SUBMISSIONS_PER_MINUTE } from "../feeds/constants.js";
+import { AdsApiImpl } from "../ads/api.js";
 import { CatalogApiImpl } from "../catalog/api.js";
 import { FeedsApiImpl } from "../feeds/api.js";
 import { InventoryApiImpl } from "../inventory/api.js";
@@ -50,6 +51,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
   const reference = new ReferenceApiImpl(http);
   const sbn = new SbnApiImpl(http);
   const shippingLabels = new ShippingLabelsApiImpl(http, orders);
+  const ads = new AdsApiImpl(http);
   const catalog = new CatalogApiImpl(http);
   const reports = new ReportsApiImpl(http);
   const listings = new ListingsApiImpl(http);
@@ -76,6 +78,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
     reference,
     sbn,
     shippingLabels,
+    ads,
     catalog,
     reports,
     listings,

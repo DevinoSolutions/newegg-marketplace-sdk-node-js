@@ -27,12 +27,17 @@ async function listTools(env?: Record<string, string | undefined>): Promise<List
 }
 
 describe("tools/list", () => {
-  it("exposes exactly the 37 read tools when writes are disabled", async () => {
+  it("exposes exactly the 42 read tools when writes are disabled", async () => {
     const tools = await listTools(makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "false" }));
     const names = tools.map((tool) => tool.name).sort();
     expect(names).toEqual(
       [
         "newegg_catalog_lookup_status",
+        "newegg_ads_campaign_get",
+        "newegg_ads_campaigns_list",
+        "newegg_ads_groups_list",
+        "newegg_ads_keywords_list",
+        "newegg_ads_report",
         "newegg_catalog_resolve",
         "newegg_feed_result",
         "newegg_feed_status",
@@ -81,10 +86,10 @@ describe("tools/list", () => {
     ).toEqual([]);
   });
 
-  it("adds the write tools when writes are enabled (56 tools)", async () => {
+  it("adds the write tools when writes are enabled (61 tools)", async () => {
     const tools = await listTools(makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "true" }));
     const names = tools.map((tool) => tool.name);
-    expect(names).toHaveLength(56);
+    expect(names).toHaveLength(61);
     expect(names).toContain("newegg_inventory_apply_update");
     expect(names).toContain("newegg_listing_apply_create");
     expect(names).toContain("newegg_volume_discount_apply_update");

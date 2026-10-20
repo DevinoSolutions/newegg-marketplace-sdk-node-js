@@ -136,6 +136,27 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
     re: /\b(Create|Estimate|Reprint)ShippingLabel(Request|Response)?\b/,
     why: "raw Shipping Label Service OperationType (write)",
   },
+  // Sponsored Ads writes (contracts §25). Every Sponsored Ads operation is a POST, so the verb says
+  // nothing: the READS (campaign/group/product/keyword/negativekeyword list, match-type list, keyword
+  // and targeting suggestions, group/product/keyword performance) are deliberately NOT matched, while
+  // the 15 operations that create or change a campaign (spend money) are listed by URL, by SDK method
+  // name and by the wire marker that selects the write.
+  {
+    re: /sponsoredmgmt\/campaign\/(create|update|changestatus)\b/i,
+    why: "Sponsored Ads campaign create/update/change-status endpoint (write)",
+  },
+  {
+    re: /sponsoredmgmt\/campaign\/(group|product|keyword)\/(add|update|changestatus)\b/i,
+    why: "Sponsored Ads group/product/keyword add/update/change-status endpoint (write)",
+  },
+  {
+    re: /sponsoredmgmt\/campaign\/(negativekeyword\/add|producttargeting\/add|autotargeting\/matchtype(update|changestatus))\b/i,
+    why: "Sponsored Ads negative keyword / product targeting / match type write endpoint (write)",
+  },
+  {
+    re: /\bads\s*\??\.\s*(preview)?(create|add|update|change|set|pause|resume|delete|remove|submit|apply)\w*\s*\(/i,
+    why: "ads write method (create/add/update/change-status a campaign, group, product or keyword)",
+  },
   // Listing creation (Existing Item Creation feed, contracts §13) — WRITE surface.
   { re: /listings\s*\.\s*create\s*\(/, why: "listings.create (write)" },
   { re: /BatchItemCreation/, why: "item-creation feed MessageType (write)" },

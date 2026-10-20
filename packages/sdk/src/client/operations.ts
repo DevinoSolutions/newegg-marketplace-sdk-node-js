@@ -54,6 +54,20 @@ export const Operation = {
   ShippingLabelEstimate: "shippingLabels.estimate",
   ShippingLabelCreate: "shippingLabels.create",
   ShippingLabelReprint: "shippingLabels.reprint",
+  // Sponsored Ads READS (contracts §25), Newegg.com only; every endpoint is a POST search/report
+  // limited to 1,000 requests per hour. None mutate.
+  AdsCampaigns: "ads.campaigns",
+  AdsGroups: "ads.groups",
+  AdsProducts: "ads.products",
+  AdsKeywords: "ads.keywords",
+  AdsKeywordSuggest: "ads.keywordSuggest",
+  AdsNegativeKeywords: "ads.negativeKeywords",
+  AdsMatchTypes: "ads.matchTypes",
+  AdsTargetingCategories: "ads.targetingCategories",
+  AdsTargetingItems: "ads.targetingItems",
+  AdsGroupPerformance: "ads.groupPerformance",
+  AdsProductPerformance: "ads.productPerformance",
+  AdsKeywordPerformance: "ads.keywordPerformance",
   // Catalog resolution via the Item Lookup Report (reportmgmt, §12). Submit 100/hr;
   // status and result 500/hr each.
   CatalogLookupSubmit: "catalog.lookupSubmit",

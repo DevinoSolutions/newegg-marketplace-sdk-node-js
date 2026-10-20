@@ -75,6 +75,11 @@ import {
   shippingLabelApplyCreateTool,
   shippingLabelPreviewReprintTool,
   shippingLabelApplyReprintTool,
+  adsCampaignsListTool,
+  adsCampaignGetTool,
+  adsGroupsListTool,
+  adsKeywordsListTool,
+  adsPerformanceReportTool,
   type Logger,
   type ToolContext,
   type ToolDefinition,
@@ -176,6 +181,15 @@ export function enabledToolNames(config: McpServerConfig): string[] {
   );
   // The Shipping Label quote (contracts §23) is documented as estimation only: always available.
   names.push(TOOL_NAMES.shippingLabelEstimate);
+  // Sponsored Ads reads (contracts §25) are always available (never write-gated): every one is a
+  // READ even though Newegg uses POST; no ads write is exposed.
+  names.push(
+    TOOL_NAMES.adsCampaignsList,
+    TOOL_NAMES.adsCampaignGet,
+    TOOL_NAMES.adsGroupsList,
+    TOOL_NAMES.adsKeywordsList,
+    TOOL_NAMES.adsPerformanceReport,
+  );
   // Catalog resolution is read-only (report submission mutates nothing; contracts §12.4).
   names.push(TOOL_NAMES.catalogResolve, TOOL_NAMES.catalogLookupStatus);
   // Reports (settlement / daily inventory / daily price) are read-only report jobs (contracts §17).
@@ -372,6 +386,11 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   registerToolDefinition(server, sbnRequestResultTool, ctx);
   registerToolDefinition(server, sbnWarehousesListTool, ctx);
   registerToolDefinition(server, shippingLabelEstimateTool, ctx);
+  registerToolDefinition(server, adsCampaignsListTool, ctx);
+  registerToolDefinition(server, adsCampaignGetTool, ctx);
+  registerToolDefinition(server, adsGroupsListTool, ctx);
+  registerToolDefinition(server, adsKeywordsListTool, ctx);
+  registerToolDefinition(server, adsPerformanceReportTool, ctx);
   registerToolDefinition(server, catalogResolveTool, ctx);
   registerToolDefinition(server, catalogLookupStatusTool, ctx);
   registerToolDefinition(server, reportsSettlementSummaryTool, ctx);
