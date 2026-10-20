@@ -257,10 +257,12 @@ if (plan.blockers.length === 0) await client.shippingLabels.create(plan.normaliz
 the seller's Newegg account and ships the order; `reprint` re-issues a label of a shipped order and is
 treated as billable. Both are non-idempotent POSTs with a read-only `preview*` twin, refuse to send on any
 blocker, and on an ambiguous failure throw `IndeterminateOrderWriteError` without resending (check the order
-and use `reprint`, never create a second label). `estimate` is a quote ("for estimation only"). The seller must
+and use `reprint`, never create a second label). `estimate` is a quote ("for estimation only"); because that is only the docs' word, it is sent once and never retried. The seller must
 have signed up for the service in the Seller Portal (error `SL027`). The MCP exposes
-`newegg_shipping_label_estimate` always and the four preview / apply tools only with
-`NEWEGG_MCP_ALLOW_WRITES=true`. None of it has been called against a real account; shapes follow archived
+`newegg_shipping_label_estimate` and the four preview / apply tools only with
+`NEWEGG_MCP_ALLOW_WRITES=true`. Opt in to a spend ceiling with `NEWEGG_MCP_MAX_LABEL_AMOUNT` (unset =
+no cap): the create preview then carries the quote and is blocked above the cap, apply re-quotes, and a
+cost that cannot be determined (including any reprint) is blocked. None of it has been called against a real account; shapes follow archived
 documentation pages.
 
 ## Seller status and category reference (read-only)
@@ -351,7 +353,7 @@ not by verb).
 | `client.reports`             | `settlementSummary`, `settlementTransactions`, `dailyInventory`, `dailyPrice`, `itemBasicInfo`, `orderList`, `rmaList`, `status(id)`                    | — (submitting a report only creates a job)            |
 | `client.reference`           | `getSellerStatus`, `listIndustries`, `listSubcategories`, `listSubcategoryProperties`, `listPropertyValues` (needs `subcategoryId`)                     | —                                                     |
 | `client.sbn`                 | `listShipments`, `getRequestStatus`, `getRequestResult`, `listWarehouses` (Shipped-by-Newegg inbound shipments; `us`/`b2b` only; create/void not built) | —                                                     |
-| `client.shippingLabels`      | `estimate` (UPS quote), `previewCreate`, `previewReprint`                                                                                               | `create` (BUYS a UPS label), `reprint`                |
+| `client.shippingLabels`      | `estimate` (UPS quote, one attempt, no retry), `previewCreate`, `previewReprint`                                                                        | `create` (BUYS a UPS label), `reprint`                |
 | `client.ads`                 | `list*`, `suggest*`, `get*Performance` (12 Sponsored Ads reads; every call is a POST; `us` only; writes not built)                                      | —                                                     |
 | `client.rma`                 | `list`, `get`, `tryGet`, `previewSubmit`, `previewEdit`, `previewProcess`, `previewReject`                                                              | `submit`, `edit`, `process`, `reject`                 |
 | `client.refunds`             | `list`, `get`, `tryGet`, `listRequests`, `getRequestStatus`, `previewIssue`                                                                             | `issue` (courtesy refund; commission is not refunded) |
@@ -375,22 +377,22 @@ Read tools are always registered. Write tools (marked **W**) are registered only
 `…_preview_…` twin (ADR 0005). Full inputs and notes:
 [`packages/mcp-server/README.md`](packages/mcp-server/README.md).
 
-| Area      | Read tools (always)                                                                                                                      | Write tools (gated)                                                                                                      |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Inventory | `newegg_inventory_get`, `newegg_inventory_preview_update`                                                                                | **W** `newegg_inventory_apply_update`                                                                                    |
-| Pricing   | `newegg_pricing_get`                                                                                                                     | **W** `newegg_pricing_preview_update`, `newegg_pricing_apply_update`                                                     |
-| Listings  | `newegg_listing_preview_create`                                                                                                          | **W** `newegg_listing_apply_create`                                                                                      |
-| Discounts | `newegg_volume_discount_get`, `newegg_volume_discount_preview_update`                                                                    | **W** `newegg_volume_discount_apply_update`                                                                              |
-| RMA       | `newegg_rma_list`, `newegg_rma_get`                                                                                                      | **W** `newegg_rma_preview_{submit,edit,process,reject}`, `newegg_rma_apply_{submit,edit,process,reject}`                 |
-| Refunds   | `newegg_refund_list`, `newegg_refund_status`                                                                                             | **W** `newegg_refund_preview_issue`, `newegg_refund_apply_issue` (capped by `NEWEGG_MCP_MAX_REFUND_AMOUNT`, default 500) |
-| Labels    | `newegg_shipping_label_estimate`                                                                                                         | **W** `newegg_shipping_label_{preview,apply}_{create,reprint}` (create BUYS a UPS label; spends money)                   |
-| Orders    | `newegg_orders_list`, `newegg_orders_get`, `newegg_orders_get_status`, `newegg_orders_get_additional_info`                               | none (order ship/cancel is SDK-only)                                                                                     |
-| Reports   | `newegg_reports_{settlement_summary,settlement_transactions,daily_inventory,daily_price,item_basic_info,order_list,rma_list,status}`     | —                                                                                                                        |
-| Catalog   | `newegg_catalog_resolve`, `newegg_catalog_lookup_status`                                                                                 | —                                                                                                                        |
-| Reference | `newegg_seller_status`, `newegg_industries_list`, `newegg_subcategories_list`, `newegg_subcategory_properties`, `newegg_property_values` | —                                                                                                                        |
-| SBN       | `newegg_sbn_shipments_list`, `newegg_sbn_request_status`, `newegg_sbn_request_result`, `newegg_sbn_warehouses_list`                      | — (inbound shipment create/void is not built)                                                                            |
-| Ads       | `newegg_ads_campaigns_list`, `newegg_ads_campaign_get`, `newegg_ads_groups_list`, `newegg_ads_keywords_list`, `newegg_ads_report`        | — (Sponsored Ads writes are not built)                                                                                   |
-| Platform  | `newegg_feed_status`, `newegg_feed_result`, `newegg_service_status`                                                                      | —                                                                                                                        |
+| Area      | Read tools (always)                                                                                                                      | Write tools (gated)                                                                                                                                                                  |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Inventory | `newegg_inventory_get`, `newegg_inventory_preview_update`                                                                                | **W** `newegg_inventory_apply_update`                                                                                                                                                |
+| Pricing   | `newegg_pricing_get`                                                                                                                     | **W** `newegg_pricing_preview_update`, `newegg_pricing_apply_update`                                                                                                                 |
+| Listings  | `newegg_listing_preview_create`                                                                                                          | **W** `newegg_listing_apply_create`                                                                                                                                                  |
+| Discounts | `newegg_volume_discount_get`, `newegg_volume_discount_preview_update`                                                                    | **W** `newegg_volume_discount_apply_update`                                                                                                                                          |
+| RMA       | `newegg_rma_list`, `newegg_rma_get`                                                                                                      | **W** `newegg_rma_preview_{submit,edit,process,reject}`, `newegg_rma_apply_{submit,edit,process,reject}`                                                                             |
+| Refunds   | `newegg_refund_list`, `newegg_refund_status`                                                                                             | **W** `newegg_refund_preview_issue`, `newegg_refund_apply_issue` (capped by `NEWEGG_MCP_MAX_REFUND_AMOUNT`, default 500)                                                             |
+| Labels    | —                                                                                                                                        | **W** `newegg_shipping_label_estimate`, `newegg_shipping_label_{preview,apply}_{create,reprint}` (create BUYS a UPS label; spends money; optional cap `NEWEGG_MCP_MAX_LABEL_AMOUNT`) |
+| Orders    | `newegg_orders_list`, `newegg_orders_get`, `newegg_orders_get_status`, `newegg_orders_get_additional_info`                               | none (order ship/cancel is SDK-only)                                                                                                                                                 |
+| Reports   | `newegg_reports_{settlement_summary,settlement_transactions,daily_inventory,daily_price,item_basic_info,order_list,rma_list,status}`     | —                                                                                                                                                                                    |
+| Catalog   | `newegg_catalog_resolve`, `newegg_catalog_lookup_status`                                                                                 | —                                                                                                                                                                                    |
+| Reference | `newegg_seller_status`, `newegg_industries_list`, `newegg_subcategories_list`, `newegg_subcategory_properties`, `newegg_property_values` | —                                                                                                                                                                                    |
+| SBN       | `newegg_sbn_shipments_list`, `newegg_sbn_request_status`, `newegg_sbn_request_result`, `newegg_sbn_warehouses_list`                      | — (inbound shipment create/void is not built)                                                                                                                                        |
+| Ads       | `newegg_ads_campaigns_list`, `newegg_ads_campaign_get`, `newegg_ads_groups_list`, `newegg_ads_keywords_list`, `newegg_ads_report`        | — (Sponsored Ads writes are not built)                                                                                                                                               |
+| Platform  | `newegg_feed_status`, `newegg_feed_result`, `newegg_service_status`                                                                      | —                                                                                                                                                                                    |
 
 The server also serves the resources `newegg://capabilities`, `newegg://configuration/public` and
 `newegg://feeds/{requestId}`.
@@ -499,21 +501,22 @@ key from another platform is the usual cause), see
 
 ### MCP server
 
-| Variable                              | Default                  | Meaning                                                                                                                                   |
-| ------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `NEWEGG_MCP_ALLOW_WRITES`             | `false`                  | When `true`, registers the write tools (inventory, pricing, listings, RMA, courtesy refund). Otherwise they are absent from `tools/list`. |
-| `NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT` | `50`                     | Largest absolute % change one price update may make vs the current price; bigger is blocked at preview.                                   |
-| `NEWEGG_MCP_MAX_REFUND_AMOUNT`        | `500`                    | Largest courtesy refund (or refund-RMA total) one preview may plan, in the marketplace currency.                                          |
-| `NEWEGG_MCP_MAX_ITEMS_PER_OPERATION`  | `500`                    | Hard cap on items per preview/apply.                                                                                                      |
-| `NEWEGG_MCP_PREVIEW_TTL_SECONDS`      | `600`                    | Lifetime of a stored preview before it expires.                                                                                           |
-| `NEWEGG_MCP_ALLOW_ZERO_QUANTITY`      | `true`                   | Whether quantity `0` (out-of-stock) writes are allowed.                                                                                   |
-| `NEWEGG_MCP_ALLOWED_WAREHOUSES`       | empty = all              | Comma-separated warehouse allowlist.                                                                                                      |
-| `NEWEGG_MCP_ALLOWED_MARKETPLACES`     | empty = all              | Comma-separated marketplace allowlist.                                                                                                    |
-| `NEWEGG_MCP_HTTP_HOST`                | `127.0.0.1`              | HTTP transport bind host.                                                                                                                 |
-| `NEWEGG_MCP_HTTP_PORT`                | `3919`                   | HTTP transport bind port.                                                                                                                 |
-| `NEWEGG_MCP_HTTP_BEARER_TOKEN`        | empty                    | Bearer token; **required** before binding a non-loopback host.                                                                            |
-| `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`     | empty = same-origin only | Comma-separated allowed browser `Origin` values.                                                                                          |
-| `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`       | empty                    | Comma-separated allowed `Host` values (`host[:port]`); loopback always allowed.                                                           |
+| Variable                              | Default                  | Meaning                                                                                                                                                                                    |
+| ------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `NEWEGG_MCP_ALLOW_WRITES`             | `false`                  | When `true`, registers the write tools (inventory, pricing, listings, RMA, courtesy refund). Otherwise they are absent from `tools/list`.                                                  |
+| `NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT` | `50`                     | Largest absolute % change one price update may make vs the current price; bigger is blocked at preview.                                                                                    |
+| `NEWEGG_MCP_MAX_REFUND_AMOUNT`        | `500`                    | Largest courtesy refund (or refund-RMA total) one preview may plan, in the marketplace currency.                                                                                           |
+| `NEWEGG_MCP_MAX_LABEL_AMOUNT`         | unset (no cap)           | Opt-in ceiling on the quoted cost of one UPS label purchase, in the marketplace currency; a bigger or undeterminable cost (and any reprint) is blocked at preview and re-checked at apply. |
+| `NEWEGG_MCP_MAX_ITEMS_PER_OPERATION`  | `500`                    | Hard cap on items per preview/apply.                                                                                                                                                       |
+| `NEWEGG_MCP_PREVIEW_TTL_SECONDS`      | `600`                    | Lifetime of a stored preview before it expires.                                                                                                                                            |
+| `NEWEGG_MCP_ALLOW_ZERO_QUANTITY`      | `true`                   | Whether quantity `0` (out-of-stock) writes are allowed.                                                                                                                                    |
+| `NEWEGG_MCP_ALLOWED_WAREHOUSES`       | empty = all              | Comma-separated warehouse allowlist.                                                                                                                                                       |
+| `NEWEGG_MCP_ALLOWED_MARKETPLACES`     | empty = all              | Comma-separated marketplace allowlist.                                                                                                                                                     |
+| `NEWEGG_MCP_HTTP_HOST`                | `127.0.0.1`              | HTTP transport bind host.                                                                                                                                                                  |
+| `NEWEGG_MCP_HTTP_PORT`                | `3919`                   | HTTP transport bind port.                                                                                                                                                                  |
+| `NEWEGG_MCP_HTTP_BEARER_TOKEN`        | empty                    | Bearer token; **required** before binding a non-loopback host.                                                                                                                             |
+| `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`     | empty = same-origin only | Comma-separated allowed browser `Origin` values.                                                                                                                                           |
+| `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`       | empty                    | Comma-separated allowed `Host` values (`host[:port]`); loopback always allowed.                                                                                                            |
 
 ### Live tests (opt-in; never in CI)
 
@@ -534,7 +537,8 @@ constraint in code:
   `NEWEGG_MCP_ALLOW_WRITES=true`.
 - **Preview → apply.** Writes require a two-step flow; apply takes only a single-use,
   TTL-bounded `previewId` and cannot alter the previewed plan. Price changes and refunds are
-  also capped (`NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT`, `NEWEGG_MCP_MAX_REFUND_AMOUNT`).
+  also capped (`NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT`, `NEWEGG_MCP_MAX_REFUND_AMOUNT`, and the opt-in
+  `NEWEGG_MCP_MAX_LABEL_AMOUNT`). No write follows an HTTP redirect.
 - **No credentials via MCP.** Callers can never supply credentials, base URLs, hostnames, or
   `Overwrite` values; raw upstream bodies never cross the MCP boundary.
 - **`Overwrite: "Yes"` is impossible** — the feed envelope hard-codes `"No"`, so catalog-wide

@@ -57,7 +57,7 @@ export interface NeweggClient {
   readonly refunds: RefundsApi; // courtesy refund reads (§18) + issue (§20)
   readonly reference: ReferenceApi; // READ-only seller/category reference lookups (contracts §19)
   readonly sbn: SbnApi; // READ-only Shipped-by-Newegg inbound shipment lookups (contracts §21); Newegg.com / B2B only
-  readonly shippingLabels: ShippingLabelsApi; // UPS shipping labels: estimate (read), create / reprint (WRITES that spend money, contracts §23)
+  readonly shippingLabels: ShippingLabelsApi; // UPS shipping labels: estimate (single attempt, never retried), create / reprint (WRITES that spend money, contracts §23)
   readonly ads: AdsApi; // READ-only Sponsored Ads campaign / group / keyword lists + performance reports (contracts §25); Newegg.com only
   readonly catalog: CatalogApi; // read-only catalog resolution (Item Lookup Report, contracts §12)
   readonly reports: ReportsApi; // read-only settlement / daily inventory / daily price reports (contracts §17)
@@ -2584,7 +2584,7 @@ export interface RecordedCall {
 }
 
 // ----------------------------------------------------------------------------
-// Shipping Label Service (contracts §23): estimate is a quote; create BUYS a UPS label (WRITE);
+// Shipping Label Service (contracts §23): estimate is a quote sent ONCE, never retried; create BUYS a UPS label (WRITE);
 // reprint re-issues a label (WRITE, billing unknown). Not gated by marketplace: the service codes
 // differ (101-105 on us/b2b, 111-114 on ca; platform/shipping-label.ts).
 // ----------------------------------------------------------------------------
@@ -2694,7 +2694,7 @@ export interface ShippingLabelReprintResult {
   raw?: unknown;
 }
 export interface ShippingLabelsApi {
-  estimate(input: ShippingLabelInput, options?: RequestOptions): Promise<ShippingLabelEstimate>; // 1,000/hr
+  estimate(input: ShippingLabelInput, options?: RequestOptions): Promise<ShippingLabelEstimate>; // 1,000/hr; single attempt (no retry)
   previewCreate(
     input: ShippingLabelInput,
     options?: RequestOptions,
@@ -2730,6 +2730,12 @@ export interface ShippingLabelsApi {
    NEVER auto-retries after the body may have reached Newegg — throw
    `IndeterminateFeedSubmissionError`; retry only on pre-send failures (DNS/connect refused)
    or definitive rejection (4xx).
+   **Redirects**: a read (by operation, `isReadOperation` in `client/operations.ts`, not by HTTP verb;
+   unknown operations count as writes) follows redirects as before. Every other request is sent with
+   `redirect: "error"`: a 3xx (301/302/307/308 alike) is never followed or retried and surfaces as a
+   non-retryable error. Where the request may have reached the server, the write-specific indeterminate
+   error applies (ADR 0004); the generic retrying path reports a non-retryable `NeweggApiError` that says
+   the write may have been applied.
 6. **Rate limiting**: feed submissions locally budgeted at 10/min + 100,000 records/hour per
    `${marketplace}:${sellerId}`; 429/DF012 surface as `NeweggRateLimitError` with reset info.
 7. **Secrets**: `Authorization`/`SecretKey` header values, apiKey, secretKey never appear in
@@ -2829,7 +2835,7 @@ export interface ShippingLabelsApi {
     through the Shipping Label Service (contracts §23), bills the seller's Newegg account and ships the
     order; `shippingLabels.reprint` re-issues the label of a shipped order and is treated as billable;
     `shippingLabels.estimate` is a quote ("for estimation only", an **ASSUMPTION** that it has no side
-    effect). `previewCreate` / `previewReprint` read the order and return `blockers` / `warnings` mirroring
+    effect), so it is sent as a single attempt and never retried (a timeout or 5xx is reported). `previewCreate` / `previewReprint` read the order and return `blockers` / `warnings` mirroring
     `SL002`/`SL003`/`SL004`/`SL005`/`SL010`/`SL015`; the writes re-run them and throw
     `NeweggValidationError` on any blocker before any POST. Input is strict: order number 1..2147483647,
     service code of the marketplace (101-105 us/b2b, 111-114 ca), ZIP / postal code of the marketplace,
@@ -2838,9 +2844,13 @@ export interface ShippingLabelsApi {
     abort after dispatch, HTTP 408 / any 5xx, or a 2xx with no (or another order's) package throws
     `IndeterminateOrderWriteError` and is never resent (check the order, then `reprint`). A request
     where some packages fail returns `failedCount > 0`; only an all-failed answer throws. There is no
-    void or refund of a label in the documented API. The MCP exposes `newegg_shipping_label_estimate`
-    always and the four preview / apply tools only with `NEWEGG_MCP_ALLOW_WRITES=true`; it returns label
-    links only for `https://*.newegg.com` and has no server-side cost ceiling. Nothing was called live;
+    void or refund of a label in the documented API. The MCP exposes
+    `newegg_shipping_label_estimate` and the four preview / apply tools only with
+    `NEWEGG_MCP_ALLOW_WRITES=true`; it returns label links only for `https://*.newegg.com`. The SDK has no
+    cost ceiling; the MCP has the opt-in `NEWEGG_MCP_MAX_LABEL_AMOUNT` (unset by default): with it set, the
+    create preview carries the estimate and is blocked above the cap, apply re-quotes and refuses above it,
+    any cost that cannot be determined (failed or unrated quote, any reprint) is blocked, and with it unset
+    behaviour is unchanged. Nothing was called live;
     every shape is from archived page samples (contracts §23 **ASSUMPTION**s).
 19. **Sponsored Ads (reads)**: `ads.listCampaigns`/`listGroups`/`listProducts`/`listKeywords`/
     `listNegativeKeywords`/`listMatchTypes`, the suggestion reads `suggestKeywords`/
