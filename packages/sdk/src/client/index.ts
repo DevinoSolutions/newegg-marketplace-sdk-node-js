@@ -15,6 +15,7 @@ import { ReportsApiImpl } from "../reports/api.js";
 import { SbnApiImpl } from "../sbn/api.js";
 import { ServiceApiImpl } from "../service/api.js";
 import { createStorefrontApi } from "../storefront/api.js";
+import { VolumeDiscountsApiImpl } from "../volume-discounts/api.js";
 import { resolveConfig } from "./config.js";
 import { NeweggHttpClient } from "./http.js";
 import { Operation } from "./operations.js";
@@ -50,6 +51,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
   const catalog = new CatalogApiImpl(http);
   const reports = new ReportsApiImpl(http);
   const listings = new ListingsApiImpl(http);
+  const volumeDiscounts = new VolumeDiscountsApiImpl(http);
   // UNOFFICIAL public storefront (contracts §14): a different origin, unauthenticated, so it
   // deliberately bypasses NeweggHttpClient (no seller credentials, no rate-limit budget) and
   // only borrows the configured fetch + timeout. Always attached — `b2b` throws on call, not
@@ -74,6 +76,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
     catalog,
     reports,
     listings,
+    volumeDiscounts,
     storefront,
     async verifyCredentials(options) {
       // Read-only preflight: a single service-status GET. Bad/unauthorized credentials throw
