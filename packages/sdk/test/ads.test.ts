@@ -673,3 +673,80 @@ describe("ads performance reports", () => {
     expect(keyword.rows[0]).toMatchObject({ keyword: "usb hub", orders: 4, cpc: 0.25 });
   });
 });
+
+describe("ads write endpoints are unreachable (contracts section 25.1)", () => {
+  const READ_PATHS = new Set([
+    "search",
+    "group/search",
+    "product/search",
+    "keyword/search",
+    "keyword/getsuggest",
+    "negativekeyword/search",
+    "autotargeting/matchtypesearch",
+    "producttargeting/categoriessearch",
+    "producttargeting/individualsearch",
+    "group/performance",
+    "product/performance",
+    "keyword/performance",
+  ]);
+  const WRITE_PATHS = [
+    "create",
+    "update",
+    "changestatus",
+    "group/add",
+    "group/update",
+    "group/changestatus",
+    "product/add",
+    "product/changestatus",
+    "keyword/add",
+    "keyword/update",
+    "keyword/changestatus",
+    "negativekeyword/add",
+    "producttargeting/add",
+    "autotargeting/matchtypeupdate",
+    "autotargeting/matchtypechangestatus",
+  ];
+
+  it("sends every read only to its documented read path, even with hostile-looking input", async () => {
+    const catchAll: MockRoute[] = [
+      {
+        method: "POST",
+        pathPattern: new RegExp(`^${ADS}/`),
+        reply: () => ({ status: 200, body: ok([]) }),
+      },
+    ];
+    const { client, calls } = makeClient("us", catchAll);
+    const range = { fromDate: "2026-01-01", toDate: "2026-01-31" };
+    const ids = { campaignNumber: 1000001, groupNumber: 1000002 };
+    const hostile = "../create";
+    await client.ads.listCampaigns({ keyword: hostile });
+    await client.ads.listGroups({ campaignNumber: 1000001, keyword: hostile });
+    await client.ads.listProducts({ ...ids, keyword: hostile });
+    await client.ads.listKeywords({ ...ids, keyword: hostile });
+    await client.ads.listNegativeKeywords({ ...ids, keyword: hostile });
+    await client.ads.listMatchTypes(ids);
+    await client.ads.suggestKeywords({ itemNumbers: ["9SIXXXXXXXXXXX1"], keywords: [hostile] });
+    await client.ads.suggestCategoryTargeting({
+      categoryCodes: ["1"],
+      productType: "productTargeting",
+    });
+    await client.ads.suggestItemTargeting({
+      itemNumbers: ["9SIXXXXXXXXXXX1"],
+      productType: "productTargeting",
+    });
+    await client.ads.getGroupPerformance({ ...range, keyword: hostile });
+    await client.ads.getProductPerformance({ ...ids, ...range, keyword: hostile });
+    await client.ads.getKeywordPerformance({ ...ids, ...range, keyword: hostile });
+
+    expect(calls).toHaveLength(12);
+    const seen = new Set<string>();
+    for (const call of calls) {
+      expect(call.method).toBe("POST");
+      const suffix = call.url.pathname.slice(`${ADS}/`.length);
+      expect(READ_PATHS.has(suffix)).toBe(true);
+      expect(WRITE_PATHS).not.toContain(suffix);
+      seen.add(suffix);
+    }
+    expect(seen).toEqual(READ_PATHS);
+  });
+});
