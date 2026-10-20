@@ -89,6 +89,10 @@ export const paths = {
   sbnShipmentStatus: /sbnmgmt\/inboundshipment\/shipmentstatus\?/,
   sbnShipmentResult: /sbnmgmt\/inboundshipment\/shipmentresult\//,
   sbnWarehouse: /sbnmgmt\/inboundshipment\/warehouse\?/,
+  // Shipping Label Service (§23), POST only. Create and reprint BUY / re-issue a label.
+  shippingLabelCreate: /shippingservice\/shippinglabel\/createshippinglabel\?/,
+  shippingLabelEstimate: /shippingservice\/shippinglabel\/estimateshippinglabel\?/,
+  shippingLabelReprint: /shippingservice\/shippinglabel\/reprintshippinglabel\?/,
   reportSubmit: /reportmgmt\/report\/submitrequest\?/,
   reportStatus: /reportmgmt\/report\/status\?/,
   reportResult: /reportmgmt\/report\/result\?/,

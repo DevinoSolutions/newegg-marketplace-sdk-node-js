@@ -13,6 +13,7 @@ import { RefundsApiImpl } from "../refunds/api.js";
 import { RmaApiImpl } from "../rma/api.js";
 import { ReportsApiImpl } from "../reports/api.js";
 import { SbnApiImpl } from "../sbn/api.js";
+import { ShippingLabelsApiImpl } from "../shippinglabel/api.js";
 import { ServiceApiImpl } from "../service/api.js";
 import { createStorefrontApi } from "../storefront/api.js";
 import { VolumeDiscountsApiImpl } from "../volume-discounts/api.js";
@@ -48,6 +49,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
   const refunds: RefundsApiImpl = new RefundsApiImpl(http, orders, () => rma);
   const reference = new ReferenceApiImpl(http);
   const sbn = new SbnApiImpl(http);
+  const shippingLabels = new ShippingLabelsApiImpl(http, orders);
   const catalog = new CatalogApiImpl(http);
   const reports = new ReportsApiImpl(http);
   const listings = new ListingsApiImpl(http);
@@ -73,6 +75,7 @@ export function createNeweggClient(config: NeweggClientConfig): NeweggClient {
     refunds,
     reference,
     sbn,
+    shippingLabels,
     catalog,
     reports,
     listings,

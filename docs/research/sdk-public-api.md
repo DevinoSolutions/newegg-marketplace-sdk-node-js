@@ -57,6 +57,7 @@ export interface NeweggClient {
   readonly refunds: RefundsApi; // courtesy refund reads (§18) + issue (§20)
   readonly reference: ReferenceApi; // READ-only seller/category reference lookups (contracts §19)
   readonly sbn: SbnApi; // READ-only Shipped-by-Newegg inbound shipment lookups (contracts §21); Newegg.com / B2B only
+  readonly shippingLabels: ShippingLabelsApi; // UPS shipping labels: estimate (read), create / reprint (WRITES that spend money, contracts §23)
   readonly catalog: CatalogApi; // read-only catalog resolution (Item Lookup Report, contracts §12)
   readonly reports: ReportsApi; // read-only settlement / daily inventory / daily price reports (contracts §17)
   readonly listings: ListingsApi; // WRITE: existing-item listing creation (ITEM_DATA&v2 feed, contracts §13)
@@ -2176,6 +2177,133 @@ export interface RecordedCall {
   bodyText?: string;
   bodyJson?: unknown;
 }
+
+// ----------------------------------------------------------------------------
+// Shipping Label Service (contracts §23): estimate is a quote; create BUYS a UPS label (WRITE);
+// reprint re-issues a label (WRITE, billing unknown). Not gated by marketplace: the service codes
+// differ (101-105 on us/b2b, 111-114 on ca; platform/shipping-label.ts).
+// ----------------------------------------------------------------------------
+export interface ShippingLabelShipFrom {
+  firstName: string;
+  lastName: string;
+  phoneNumber: string;
+  address1: string;
+  address2?: string;
+  city: string;
+  stateCode: string; // two letters, uppercased
+  zipCode: string; // US ZIP (us/b2b) or Canadian postal code (ca)
+  countryCode?: string; // "USA" | "CAN"; defaults to the marketplace's
+}
+export interface ShippingLabelItem {
+  sellerPartNumber: string;
+  quantity: number; // a line's whole ordered quantity must ship (SL005)
+}
+export interface ShippingLabelPackage {
+  weightLb: number; // UPS max 150
+  lengthIn: number; // UPS max 108
+  widthIn: number;
+  heightIn: number; // length + 2 x width + 2 x height <= 165
+  signatureRequired?: boolean; // adds a surcharge
+  items: ShippingLabelItem[];
+}
+export interface ShippingLabelInput {
+  orderNumber: string | number; // 1..2147483647
+  serviceCode?: number; // 101-105 (us/b2b), 111-114 (ca); omitted = the service the customer bought
+  shipFrom: ShippingLabelShipFrom;
+  packages: ShippingLabelPackage[]; // 1..20 (SDK ceiling)
+}
+export interface ShippingLabelReprintInput {
+  orderNumber: string;
+}
+export type ShippingLabelWriteOperation = "shippingLabels.create" | "shippingLabels.reprint";
+export interface ShippingLabelPreview<N> {
+  marketplace: NeweggMarketplace;
+  operation: ShippingLabelWriteOperation;
+  normalized: N; // round-trips straight into create / reprint
+  currency: RmaCurrency; // assumed from the marketplace
+  orderNumber: string;
+  blockers: string[]; // non-empty => the write throws NeweggValidationError
+  warnings: string[];
+  correlationId: string;
+}
+export interface ShippingLabelRate {
+  shipWeight?: number;
+  arriveBy?: { raw: string; iso?: string };
+  shippingAmount?: number;
+  signatureAmount?: number;
+  total?: number;
+}
+export interface ShippingLabelEstimatePackage {
+  succeeded: boolean;
+  errorMessage?: string;
+  weightLb?: number;
+  lengthIn?: number;
+  widthIn?: number;
+  heightIn?: number;
+  signatureRequired: boolean;
+  rate?: ShippingLabelRate;
+}
+export interface ShippingLabelEstimate {
+  marketplace: NeweggMarketplace;
+  orderNumber: string;
+  estimatedDate?: { raw: string; iso?: string };
+  currency: RmaCurrency;
+  packages: ShippingLabelEstimatePackage[];
+  estimatedTotal: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export interface ShippingLabelPackageResult {
+  succeeded: boolean;
+  errorMessage?: string;
+  trackingNumber?: string;
+  signatureRequired: boolean;
+  labelUrl?: string; // bearer download link: sensitive
+  packingListUrl?: string; // Newegg spells it PackageListUrl and PackingListUrl
+  rate?: ShippingLabelRate;
+  items: ShippingLabelItem[];
+}
+export interface ShippingLabelResult {
+  marketplace: NeweggMarketplace;
+  operation: "shippingLabels.create";
+  orderNumber: string;
+  shipDate?: { raw: string; iso?: string };
+  currency: RmaCurrency;
+  packages: ShippingLabelPackageResult[];
+  succeededCount: number; // >= 1 (all-failed throws NeweggApiError)
+  failedCount: number;
+  totalCharged: number;
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export interface ShippingLabelReprintResult {
+  marketplace: NeweggMarketplace;
+  operation: "shippingLabels.reprint";
+  orderNumber: string;
+  orderStatus?: string;
+  packages: ShippingLabelPackageResult[];
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown;
+}
+export interface ShippingLabelsApi {
+  estimate(input: ShippingLabelInput, options?: RequestOptions): Promise<ShippingLabelEstimate>; // 1,000/hr
+  previewCreate(
+    input: ShippingLabelInput,
+    options?: RequestOptions,
+  ): Promise<ShippingLabelPreview<ShippingLabelInput>>; // reads the order
+  create(input: ShippingLabelInput, options?: RequestOptions): Promise<ShippingLabelResult>; // WRITE, 1,000/hr
+  previewReprint(
+    orderNumber: string | number,
+    options?: RequestOptions,
+  ): Promise<ShippingLabelPreview<ShippingLabelReprintInput>>;
+  reprint(
+    orderNumber: string | number,
+    options?: RequestOptions,
+  ): Promise<ShippingLabelReprintResult>; // WRITE (billing unknown), 1,000/hr
+}
 ```
 
 ## Behavioural requirements bound to this surface
@@ -2292,6 +2420,23 @@ export interface RecordedCall {
     Inbound Shipment (writes) and Get Inbound Shipment Plan Suggestion (not shown to be side-effect free)
     are not implemented; their wire markers are blocked in the live read-only guard. Every verb/path is
     from the official pages and un-probed (contracts §21 **ASSUMPTION**s).
+18. **Shipping labels (UPS; non-idempotent, spends money)**: `shippingLabels.create` BUYS a UPS label
+    through the Shipping Label Service (contracts §23), bills the seller's Newegg account and ships the
+    order; `shippingLabels.reprint` re-issues the label of a shipped order and is treated as billable;
+    `shippingLabels.estimate` is a quote ("for estimation only", an **ASSUMPTION** that it has no side
+    effect). `previewCreate` / `previewReprint` read the order and return `blockers` / `warnings` mirroring
+    `SL002`/`SL003`/`SL004`/`SL005`/`SL010`/`SL015`; the writes re-run them and throw
+    `NeweggValidationError` on any blocker before any POST. Input is strict: order number 1..2147483647,
+    service code of the marketplace (101-105 us/b2b, 111-114 ca), ZIP / postal code of the marketplace,
+    UPS limits (150 lb, 108 in, length + 2 x width + 2 x height <= 165 in) checked locally. Writes follow
+    ADR 0004: only a provably-unsent transport failure retries; a timeout or reset after dispatch, an
+    abort after dispatch, HTTP 408 / any 5xx, or a 2xx with no (or another order's) package throws
+    `IndeterminateOrderWriteError` and is never resent (check the order, then `reprint`). A request
+    where some packages fail returns `failedCount > 0`; only an all-failed answer throws. There is no
+    void or refund of a label in the documented API. The MCP exposes `newegg_shipping_label_estimate`
+    always and the four preview / apply tools only with `NEWEGG_MCP_ALLOW_WRITES=true`; it returns label
+    links only for `https://*.newegg.com` and has no server-side cost ceiling. Nothing was called live;
+    every shape is from archived page samples (contracts §23 **ASSUMPTION**s).
 
 ```
 

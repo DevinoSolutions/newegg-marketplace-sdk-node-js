@@ -18,6 +18,8 @@ import type {
   NormalizedVolumeDiscountUpdate,
   ProcessRmaInput,
   RejectRmaInput,
+  ShippingLabelInput,
+  ShippingLabelReprintInput,
   SubmitRmaInput,
 } from "@devino/newegg-marketplace-sdk";
 
@@ -90,13 +92,35 @@ export type ServiceWritePreviewRecord = {
   };
 }[ServiceWriteKind];
 
+/** Stored input of each Shipping Label write (contracts §23), by record `kind`. */
+export interface ShippingLabelInputs {
+  readonly shippingLabelCreate: ShippingLabelInput;
+  readonly shippingLabelReprint: ShippingLabelReprintInput;
+}
+
+/** Discriminator of the Shipping Label write previews. */
+export type ShippingLabelKind = keyof ShippingLabelInputs;
+
+/**
+ * A stored label purchase or reprint. Buying a label charges the seller's account and ships the
+ * order, so the `input` here is authoritative at apply time and `hash` (sha-256 of the canonical
+ * kind + marketplace + input) is re-checked before anything is sent.
+ */
+export type ShippingLabelPreviewRecord = {
+  [K in ShippingLabelKind]: PreviewRecordBase & {
+    readonly kind: K;
+    readonly input: ShippingLabelInputs[K];
+  };
+}[ShippingLabelKind];
+
 /** A stored, ready-to-apply operation, discriminated by `kind`. */
 export type PreviewRecord =
   | InventoryPreviewRecord
   | ListingPreviewRecord
   | PricePreviewRecord
   | VolumeDiscountPreviewRecord
-  | ServiceWritePreviewRecord;
+  | ServiceWritePreviewRecord
+  | ShippingLabelPreviewRecord;
 
 /** Result of an atomic consume — distinguishes the three failure modes ADR 0005 requires. */
 export type ConsumeResult =

@@ -70,6 +70,11 @@ import {
   sbnRequestStatusTool,
   sbnRequestResultTool,
   sbnWarehousesListTool,
+  shippingLabelEstimateTool,
+  shippingLabelPreviewCreateTool,
+  shippingLabelApplyCreateTool,
+  shippingLabelPreviewReprintTool,
+  shippingLabelApplyReprintTool,
   type Logger,
   type ToolContext,
   type ToolDefinition,
@@ -169,6 +174,8 @@ export function enabledToolNames(config: McpServerConfig): string[] {
     TOOL_NAMES.sbnRequestResult,
     TOOL_NAMES.sbnWarehousesList,
   );
+  // The Shipping Label quote (contracts §23) is documented as estimation only: always available.
+  names.push(TOOL_NAMES.shippingLabelEstimate);
   // Catalog resolution is read-only (report submission mutates nothing; contracts §12.4).
   names.push(TOOL_NAMES.catalogResolve, TOOL_NAMES.catalogLookupStatus);
   // Reports (settlement / daily inventory / daily price) are read-only report jobs (contracts §17).
@@ -211,6 +218,16 @@ export function enabledToolNames(config: McpServerConfig): string[] {
       TOOL_NAMES.rmaApplyReject,
       TOOL_NAMES.refundPreviewIssue,
       TOOL_NAMES.refundApplyIssue,
+    );
+  }
+  // Buying or reprinting a UPS label spends money (contracts §23): BOTH the preview and the apply
+  // tool of each exist only with writes enabled.
+  if (config.allowWrites) {
+    names.push(
+      TOOL_NAMES.shippingLabelPreviewCreate,
+      TOOL_NAMES.shippingLabelApplyCreate,
+      TOOL_NAMES.shippingLabelPreviewReprint,
+      TOOL_NAMES.shippingLabelApplyReprint,
     );
   }
   return names;
@@ -354,6 +371,7 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   registerToolDefinition(server, sbnRequestStatusTool, ctx);
   registerToolDefinition(server, sbnRequestResultTool, ctx);
   registerToolDefinition(server, sbnWarehousesListTool, ctx);
+  registerToolDefinition(server, shippingLabelEstimateTool, ctx);
   registerToolDefinition(server, catalogResolveTool, ctx);
   registerToolDefinition(server, catalogLookupStatusTool, ctx);
   registerToolDefinition(server, reportsSettlementSummaryTool, ctx);
@@ -388,6 +406,12 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
     registerToolDefinition(server, rmaApplyRejectTool, ctx);
     registerToolDefinition(server, createRefundPreviewIssueTool(config), ctx);
     registerToolDefinition(server, refundApplyIssueTool, ctx);
+  }
+  if (config.allowWrites) {
+    registerToolDefinition(server, shippingLabelPreviewCreateTool, ctx);
+    registerToolDefinition(server, shippingLabelApplyCreateTool, ctx);
+    registerToolDefinition(server, shippingLabelPreviewReprintTool, ctx);
+    registerToolDefinition(server, shippingLabelApplyReprintTool, ctx);
   }
 
   registerResources(server, ctx, enabledToolNames(config));

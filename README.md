@@ -245,6 +245,24 @@ with `NEWEGG_MCP_ALLOW_WRITES=true` (courtesy refunds are capped by `NEWEGG_MCP_
 The write paths follow the docs but have never been sent to a real account. Void / close RMA is
 not implemented (no documented operation).
 
+## Shipping labels (UPS, spends money)
+
+```ts
+const quote = await client.shippingLabels.estimate(labelRequest); // quote only
+const plan = await client.shippingLabels.previewCreate(labelRequest); // reads the order
+if (plan.blockers.length === 0) await client.shippingLabels.create(plan.normalized); // BUYS the label
+```
+
+`shippingLabels.create` buys a UPS label through Newegg's Shipping Label Service (contracts §23), bills
+the seller's Newegg account and ships the order; `reprint` re-issues a label of a shipped order and is
+treated as billable. Both are non-idempotent POSTs with a read-only `preview*` twin, refuse to send on any
+blocker, and on an ambiguous failure throw `IndeterminateOrderWriteError` without resending (check the order
+and use `reprint`, never create a second label). `estimate` is a quote ("for estimation only"). The seller must
+have signed up for the service in the Seller Portal (error `SL027`). The MCP exposes
+`newegg_shipping_label_estimate` always and the four preview / apply tools only with
+`NEWEGG_MCP_ALLOW_WRITES=true`. None of it has been called against a real account; shapes follow archived
+documentation pages.
+
 ## Seller status and category reference (read-only)
 
 ```ts
@@ -333,6 +351,7 @@ not by verb).
 | `client.reports`             | `settlementSummary`, `settlementTransactions`, `dailyInventory`, `dailyPrice`, `itemBasicInfo`, `orderList`, `rmaList`, `status(id)`                    | — (submitting a report only creates a job)            |
 | `client.reference`           | `getSellerStatus`, `listIndustries`, `listSubcategories`, `listSubcategoryProperties`, `listPropertyValues` (needs `subcategoryId`)                     | —                                                     |
 | `client.sbn`                 | `listShipments`, `getRequestStatus`, `getRequestResult`, `listWarehouses` (Shipped-by-Newegg inbound shipments; `us`/`b2b` only; create/void not built) | —                                                     |
+| `client.shippingLabels`      | `estimate` (UPS quote), `previewCreate`, `previewReprint`                                                                                               | `create` (BUYS a UPS label), `reprint`                |
 | `client.rma`                 | `list`, `get`, `tryGet`, `previewSubmit`, `previewEdit`, `previewProcess`, `previewReject`                                                              | `submit`, `edit`, `process`, `reject`                 |
 | `client.refunds`             | `list`, `get`, `tryGet`, `listRequests`, `getRequestStatus`, `previewIssue`                                                                             | `issue` (courtesy refund; commission is not refunded) |
 | `client.feeds`               | `getStatus`, `getResult`, `waitForResult`                                                                                                               | `submitInventoryFeed`                                 |
@@ -363,6 +382,7 @@ Read tools are always registered. Write tools (marked **W**) are registered only
 | Discounts | `newegg_volume_discount_get`, `newegg_volume_discount_preview_update`                                                                    | **W** `newegg_volume_discount_apply_update`                                                                              |
 | RMA       | `newegg_rma_list`, `newegg_rma_get`                                                                                                      | **W** `newegg_rma_preview_{submit,edit,process,reject}`, `newegg_rma_apply_{submit,edit,process,reject}`                 |
 | Refunds   | `newegg_refund_list`, `newegg_refund_status`                                                                                             | **W** `newegg_refund_preview_issue`, `newegg_refund_apply_issue` (capped by `NEWEGG_MCP_MAX_REFUND_AMOUNT`, default 500) |
+| Labels    | `newegg_shipping_label_estimate`                                                                                                         | **W** `newegg_shipping_label_{preview,apply}_{create,reprint}` (create BUYS a UPS label; spends money)                   |
 | Orders    | `newegg_orders_list`, `newegg_orders_get`, `newegg_orders_get_status`, `newegg_orders_get_additional_info`                               | none (order ship/cancel is SDK-only)                                                                                     |
 | Reports   | `newegg_reports_{settlement_summary,settlement_transactions,daily_inventory,daily_price,item_basic_info,order_list,rma_list,status}`     | —                                                                                                                        |
 | Catalog   | `newegg_catalog_resolve`, `newegg_catalog_lookup_status`                                                                                 | —                                                                                                                        |
@@ -634,7 +654,7 @@ failures; feed submissions never blindly retry after an ambiguous send (they rai
   allowlist, not just a denylist: comments are stripped before matching; the live files may
   import only `vitest`, `../../src/index.js`, `./helpers.js` and a few `node:` built-ins (never
   SDK internals); a namespace with write methods (`inventory`, `pricing`, `feeds`, `orders`,
-  `listings`, `volumeDiscounts`, `rma`, `refunds`) may only be used as `client.<namespace>.<documented read>(...)`
+  `listings`, `volumeDiscounts`, `rma`, `refunds`, `shippingLabels`) may only be used as `client.<namespace>.<documented read>(...)`
   (no aliasing, destructuring in any position, or naming a write method on any receiver);
   computed member access with a non-literal key, `Object.*` reflection and `Reflect` are
   banned; and every `NeweggClient` namespace and write-namespace method must be classified in
@@ -693,7 +713,7 @@ how to rename the `@devino` scope to your own — is in
 - **Not every write path is live-verified.** Order, RMA, courtesy-refund, pricing and listing
   writes follow the official docs but have not all been sent to a real account.
 - **Not implemented:** Void / Close RMA, Item Ranking, the China-only Tax Setting report, Get
-  Warehouse List, Subcategory Status v1.1, SBN, shipping labels and ads.
+  Warehouse List, Subcategory Status v1.1, SBN inbound-shipment writes, label void / refund and ads.
 - **Feed-status date filters are not implemented.** Feed status is queried by request ID
   only; Newegg's documented date-range filter field names did not render in extraction and
   were intentionally left out (see [`docs/platform-differences.md`](docs/platform-differences.md)).
