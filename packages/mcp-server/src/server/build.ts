@@ -179,8 +179,6 @@ export function enabledToolNames(config: McpServerConfig): string[] {
     TOOL_NAMES.sbnRequestResult,
     TOOL_NAMES.sbnWarehousesList,
   );
-  // The Shipping Label quote (contracts §23) is documented as estimation only: always available.
-  names.push(TOOL_NAMES.shippingLabelEstimate);
   // Sponsored Ads reads (contracts §25) are always available (never write-gated): every one is a
   // READ even though Newegg uses POST; no ads write is exposed.
   names.push(
@@ -235,9 +233,11 @@ export function enabledToolNames(config: McpServerConfig): string[] {
     );
   }
   // Buying or reprinting a UPS label spends money (contracts §23): BOTH the preview and the apply
-  // tool of each exist only with writes enabled.
+  // tool of each exist only with writes enabled. So does the label quote: Newegg documents it as
+  // estimation only, but that is unproven live (contracts §23.6), so it is gated like a write.
   if (config.allowWrites) {
     names.push(
+      TOOL_NAMES.shippingLabelEstimate,
       TOOL_NAMES.shippingLabelPreviewCreate,
       TOOL_NAMES.shippingLabelApplyCreate,
       TOOL_NAMES.shippingLabelPreviewReprint,
@@ -385,7 +385,6 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   registerToolDefinition(server, sbnRequestStatusTool, ctx);
   registerToolDefinition(server, sbnRequestResultTool, ctx);
   registerToolDefinition(server, sbnWarehousesListTool, ctx);
-  registerToolDefinition(server, shippingLabelEstimateTool, ctx);
   registerToolDefinition(server, adsCampaignsListTool, ctx);
   registerToolDefinition(server, adsCampaignGetTool, ctx);
   registerToolDefinition(server, adsGroupsListTool, ctx);
@@ -427,6 +426,7 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
     registerToolDefinition(server, refundApplyIssueTool, ctx);
   }
   if (config.allowWrites) {
+    registerToolDefinition(server, shippingLabelEstimateTool, ctx);
     registerToolDefinition(server, shippingLabelPreviewCreateTool, ctx);
     registerToolDefinition(server, shippingLabelApplyCreateTool, ctx);
     registerToolDefinition(server, shippingLabelPreviewReprintTool, ctx);

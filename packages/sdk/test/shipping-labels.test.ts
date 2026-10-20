@@ -251,6 +251,33 @@ describe("shippingLabels.estimate", () => {
     ]);
     await expect(client.shippingLabels.estimate(input)).rejects.toBeInstanceOf(NeweggApiError);
   });
+
+  it("sends exactly one request and does not retry a 503 (no automatic retry)", async () => {
+    const { client, calls } = setup("us", [
+      {
+        method: "POST",
+        pathPattern: paths.shippingLabelEstimate,
+        reply: () => ({ status: 503, body: "down" }),
+      },
+    ]);
+    const err = await client.shippingLabels.estimate(input).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NeweggApiError);
+    expect((err as NeweggApiError).httpStatus).toBe(503);
+    expect(posts(calls)).toHaveLength(1);
+  });
+
+  it("sends exactly one request and does not retry a dropped connection", async () => {
+    let attempts = 0;
+    const { client } = makeClient("us", [], {
+      fetch: () => {
+        attempts++;
+        return Promise.reject(new TypeError("fetch failed", { cause: { code: "ECONNRESET" } }));
+      },
+    });
+    const err = await client.shippingLabels.estimate(input).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NeweggApiError);
+    expect(attempts).toBe(1);
+  });
 });
 
 describe("shippingLabels input validation", () => {

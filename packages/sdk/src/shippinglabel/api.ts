@@ -74,7 +74,9 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
       path: `${this.#http.adapter.prefix}${SHIPPING_LABEL_ESTIMATE_PATH}`,
       body: buildEstimateLabelBody(normalized, sellerId),
     };
-    const result = await this.#http.request(spec, {
+    // A single attempt: the estimate is not proven side-effect free (contracts §23.6), so a
+    // timeout or 5xx is reported rather than silently resent.
+    const result = await this.#http.requestOnce(spec, {
       operation: Operation.ShippingLabelEstimate,
       correlationId,
       signal: options.signal,

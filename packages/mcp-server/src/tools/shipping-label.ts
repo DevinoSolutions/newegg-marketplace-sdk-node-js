@@ -1,8 +1,10 @@
 /**
- * `newegg_shipping_label_estimate`: the Shipping Label Service quote (contracts §23). The page
- * documents it as "for estimation only", so it is registered unconditionally like every read; it
- * consumes only the SDK's public `ShippingLabelsApi.estimate`. Buying or reprinting a label is a
- * WRITE and lives in `shipping-label-write.ts` behind `NEWEGG_MCP_ALLOW_WRITES=true`.
+ * `newegg_shipping_label_estimate`: the Shipping Label Service quote (contracts §23). Newegg's page
+ * documents it as "for estimation only", but that has never been proven live, so the tool is
+ * registered only when `NEWEGG_MCP_ALLOW_WRITES=true` (like the label purchase it quotes) until an
+ * owner-authorized probe shows it has no side effect (contracts §23.6). The SDK sends it as a single
+ * attempt with no automatic retry. It consumes only the public `ShippingLabelsApi.estimate`.
+ * Buying or reprinting a label lives in `shipping-label-write.ts`.
  *
  * The input schema defined here is shared with the label purchase preview so both describe the
  * same request.
@@ -138,10 +140,16 @@ export const shippingLabelEstimateTool: ToolDefinition<
   description:
     "Shipping Label Estimate Request: quote the UPS charge (shipping amount, signature surcharge, " +
     "total, arrival date) for the packages of an order WITHOUT buying a label. Newegg documents it " +
-    "as estimation only; that is unverified live. Use it before newegg_shipping_label_preview_create " +
-    "(which needs writes enabled). Newegg allows 1,000 requests/hour. The label itself cannot be " +
-    "obtained from this tool.",
-  annotations: { readOnlyHint: true, openWorldHint: true },
+    "as estimation only, but that is NOT verified live, so this tool exists only when the server is " +
+    "started with writes enabled and the request is sent once, never retried automatically (an " +
+    "unknown outcome is reported, not resent). Newegg allows 1,000 requests/hour. The label itself " +
+    "cannot be obtained from this tool.",
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
   inputSchema: shippingLabelRequestSchema,
   outputSchema: estimateOutputSchema,
   handler: estimateHandler,

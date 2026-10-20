@@ -7,13 +7,17 @@
  *
  * The label download links Newegg returns are bearer links: they are surfaced only when they point
  * at a `*.newegg.com` https host, and customer data (the ship-to address) is never returned.
- * There is no server-side cost ceiling: Newegg's quote is available from
- * `newegg_shipping_label_estimate`, and a human must read the preview before applying.
+ * By default there is no server-side cost ceiling and a human must read the preview before applying.
+ * `NEWEGG_MCP_MAX_LABEL_AMOUNT` is an opt-in ceiling: when it is set, the create preview carries
+ * Newegg's quote and is blocked above the cap (re-checked at apply), and any cost that cannot be
+ * determined (a failed quote, an unrated package, or a reprint, which has no quote) is blocked too.
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { IndeterminateOrderWriteError } from "@devino/newegg-marketplace-sdk";
 import type {
+  ShippingLabelEstimate,
+  ShippingLabelInput,
   ShippingLabelPackageResult,
   ShippingLabelPreview,
 } from "@devino/newegg-marketplace-sdk";
@@ -55,6 +59,10 @@ const previewOutputSchema = z.object({
   warnings: z.array(z.string()),
   /** The exact normalized request the apply tool will send. */
   request: z.record(z.string(), z.unknown()),
+  /** Newegg's quote for the label(s), present only when NEWEGG_MCP_MAX_LABEL_AMOUNT is set. */
+  estimatedCost: z.number().optional(),
+  /** The configured NEWEGG_MCP_MAX_LABEL_AMOUNT, present only when it is set. */
+  maxLabelAmount: z.number().optional(),
   previewId: z.string().optional(),
   previewExpiresAt: z.string().optional(),
 });
@@ -104,13 +112,75 @@ const applyOutputSchema = z.object({
 
 const COST_WARNING =
   "WARNING: creating a label spends money (UPS charge billed to the seller's Newegg account), marks " +
-  "the order shipped and cannot be undone through this server; the call is not idempotent. Run " +
-  "newegg_shipping_label_estimate first and only apply after a human has read the preview.";
+  "the order shipped and cannot be undone through this server; the call is not idempotent. Only " +
+  "apply after a human has read the preview. When NEWEGG_MCP_MAX_LABEL_AMOUNT is set the preview " +
+  "carries the quoted cost and is blocked above that cap.";
 
-function hashInput(kind: ShippingLabelKind, marketplace: string, input: unknown): string {
+const toCents = (amount: number): number => Math.round(amount * 100);
+
+function hashInput(
+  kind: ShippingLabelKind,
+  marketplace: string,
+  input: unknown,
+  costCents: number | undefined,
+): string {
   return createHash("sha256")
-    .update(JSON.stringify({ kind, marketplace, input }), "utf8")
+    .update(JSON.stringify({ kind, marketplace, input, costCents: costCents ?? null }), "utf8")
     .digest("hex");
+}
+
+/** The cost of a label, or the reason it could not be determined. */
+type LabelCost = { total: number; currency: string } | { problem: string };
+
+/** A reprint has no quote: Newegg's reprint request carries only the order number. */
+const REPRINT_UNQUOTABLE =
+  "The cost of a reprint cannot be determined (Newegg has no quote for it and does not say whether " +
+  "it is billed), so it cannot be checked against NEWEGG_MCP_MAX_LABEL_AMOUNT. Unset the cap to " +
+  "reprint after a human review.";
+
+/**
+ * Quotes a label purchase through the SDK estimate. Never throws and fails closed: a failed quote,
+ * a package Newegg did not rate, or a total that does not read as positive money is a problem, not
+ * a zero.
+ */
+async function quoteCreateCost(ctx: ToolContext, input: ShippingLabelInput): Promise<LabelCost> {
+  let estimate: ShippingLabelEstimate;
+  try {
+    estimate = await ctx.client.shippingLabels.estimate(input);
+  } catch (error) {
+    const reason = mapErrorToPayload(error, ctx.logger).message;
+    return {
+      problem:
+        `The label cost could not be quoted (${reason}), so it cannot be checked against ` +
+        "NEWEGG_MCP_MAX_LABEL_AMOUNT.",
+    };
+  }
+  let total = 0;
+  for (const pkg of estimate.packages) {
+    const packageTotal = pkg.rate?.total;
+    if (!pkg.succeeded || packageTotal === undefined || !(packageTotal > 0)) {
+      return {
+        problem:
+          "Newegg did not return a readable cost for every package, so the label cost cannot be " +
+          "checked against NEWEGG_MCP_MAX_LABEL_AMOUNT.",
+      };
+    }
+    total += packageTotal;
+  }
+  if (estimate.packages.length === 0 || !Number.isFinite(total) || !(total > 0)) {
+    return {
+      problem:
+        "The label cost read as 0 or less, so it cannot be checked against NEWEGG_MCP_MAX_LABEL_AMOUNT.",
+    };
+  }
+  return { total, currency: estimate.currency };
+}
+
+/** The blocker for a cost above the cap, or undefined when it is within it. */
+function overCap(cost: { total: number; currency: string }, cap: number): string | undefined {
+  return toCents(cost.total) > toCents(cap)
+    ? `The label cost of ${cost.total.toFixed(2)} ${cost.currency} exceeds the server limit of ${cap} (NEWEGG_MCP_MAX_LABEL_AMOUNT).`
+    : undefined;
 }
 
 /**
@@ -156,11 +226,16 @@ function shapePackage(pkg: ShippingLabelPackageResult) {
   };
 }
 
-/** Runs a label preview and stores the plan when it is clean. */
+/**
+ * Runs a label preview and stores the plan when it is clean. With `NEWEGG_MCP_MAX_LABEL_AMOUNT`
+ * set, the plan also carries the quoted cost and is blocked above the cap or when no cost can be
+ * determined (`quote`).
+ */
 async function runLabelPreview<K extends ShippingLabelKind>(
   ctx: ToolContext,
   kind: K,
   plan: () => Promise<ShippingLabelPreview<ShippingLabelInputs[K]>>,
+  quote: (input: ShippingLabelInputs[K]) => Promise<LabelCost>,
 ): Promise<ToolResult> {
   let preview: ShippingLabelPreview<ShippingLabelInputs[K]>;
   try {
@@ -169,10 +244,26 @@ async function runLabelPreview<K extends ShippingLabelKind>(
     return errorResult(mapErrorToPayload(error, ctx.logger));
   }
 
-  const eligible = preview.blockers.length === 0;
+  const { maxLabelAmount } = ctx.config.limits;
+  const blockers = [...preview.blockers];
+  let estimatedCost: number | undefined;
+  // Only quote a plan nothing else blocks: the quote is another Newegg call.
+  if (maxLabelAmount !== undefined && blockers.length === 0) {
+    const cost = await quote(preview.normalized);
+    if ("problem" in cost) {
+      blockers.push(cost.problem);
+    } else {
+      estimatedCost = cost.total;
+      const exceeded = overCap(cost, maxLabelAmount);
+      if (exceeded !== undefined) blockers.push(exceeded);
+    }
+  }
+
+  const eligible = blockers.length === 0;
   let previewId: string | undefined;
   let previewExpiresAt: string | undefined;
   if (eligible) {
+    const costCents = estimatedCost === undefined ? undefined : toCents(estimatedCost);
     const createdAt = ctx.now();
     const expiresAt = new Date(createdAt.getTime() + ctx.config.limits.previewTtlSeconds * 1000);
     previewId = randomBytes(32).toString("base64url");
@@ -180,9 +271,10 @@ async function runLabelPreview<K extends ShippingLabelKind>(
     const record = {
       previewId,
       kind,
-      hash: hashInput(kind, preview.marketplace, preview.normalized),
+      hash: hashInput(kind, preview.marketplace, preview.normalized, costCents),
       marketplace: preview.marketplace,
       input: preview.normalized,
+      costCents,
       createdAt,
       expiresAt,
     } as ShippingLabelPreviewRecord;
@@ -198,9 +290,11 @@ async function runLabelPreview<K extends ShippingLabelKind>(
     currency: preview.currency,
     orderNumber: preview.orderNumber,
     eligible,
-    blockers: preview.blockers,
+    blockers,
     warnings: preview.warnings,
     request: { ...preview.normalized },
+    estimatedCost,
+    maxLabelAmount,
     previewId,
     previewExpiresAt,
   });
@@ -215,6 +309,7 @@ async function runLabelApply<K extends ShippingLabelKind>(
   ctx: ToolContext,
   kind: K,
   previewId: string,
+  quote: (input: ShippingLabelInputs[K]) => Promise<LabelCost>,
   send: (input: ShippingLabelInputs[K]) => Promise<Record<string, unknown>>,
 ): Promise<ToolResult> {
   const outcome = await consumeTypedPreview(ctx, previewId, kind);
@@ -226,9 +321,10 @@ async function runLabelApply<K extends ShippingLabelKind>(
     hash: string;
     marketplace: string;
     input: ShippingLabelInputs[K];
+    costCents?: number;
   };
 
-  if (hashInput(kind, record.marketplace, record.input) !== record.hash) {
+  if (hashInput(kind, record.marketplace, record.input, record.costCents) !== record.hash) {
     return errorResult(
       businessError(
         "preview_tampered",
@@ -236,6 +332,21 @@ async function runLabelApply<K extends ShippingLabelKind>(
           "consumed; create a new preview.",
       ),
     );
+  }
+
+  // Opt-in cost ceiling, re-checked against a fresh quote because the carrier rate may have moved.
+  const { maxLabelAmount } = ctx.config.limits;
+  if (maxLabelAmount !== undefined) {
+    const cost = await quote(record.input);
+    const problem = "problem" in cost ? cost.problem : overCap(cost, maxLabelAmount);
+    if (problem !== undefined) {
+      return errorResult(
+        businessError(
+          "preview_stale",
+          `Nothing was sent: ${problem} The preview has been consumed; create a new preview and review it.`,
+        ),
+      );
+    }
   }
 
   try {
@@ -272,14 +383,19 @@ export const shippingLabelPreviewCreateTool: ToolDefinition<
     "code, UPS size and weight limits, ZIP/postal code) and reads the order to report BLOCKERS " +
     "(unknown order, Newegg-fulfilled, not unshipped, seller part number not on the order, " +
     "quantity not the whole line, non-US destination) and WARNINGS (existing packages, uncovered " +
-    "lines, signature surcharge). Only a clean plan gets a single-use previewId for " +
-    `newegg_shipping_label_apply_create. ${COST_WARNING} No Newegg mutation happens here.`,
+    "lines, signature surcharge). When NEWEGG_MCP_MAX_LABEL_AMOUNT is set it also quotes the label " +
+    "cost (estimatedCost) and blocks a cost above the cap or one that cannot be determined. Only a " +
+    `clean plan gets a single-use previewId for newegg_shipping_label_apply_create. ${COST_WARNING} ` +
+    "No Newegg mutation happens here.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: shippingLabelRequestSchema,
   outputSchema: previewOutputSchema,
   handler: (input: z.infer<typeof shippingLabelRequestSchema>, ctx: ToolContext) =>
-    runLabelPreview(ctx, "shippingLabelCreate", () =>
-      ctx.client.shippingLabels.previewCreate(input),
+    runLabelPreview(
+      ctx,
+      "shippingLabelCreate",
+      () => ctx.client.shippingLabels.previewCreate(input),
+      (normalized) => quoteCreateCost(ctx, normalized),
     ),
 };
 
@@ -295,8 +411,9 @@ export const shippingLabelApplyCreateTool: ToolDefinition<
     "returns tracking numbers and label links. Accepts only the previewId; single-use. If the " +
     "outcome is unknown (timeout, 5xx) the error says so and the write is NOT retried: check the " +
     "order with newegg_orders_get_status and use newegg_shipping_label_preview_reprint to fetch " +
-    `an existing label instead of buying another. ${COST_WARNING} Exists only when the server is ` +
-    "started with writes enabled.",
+    `an existing label instead of buying another. ${COST_WARNING} With NEWEGG_MCP_MAX_LABEL_AMOUNT ` +
+    "set, a fresh quote above the cap (or no readable quote) stops the purchase. Exists only when the " +
+    "server is started with writes enabled.",
   annotations: {
     readOnlyHint: false,
     destructiveHint: true,
@@ -306,22 +423,28 @@ export const shippingLabelApplyCreateTool: ToolDefinition<
   inputSchema: applyCreateInputSchema,
   outputSchema: applyOutputSchema,
   handler: (input, ctx) =>
-    runLabelApply(ctx, "shippingLabelCreate", input.previewId, async (stored) => {
-      const result = await ctx.client.shippingLabels.create(stored);
-      return {
-        correlationId: result.correlationId,
-        marketplace: result.marketplace,
-        operation: result.operation,
-        orderNumber: result.orderNumber,
-        currency: result.currency,
-        shipDate: result.shipDate,
-        packages: result.packages.map(shapePackage),
-        succeededCount: result.succeededCount,
-        failedCount: result.failedCount,
-        totalCharged: result.totalCharged,
-        rateLimit: serializeRateLimit(result.rateLimit),
-      };
-    }),
+    runLabelApply(
+      ctx,
+      "shippingLabelCreate",
+      input.previewId,
+      (stored) => quoteCreateCost(ctx, stored),
+      async (stored) => {
+        const result = await ctx.client.shippingLabels.create(stored);
+        return {
+          correlationId: result.correlationId,
+          marketplace: result.marketplace,
+          operation: result.operation,
+          orderNumber: result.orderNumber,
+          currency: result.currency,
+          shipDate: result.shipDate,
+          packages: result.packages.map(shapePackage),
+          succeededCount: result.succeededCount,
+          failedCount: result.failedCount,
+          totalCharged: result.totalCharged,
+          rateLimit: serializeRateLimit(result.rateLimit),
+        };
+      },
+    ),
 };
 
 const reprintInputSchema = z
@@ -339,14 +462,18 @@ export const shippingLabelPreviewReprintTool: ToolDefinition<
   description:
     "Plan a Newegg Shipping Label Reprint Request WITHOUT sending it. Reads the order and reports " +
     "BLOCKERS (unknown order, Newegg-fulfilled, order not shipped yet). Newegg does not say " +
-    "whether a reprint is billed, so it is treated as billable. Only a clean plan gets a " +
-    "single-use previewId for newegg_shipping_label_apply_reprint. No Newegg mutation happens here.",
+    "whether a reprint is billed, so it is treated as billable and, because it has no quote, it is " +
+    "BLOCKED while NEWEGG_MCP_MAX_LABEL_AMOUNT is set. Only a clean plan gets a single-use " +
+    "previewId for newegg_shipping_label_apply_reprint. No Newegg mutation happens here.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: reprintInputSchema,
   outputSchema: previewOutputSchema,
   handler: (input: z.infer<typeof reprintInputSchema>, ctx: ToolContext) =>
-    runLabelPreview(ctx, "shippingLabelReprint", () =>
-      ctx.client.shippingLabels.previewReprint(input.orderNumber),
+    runLabelPreview(
+      ctx,
+      "shippingLabelReprint",
+      () => ctx.client.shippingLabels.previewReprint(input.orderNumber),
+      async () => ({ problem: REPRINT_UNQUOTABLE }),
     ),
 };
 
@@ -371,19 +498,25 @@ export const shippingLabelApplyReprintTool: ToolDefinition<
   inputSchema: applyReprintInputSchema,
   outputSchema: applyOutputSchema,
   handler: (input, ctx) =>
-    runLabelApply(ctx, "shippingLabelReprint", input.previewId, async (stored) => {
-      const result = await ctx.client.shippingLabels.reprint(stored.orderNumber);
-      const packages = result.packages.map(shapePackage);
-      return {
-        correlationId: result.correlationId,
-        marketplace: result.marketplace,
-        operation: result.operation,
-        orderNumber: result.orderNumber,
-        orderStatus: result.orderStatus,
-        packages,
-        succeededCount: packages.filter((pkg) => pkg.succeeded).length,
-        failedCount: packages.filter((pkg) => !pkg.succeeded).length,
-        rateLimit: serializeRateLimit(result.rateLimit),
-      };
-    }),
+    runLabelApply(
+      ctx,
+      "shippingLabelReprint",
+      input.previewId,
+      async () => ({ problem: REPRINT_UNQUOTABLE }),
+      async (stored) => {
+        const result = await ctx.client.shippingLabels.reprint(stored.orderNumber);
+        const packages = result.packages.map(shapePackage);
+        return {
+          correlationId: result.correlationId,
+          marketplace: result.marketplace,
+          operation: result.operation,
+          orderNumber: result.orderNumber,
+          orderStatus: result.orderStatus,
+          packages,
+          succeededCount: packages.filter((pkg) => pkg.succeeded).length,
+          failedCount: packages.filter((pkg) => !pkg.succeeded).length,
+          rateLimit: serializeRateLimit(result.rateLimit),
+        };
+      },
+    ),
 };
