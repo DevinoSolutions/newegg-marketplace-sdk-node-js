@@ -44,6 +44,9 @@ export {
   type ServiceWriteKind,
   type ServiceWritePreviewRecord,
   type VolumeDiscountPreviewRecord,
+  type ShippingLabelInputs,
+  type ShippingLabelKind,
+  type ShippingLabelPreviewRecord,
 } from "./preview-store/index.js";
 
 export { TOOL_NAMES, type ToolName } from "./tools/names.js";
