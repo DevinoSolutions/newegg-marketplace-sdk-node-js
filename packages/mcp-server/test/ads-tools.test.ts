@@ -353,23 +353,31 @@ describe("newegg_ads_report", () => {
 describe("ads input validation", () => {
   const REPORT = { level: "group", fromDate: "2026-09-01", toDate: "2026-09-30" };
 
+  /** True when the MCP input schema itself refused the call (before any SDK code ran). */
+  const refusedBySchema = async (
+    mcp: Parameters<typeof callTool>[0],
+    name: string,
+    args: Record<string, unknown>,
+  ) => {
+    const res = await callTool(mcp, name, args);
+    return res.isError && /Input validation error/.test(res.text);
+  };
+
   it("refuses impossible calendar dates and reversed ranges without calling Newegg", async () => {
     const harness = await startHarness({ env: US, routes: [] });
     try {
       for (const bad of ["2026-13-45", "2026-02-30"]) {
         expect(
-          (await callTool(harness.mcp, "newegg_ads_campaigns_list", { fromDate: bad })).isError,
+          await refusedBySchema(harness.mcp, "newegg_ads_campaigns_list", { fromDate: bad }),
         ).toBe(true);
         expect(
-          (await callTool(harness.mcp, "newegg_ads_report", { ...REPORT, fromDate: bad })).isError,
+          await refusedBySchema(harness.mcp, "newegg_ads_report", { ...REPORT, fromDate: bad }),
         ).toBe(true);
       }
       const reversed = { fromDate: "2026-10-02", toDate: "2026-10-01" };
-      expect((await callTool(harness.mcp, "newegg_ads_campaigns_list", reversed)).isError).toBe(
-        true,
-      );
+      expect(await refusedBySchema(harness.mcp, "newegg_ads_campaigns_list", reversed)).toBe(true);
       expect(
-        (await callTool(harness.mcp, "newegg_ads_report", { level: "group", ...reversed })).isError,
+        await refusedBySchema(harness.mcp, "newegg_ads_report", { level: "group", ...reversed }),
       ).toBe(true);
       expect(harness.calls).toHaveLength(0);
     } finally {
@@ -408,10 +416,22 @@ describe("ads input validation", () => {
     const harness = await startHarness({ env: US, routes: [route("/search", ok([]))] });
     try {
       expect(
-        (await callTool(harness.mcp, "newegg_ads_campaigns_list", { page: 10_001 })).isError,
+        await refusedBySchema(harness.mcp, "newegg_ads_campaigns_list", { page: 10_001 }),
       ).toBe(true);
       expect(
-        (await callTool(harness.mcp, "newegg_ads_report", { ...REPORT, page: 10_001 })).isError,
+        await refusedBySchema(harness.mcp, "newegg_ads_report", { ...REPORT, page: 10_001 }),
+      ).toBe(true);
+      expect(
+        await refusedBySchema(harness.mcp, "newegg_ads_groups_list", {
+          campaignNumber: 1000001,
+          page: 10_001,
+        }),
+      ).toBe(true);
+      expect(
+        await refusedBySchema(harness.mcp, "newegg_ads_keywords_list", {
+          campaignNumber: 1000001,
+          page: 10_001,
+        }),
       ).toBe(true);
       expect(harness.calls).toHaveLength(0);
       expect(
