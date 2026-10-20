@@ -11,7 +11,11 @@
  */
 import { z } from "zod";
 import type {
+  AdsCampaign,
+  AdsGroupPerformance,
+  AdsKeywordPerformance,
   AdsPage,
+  AdsProductPerformance,
   GetAdsGroupPerformanceInput,
   ListAdsCampaignsInput,
   ListAdsGroupsInput,
@@ -93,7 +97,7 @@ function pageFields<T>(result: AdsPage<T>) {
   };
 }
 
-const campaignRowSchema = z.object({
+const campaignRowSchema = z.strictObject({
   campaignNumber: z.number(),
   name: z.string().optional(),
   countryCode: z.string().optional(),
@@ -111,6 +115,27 @@ const campaignRowSchema = z.object({
   declineReason: z.string().optional(),
   costModel: z.number().optional(),
 });
+
+function serializeCampaign(c: AdsCampaign): z.infer<typeof campaignRowSchema> {
+  return {
+    campaignNumber: c.campaignNumber,
+    name: c.name,
+    countryCode: c.countryCode,
+    type: c.type,
+    activeStatus: c.activeStatus,
+    status: c.status,
+    startDate: c.startDate,
+    endDate: c.endDate,
+    budget: c.budget,
+    dailyBudget: c.dailyBudget,
+    groupCount: c.groupCount,
+    createdAt: c.createdAt,
+    lastEditedAt: c.lastEditedAt,
+    displayType: c.displayType,
+    declineReason: clip(c.declineReason),
+    costModel: c.costModel,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // newegg_ads_campaigns_list
@@ -187,7 +212,7 @@ async function campaignsListHandler(
     const result = await ctx.client.ads.listCampaigns(toCampaignInput(input));
     return okResult({
       ...pageFields(result),
-      campaigns: result.rows.map((c) => ({ ...c, declineReason: clip(c.declineReason) })),
+      campaigns: result.rows.map(serializeCampaign),
     });
   } catch (error) {
     return errorResult(mapErrorToPayload(error, ctx.logger));
@@ -240,10 +265,7 @@ async function campaignGetHandler(
     return okResult({
       marketplace: result.marketplace,
       found: campaign !== undefined,
-      campaign:
-        campaign === undefined
-          ? undefined
-          : { ...campaign, declineReason: clip(campaign.declineReason) },
+      campaign: campaign === undefined ? undefined : serializeCampaign(campaign),
       correlationId: result.correlationId,
       rateLimit: serializeRateLimit(result.rateLimit),
     });
@@ -547,16 +569,49 @@ const performanceOutputSchema = z.object({
   ...pageOutput,
   level: z.enum(["group", "product", "keyword"]),
   rows: z.array(
-    z.looseObject({
+    z.strictObject({
       campaignNumber: z.number().optional(),
+      campaignName: z.string().optional(),
       groupNumber: z.number().optional(),
       groupName: z.string().optional(),
       itemNumber: z.string().optional(),
+      itemTitle: z.string().optional(),
       keyword: z.string().optional(),
+      matchType: z.number().optional(),
+      bid: z.number().optional(),
+      activeStatus: z.string().optional(),
+      status: z.string().optional(),
       ...metricFields,
     }),
   ),
 });
+
+type PerformanceRow = AdsGroupPerformance | AdsProductPerformance | AdsKeywordPerformance;
+
+function serializePerformanceRow(row: PerformanceRow) {
+  return {
+    campaignNumber: row.campaignNumber,
+    campaignName: row.campaignName,
+    groupNumber: row.groupNumber,
+    groupName: row.groupName,
+    itemNumber: "itemNumber" in row ? row.itemNumber : undefined,
+    itemTitle: "itemTitle" in row ? row.itemTitle : undefined,
+    keyword: "keyword" in row ? row.keyword : undefined,
+    matchType: "matchType" in row ? row.matchType : undefined,
+    bid: "bid" in row ? row.bid : undefined,
+    activeStatus: row.activeStatus,
+    status: row.status,
+    spend: row.spend,
+    sales: row.sales,
+    acos: row.acos,
+    impressions: row.impressions,
+    clicks: row.clicks,
+    ctr: row.ctr,
+    orders: row.orders,
+    cr: row.cr,
+    cpc: row.cpc,
+  };
+}
 
 function failInput(message: string, ctx: ToolContext): ToolResult {
   return errorResult(mapErrorToPayload(new Error(message), ctx.logger));
@@ -580,7 +635,11 @@ async function performanceHandler(
       if (input.keyword !== undefined) groupInput.keyword = input.keyword;
       if (input.activeStatus !== undefined) groupInput.activeStatus = input.activeStatus;
       const result = await ctx.client.ads.getGroupPerformance(groupInput);
-      return okResult({ ...pageFields(result), level: "group", rows: result.rows });
+      return okResult({
+        ...pageFields(result),
+        level: "group",
+        rows: result.rows.map(serializePerformanceRow),
+      });
     }
     if (input.campaignNumber === undefined || input.groupNumber === undefined) {
       return failInput(
@@ -598,10 +657,18 @@ async function performanceHandler(
     };
     if (input.level === "product") {
       const result = await ctx.client.ads.getProductPerformance(base);
-      return okResult({ ...pageFields(result), level: "product", rows: result.rows });
+      return okResult({
+        ...pageFields(result),
+        level: "product",
+        rows: result.rows.map(serializePerformanceRow),
+      });
     }
     const result = await ctx.client.ads.getKeywordPerformance(base);
-    return okResult({ ...pageFields(result), level: "keyword", rows: result.rows });
+    return okResult({
+      ...pageFields(result),
+      level: "keyword",
+      rows: result.rows.map(serializePerformanceRow),
+    });
   } catch (error) {
     return errorResult(mapErrorToPayload(error, ctx.logger));
   }
