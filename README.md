@@ -352,6 +352,7 @@ not by verb).
 | `client.reference`           | `getSellerStatus`, `listIndustries`, `listSubcategories`, `listSubcategoryProperties`, `listPropertyValues` (needs `subcategoryId`)                     | —                                                     |
 | `client.sbn`                 | `listShipments`, `getRequestStatus`, `getRequestResult`, `listWarehouses` (Shipped-by-Newegg inbound shipments; `us`/`b2b` only; create/void not built) | —                                                     |
 | `client.shippingLabels`      | `estimate` (UPS quote), `previewCreate`, `previewReprint`                                                                                               | `create` (BUYS a UPS label), `reprint`                |
+| `client.ads`                 | `list*`, `suggest*`, `get*Performance` (12 Sponsored Ads reads; every call is a POST; `us` only; writes not built)                                      | —                                                     |
 | `client.rma`                 | `list`, `get`, `tryGet`, `previewSubmit`, `previewEdit`, `previewProcess`, `previewReject`                                                              | `submit`, `edit`, `process`, `reject`                 |
 | `client.refunds`             | `list`, `get`, `tryGet`, `listRequests`, `getRequestStatus`, `previewIssue`                                                                             | `issue` (courtesy refund; commission is not refunded) |
 | `client.feeds`               | `getStatus`, `getResult`, `waitForResult`                                                                                                               | `submitInventoryFeed`                                 |
@@ -388,6 +389,7 @@ Read tools are always registered. Write tools (marked **W**) are registered only
 | Catalog   | `newegg_catalog_resolve`, `newegg_catalog_lookup_status`                                                                                 | —                                                                                                                        |
 | Reference | `newegg_seller_status`, `newegg_industries_list`, `newegg_subcategories_list`, `newegg_subcategory_properties`, `newegg_property_values` | —                                                                                                                        |
 | SBN       | `newegg_sbn_shipments_list`, `newegg_sbn_request_status`, `newegg_sbn_request_result`, `newegg_sbn_warehouses_list`                      | — (inbound shipment create/void is not built)                                                                            |
+| Ads       | `newegg_ads_campaigns_list`, `newegg_ads_campaign_get`, `newegg_ads_groups_list`, `newegg_ads_keywords_list`, `newegg_ads_report`        | — (Sponsored Ads writes are not built)                                                                                   |
 | Platform  | `newegg_feed_status`, `newegg_feed_result`, `newegg_service_status`                                                                      | —                                                                                                                        |
 
 The server also serves the resources `newegg://capabilities`, `newegg://configuration/public` and
@@ -713,7 +715,8 @@ how to rename the `@devino` scope to your own — is in
 - **Not every write path is live-verified.** Order, RMA, courtesy-refund, pricing and listing
   writes follow the official docs but have not all been sent to a real account.
 - **Not implemented:** Void / Close RMA, Item Ranking, the China-only Tax Setting report, Get
-  Warehouse List, Subcategory Status v1.1, SBN inbound-shipment writes, label void / refund and ads.
+  Warehouse List, Subcategory Status v1.1, SBN inbound-shipment writes, label void / refund and
+  Sponsored Ads writes (the Sponsored Ads reads are covered, contracts §25).
 - **Feed-status date filters are not implemented.** Feed status is queried by request ID
   only; Newegg's documented date-range filter field names did not render in extraction and
   were intentionally left out (see [`docs/platform-differences.md`](docs/platform-differences.md)).
