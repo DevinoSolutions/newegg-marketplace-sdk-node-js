@@ -383,7 +383,16 @@ export const ordersGetStatusTool: ToolDefinition<
 // newegg_orders_get_additional_info
 // ---------------------------------------------------------------------------
 const getAdditionalInfoInputSchema = z
-  .strictObject({ orderNumber: orderNumberSchema })
+  .strictObject({
+    orderNumber: orderNumberSchema,
+    includeIdImages: z
+      .boolean()
+      .optional()
+      .describe(
+        "Set true to include the buyer's ID image links (idCopyFront / idCopyBack). Omitted by default: " +
+          "they are bearer links to a photo of the buyer's identity document.",
+      ),
+  })
   .describe("The order number to fetch additional (compliance) information for.");
 
 const additionalRecipientSchema = z.object({
@@ -409,6 +418,8 @@ const additionalInfoSchema = z.object({
   importTypeChina: z.string().optional(),
   idCopyFront: z.string().optional(),
   idCopyBack: z.string().optional(),
+  /** True when Newegg returned ID image links that were left out because includeIdImages was not set. */
+  idImagesWithheld: z.boolean(),
   reserved: z.array(z.string()),
 });
 
@@ -417,17 +428,39 @@ const getAdditionalInfoOutputSchema = z.object({
   additionalInfo: additionalInfoSchema.optional(),
 });
 
-function serializeAdditionalInfo(info: AdditionalOrderInfo): Record<string, unknown> {
+/** Characters of the buyer's ID number left visible. */
+const ID_NUMBER_VISIBLE_CHARS = 4;
+
+/**
+ * Masks a buyer ID document number to its last 4 characters ("*****1234"). A number of 4 or fewer
+ * characters is masked entirely, so a short number is never shown whole.
+ */
+function maskIdNumber(value: string): string {
+  if (value.length <= ID_NUMBER_VISIBLE_CHARS) return "*".repeat(value.length);
+  return "*".repeat(value.length - ID_NUMBER_VISIBLE_CHARS) + value.slice(-ID_NUMBER_VISIBLE_CHARS);
+}
+
+/**
+ * Shapes the SDK's additional order info for the model. The SDK returns the full data; the MCP
+ * layer masks the buyer's ID number and leaves the ID image links out unless the caller asked.
+ */
+function serializeAdditionalInfo(
+  info: AdditionalOrderInfo,
+  includeIdImages: boolean,
+): Record<string, unknown> {
+  const hasImages = info.idCopyFront !== undefined || info.idCopyBack !== undefined;
   return {
     orderNumber: info.orderNumber,
     recipientIdType: info.recipientIdType,
-    recipientIdNumber: info.recipientIdNumber,
+    recipientIdNumber:
+      info.recipientIdNumber === undefined ? undefined : maskIdNumber(info.recipientIdNumber),
     nispOriginal: info.nispOriginal,
     originalInput: info.originalInput,
     taxDutyTypeChina: info.taxDutyTypeChina,
     importTypeChina: info.importTypeChina,
-    idCopyFront: info.idCopyFront,
-    idCopyBack: info.idCopyBack,
+    idCopyFront: includeIdImages ? info.idCopyFront : undefined,
+    idCopyBack: includeIdImages ? info.idCopyBack : undefined,
+    idImagesWithheld: hasImages && !includeIdImages,
     reserved: info.reserved,
   };
 }
@@ -440,7 +473,10 @@ async function getAdditionalInfoHandler(
     const info = await ctx.client.orders.tryGetAdditionalInfo(input.orderNumber);
     return info === undefined
       ? okResult({ found: false })
-      : okResult({ found: true, additionalInfo: serializeAdditionalInfo(info) });
+      : okResult({
+          found: true,
+          additionalInfo: serializeAdditionalInfo(info, input.includeIdImages === true),
+        });
   } catch (error) {
     return errorResult(mapErrorToPayload(error, ctx.logger));
   }
@@ -454,9 +490,11 @@ export const ordersGetAdditionalInfoTool: ToolDefinition<
   title: "Get Newegg additional order information",
   description:
     "Fetch the additional compliance data Newegg holds for one order: recipient ID document " +
-    "type/number, original recipient addresses, China tax/import designations and ID image " +
-    "links (contains personal data). Newegg.com (us) only; other marketplaces return an " +
-    "unsupported-operation error. Returns found=false when none exists. Read-only.",
+    "type, the ID number MASKED to its last 4 characters, original recipient addresses and China " +
+    "tax/import designations (contains personal data). The buyer's ID image links are LEFT OUT " +
+    "(idImagesWithheld=true says they exist) unless you pass includeIdImages=true. Newegg.com (us) " +
+    "only; other marketplaces return an unsupported-operation error. Returns found=false when " +
+    "none exists. Read-only.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: getAdditionalInfoInputSchema,
   outputSchema: getAdditionalInfoOutputSchema,

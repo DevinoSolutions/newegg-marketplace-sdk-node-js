@@ -210,6 +210,99 @@ describe("newegg_orders_get_additional_info", () => {
     }
   });
 
+  describe("buyer ID masking", () => {
+    const ID_NUMBER = "ABC123456789";
+    const FRONT = "https://img.example/front-sentinel.jpg";
+    const BACK = "https://img.example/back-sentinel.jpg";
+    const idBody = (overrides: Record<string, unknown> = {}) => ({
+      ResponseBody: {
+        AddOrderInfoList: {
+          AddOrderInfo: {
+            OrderNumber: 7,
+            RecipientIDType: "Passport",
+            RecipientIDNumber: ID_NUMBER,
+            IDCopyFront: FRONT,
+            IDCopyBack: BACK,
+            ...overrides,
+          },
+        },
+      },
+    });
+    const usHarness = (payload: unknown) =>
+      startHarness({ env: makeEnv({ NEWEGG_MARKETPLACE: "us" }), routes: [route(payload)] });
+
+    it("masks the ID number to its last 4 characters and withholds the image links by default", async () => {
+      const harness = await usHarness(idBody());
+      try {
+        const res = await callTool(harness.mcp, "newegg_orders_get_additional_info", {
+          orderNumber: 7,
+        });
+        expect(res.isError).toBe(false);
+        const info = res.json.additionalInfo as Record<string, unknown>;
+        expect(info.recipientIdNumber).toBe("********6789");
+        expect(info.recipientIdType).toBe("Passport");
+        expect(info.idCopyFront).toBeUndefined();
+        expect(info.idCopyBack).toBeUndefined();
+        expect(info.idImagesWithheld).toBe(true);
+        expect(res.text).not.toContain(ID_NUMBER);
+        expect(res.text).not.toContain("front-sentinel");
+        expect(res.text).not.toContain("back-sentinel");
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it("returns the image links only with includeIdImages=true, the number still masked", async () => {
+      const harness = await usHarness(idBody());
+      try {
+        const res = await callTool(harness.mcp, "newegg_orders_get_additional_info", {
+          orderNumber: 7,
+          includeIdImages: true,
+        });
+        expect(res.isError).toBe(false);
+        const info = res.json.additionalInfo as Record<string, unknown>;
+        expect(info.idCopyFront).toBe(FRONT);
+        expect(info.idCopyBack).toBe(BACK);
+        expect(info.idImagesWithheld).toBe(false);
+        expect(info.recipientIdNumber).toBe("********6789");
+        expect(res.text).not.toContain(ID_NUMBER);
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it("treats includeIdImages=false like the default", async () => {
+      const harness = await usHarness(idBody());
+      try {
+        const res = await callTool(harness.mcp, "newegg_orders_get_additional_info", {
+          orderNumber: 7,
+          includeIdImages: false,
+        });
+        const info = res.json.additionalInfo as Record<string, unknown>;
+        expect(info.idCopyFront).toBeUndefined();
+        expect(info.idImagesWithheld).toBe(true);
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it("never shows a short ID number whole, and reports no withheld images when there are none", async () => {
+      const harness = await usHarness(
+        idBody({ RecipientIDNumber: "1234", IDCopyFront: undefined, IDCopyBack: undefined }),
+      );
+      try {
+        const res = await callTool(harness.mcp, "newegg_orders_get_additional_info", {
+          orderNumber: 7,
+        });
+        const info = res.json.additionalInfo as Record<string, unknown>;
+        expect(info.recipientIdNumber).toBe("****");
+        expect(info.idImagesWithheld).toBe(false);
+      } finally {
+        await harness.close();
+      }
+    });
+  });
+
   it("is an error on ca (unsupported marketplace)", async () => {
     const harness = await startHarness({ routes: [route(body)] });
     try {
