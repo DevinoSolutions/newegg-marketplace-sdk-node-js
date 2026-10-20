@@ -349,3 +349,100 @@ describe("newegg_ads_report", () => {
     }
   });
 });
+
+describe("ads input validation", () => {
+  const REPORT = { level: "group", fromDate: "2026-09-01", toDate: "2026-09-30" };
+
+  it("refuses impossible calendar dates and reversed ranges without calling Newegg", async () => {
+    const harness = await startHarness({ env: US, routes: [] });
+    try {
+      for (const bad of ["2026-13-45", "2026-02-30"]) {
+        expect(
+          (await callTool(harness.mcp, "newegg_ads_campaigns_list", { fromDate: bad })).isError,
+        ).toBe(true);
+        expect(
+          (await callTool(harness.mcp, "newegg_ads_report", { ...REPORT, fromDate: bad })).isError,
+        ).toBe(true);
+      }
+      const reversed = { fromDate: "2026-10-02", toDate: "2026-10-01" };
+      expect((await callTool(harness.mcp, "newegg_ads_campaigns_list", reversed)).isError).toBe(
+        true,
+      );
+      expect(
+        (await callTool(harness.mcp, "newegg_ads_report", { level: "group", ...reversed })).isError,
+      ).toBe(true);
+      expect(harness.calls).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("accepts an equal range and a leap day", async () => {
+    const harness = await startHarness({
+      env: US,
+      routes: [route("/search", ok([])), route("/group/performance", ok([]))],
+    });
+    try {
+      expect(
+        (
+          await callTool(harness.mcp, "newegg_ads_campaigns_list", {
+            fromDate: "2028-02-29",
+            toDate: "2028-02-29",
+          })
+        ).isError,
+      ).toBe(false);
+      expect(
+        (
+          await callTool(harness.mcp, "newegg_ads_report", {
+            ...REPORT,
+            fromDate: "2026-09-30",
+          })
+        ).isError,
+      ).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("bounds page at 10000 on list and report tools", async () => {
+    const harness = await startHarness({ env: US, routes: [route("/search", ok([]))] });
+    try {
+      expect(
+        (await callTool(harness.mcp, "newegg_ads_campaigns_list", { page: 10_001 })).isError,
+      ).toBe(true);
+      expect(
+        (await callTool(harness.mcp, "newegg_ads_report", { ...REPORT, page: 10_001 })).isError,
+      ).toBe(true);
+      expect(harness.calls).toHaveLength(0);
+      expect(
+        (await callTool(harness.mcp, "newegg_ads_campaigns_list", { page: 10_000 })).isError,
+      ).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("exposes bizCode next to message when a 200 carries rows and an error-looking header", async () => {
+    const harness = await startHarness({
+      env: US,
+      routes: [
+        route("/search", {
+          header: [{ msg: "seller not enrolled", bizCode: "403" }],
+          rows: [],
+          totalRows: 0,
+        }),
+      ],
+    });
+    try {
+      const res = await callTool(harness.mcp, "newegg_ads_campaigns_list", {});
+      expect(res.isError).toBe(false);
+      expect(res.json).toMatchObject({
+        campaigns: [],
+        message: "seller not enrolled",
+        bizCode: "403",
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+});
