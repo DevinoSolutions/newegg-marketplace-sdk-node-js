@@ -328,6 +328,7 @@ not by verb).
 | `client.pricing`             | `get`, `tryGet`, `getMany`, `previewUpdate`                                                                                                             | `update`                                              |
 | `client.orders`              | `list`, `get`, `tryGet`, `getStatus`, `tryGetStatus`, `listAdditionalInfo`, `getAdditionalInfo`, `tryGetAdditionalInfo`                                 | `ship`, `cancel`, `confirmDownload`, `removeItems`    |
 | `client.listings`            | `previewCreate` (offline)                                                                                                                               | `create` (offers on existing Newegg items only)       |
+| `client.volumeDiscounts`     | `get`, `tryGet`, `previewUpdate` (offline)                                                                                                              | `update` (VOLUME_DISCOUNT_DATA feed; Newegg.ca only)  |
 | `client.catalog`             | `resolve`, `submitLookup`, `lookupStatus`, `lookupResult` (Item Lookup Report)                                                                          | —                                                     |
 | `client.reports`             | `settlementSummary`, `settlementTransactions`, `dailyInventory`, `dailyPrice`, `itemBasicInfo`, `orderList`, `rmaList`, `status(id)`                    | — (submitting a report only creates a job)            |
 | `client.reference`           | `getSellerStatus`, `listIndustries`, `listSubcategories`, `listSubcategoryProperties`, `listPropertyValues` (needs `subcategoryId`)                     | —                                                     |
@@ -359,6 +360,7 @@ Read tools are always registered. Write tools (marked **W**) are registered only
 | Inventory | `newegg_inventory_get`, `newegg_inventory_preview_update`                                                                                | **W** `newegg_inventory_apply_update`                                                                                    |
 | Pricing   | `newegg_pricing_get`                                                                                                                     | **W** `newegg_pricing_preview_update`, `newegg_pricing_apply_update`                                                     |
 | Listings  | `newegg_listing_preview_create`                                                                                                          | **W** `newegg_listing_apply_create`                                                                                      |
+| Discounts | `newegg_volume_discount_get`, `newegg_volume_discount_preview_update`                                                                    | **W** `newegg_volume_discount_apply_update`                                                                              |
 | RMA       | `newegg_rma_list`, `newegg_rma_get`                                                                                                      | **W** `newegg_rma_preview_{submit,edit,process,reject}`, `newegg_rma_apply_{submit,edit,process,reject}`                 |
 | Refunds   | `newegg_refund_list`, `newegg_refund_status`                                                                                             | **W** `newegg_refund_preview_issue`, `newegg_refund_apply_issue` (capped by `NEWEGG_MCP_MAX_REFUND_AMOUNT`, default 500) |
 | Orders    | `newegg_orders_list`, `newegg_orders_get`, `newegg_orders_get_status`, `newegg_orders_get_additional_info`                               | none (order ship/cancel is SDK-only)                                                                                     |
@@ -632,7 +634,7 @@ failures; feed submissions never blindly retry after an ambiguous send (they rai
   allowlist, not just a denylist: comments are stripped before matching; the live files may
   import only `vitest`, `../../src/index.js`, `./helpers.js` and a few `node:` built-ins (never
   SDK internals); a namespace with write methods (`inventory`, `pricing`, `feeds`, `orders`,
-  `listings`, `rma`, `refunds`) may only be used as `client.<namespace>.<documented read>(...)`
+  `listings`, `volumeDiscounts`, `rma`, `refunds`) may only be used as `client.<namespace>.<documented read>(...)`
   (no aliasing, destructuring in any position, or naming a write method on any receiver);
   computed member access with a non-literal key, `Object.*` reflection and `Reflect` are
   banned; and every `NeweggClient` namespace and write-namespace method must be classified in

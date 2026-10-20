@@ -51,6 +51,9 @@ export const TOOL_NAMES = {
   reportsStatus: "newegg_reports_status",
   listingPreviewCreate: "newegg_listing_preview_create",
   listingApplyCreate: "newegg_listing_apply_create",
+  volumeDiscountGet: "newegg_volume_discount_get",
+  volumeDiscountPreviewUpdate: "newegg_volume_discount_preview_update",
+  volumeDiscountApplyUpdate: "newegg_volume_discount_apply_update",
 } as const;
 
 export type ToolName = (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES];

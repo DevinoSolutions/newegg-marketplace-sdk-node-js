@@ -15,6 +15,7 @@ import type {
   InventoryUpdateStrategy,
   NormalizedCreateListing,
   NormalizedPriceUpdate,
+  NormalizedVolumeDiscountUpdate,
   ProcessRmaInput,
   RejectRmaInput,
   SubmitRmaInput,
@@ -42,6 +43,12 @@ export interface InventoryPreviewRecord extends PreviewRecordBase {
 export interface ListingPreviewRecord extends PreviewRecordBase {
   readonly kind: "listingCreate";
   readonly items: NormalizedCreateListing[];
+}
+
+/** A stored volume-discount update (contracts §22). Tiers here are authoritative at apply time. */
+export interface VolumeDiscountPreviewRecord extends PreviewRecordBase {
+  readonly kind: "volumeDiscountUpdate";
+  readonly items: NormalizedVolumeDiscountUpdate[];
 }
 
 /**
@@ -85,7 +92,11 @@ export type ServiceWritePreviewRecord = {
 
 /** A stored, ready-to-apply operation, discriminated by `kind`. */
 export type PreviewRecord =
-  InventoryPreviewRecord | ListingPreviewRecord | PricePreviewRecord | ServiceWritePreviewRecord;
+  | InventoryPreviewRecord
+  | ListingPreviewRecord
+  | PricePreviewRecord
+  | VolumeDiscountPreviewRecord
+  | ServiceWritePreviewRecord;
 
 /** Result of an atomic consume — distinguishes the three failure modes ADR 0005 requires. */
 export type ConsumeResult =

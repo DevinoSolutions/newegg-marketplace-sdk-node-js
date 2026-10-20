@@ -124,6 +124,19 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
   { re: /listings\s*\.\s*create\s*\(/, why: "listings.create (write)" },
   { re: /BatchItemCreation/, why: "item-creation feed MessageType (write)" },
   { re: /ITEM_DATA/, why: "item-creation feed request type (write)" },
+  // Volume discounts (contracts §22) — the update is a WRITE (VOLUME_DISCOUNT_DATA feed; the direct
+  // submit endpoint is unused). The read (volumeDiscounts.get / tryGet = Get Volume Discount, a PUT) is
+  // deliberately NOT matched.
+  {
+    re: /volumeDiscounts\s*\??\.\s*(preview)?update\s*\(/,
+    why: "volumeDiscounts.update (volume discount write)",
+  },
+  { re: /VOLUME_DISCOUNT_DATA/, why: "volume-discount feed request type (write)" },
+  {
+    re: /\bSubmitVolumeDiscount(Request|Response)\b/,
+    why: "raw Submit Volume Discount OperationType (write)",
+  },
+  { re: /["'`]?VolumeDiscountList["'`]?\s*:/, why: "raw volume-discount feed body (write)" },
   // Price updates (contracts §16) — WRITE surface. The price READS (pricing.get / tryGet /
   // getMany = Get Item Price) are deliberately NOT matched. The SDK call, the wire endpoints (the
   // US price URL is read-on-PUT / write-on-POST; B2B/CAN inventoryandprice is a PUT write) and the

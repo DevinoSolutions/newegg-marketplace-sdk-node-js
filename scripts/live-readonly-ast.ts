@@ -29,6 +29,9 @@ const WRITE_NAMESPACE_READS: Readonly<Record<string, readonly string[]>> = {
   listings: [],
   rma: ["list", "get", "tryGet"],
   refunds: ["list", "get", "tryGet", "listRequests", "getRequestStatus"],
+  // Get Volume Discount is a READ via PUT (contracts §22.1); update/previewUpdate submit the
+  // VOLUME_DISCOUNT_DATA feed and are in WRITE_METHOD_NAMES.
+  volumeDiscounts: ["get", "tryGet"],
 };
 
 /**

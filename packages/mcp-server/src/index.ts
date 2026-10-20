@@ -43,6 +43,7 @@ export {
   type ServiceWriteInputs,
   type ServiceWriteKind,
   type ServiceWritePreviewRecord,
+  type VolumeDiscountPreviewRecord,
 } from "./preview-store/index.js";
 
 export { TOOL_NAMES, type ToolName } from "./tools/names.js";

@@ -31,6 +31,9 @@ import {
   createInventoryPreviewTool,
   createListingPreviewTool,
   listingApplyTool,
+  volumeDiscountGetTool,
+  createVolumeDiscountPreviewTool,
+  volumeDiscountApplyTool,
   feedResultTool,
   feedStatusInputSchema,
   feedStatusTool,
@@ -183,6 +186,12 @@ export function enabledToolNames(config: McpServerConfig): string[] {
   names.push(TOOL_NAMES.listingPreviewCreate);
   if (config.allowWrites) {
     names.push(TOOL_NAMES.listingApplyCreate);
+  }
+  // Volume discounts (contracts §22): the read and the offline preview are never write-gated;
+  // apply is write-gated.
+  names.push(TOOL_NAMES.volumeDiscountGet, TOOL_NAMES.volumeDiscountPreviewUpdate);
+  if (config.allowWrites) {
+    names.push(TOOL_NAMES.volumeDiscountApplyUpdate);
   }
   // Price updates: BOTH the preview and the apply tool exist only with writes enabled.
   if (config.allowWrites) {
@@ -358,6 +367,11 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   registerToolDefinition(server, createListingPreviewTool(config), ctx);
   if (config.allowWrites) {
     registerToolDefinition(server, listingApplyTool, ctx);
+  }
+  registerToolDefinition(server, volumeDiscountGetTool, ctx);
+  registerToolDefinition(server, createVolumeDiscountPreviewTool(config), ctx);
+  if (config.allowWrites) {
+    registerToolDefinition(server, volumeDiscountApplyTool, ctx);
   }
   if (config.allowWrites) {
     registerToolDefinition(server, createPricingPreviewTool(config), ctx);

@@ -59,4 +59,6 @@ export const Operation = {
   ReportSubmit: "reports.submit",
   ReportStatus: "reports.status",
   ReportResult: "reports.result",
+  // Get Volume Discount (contracts §22.1) - a READ via PUT; 100 requests/hour.
+  VolumeDiscountGet: "volumeDiscounts.get",
 } as const;
