@@ -654,7 +654,7 @@ failures; feed submissions never blindly retry after an ambiguous send (they rai
   allowlist, not just a denylist: comments are stripped before matching; the live files may
   import only `vitest`, `../../src/index.js`, `./helpers.js` and a few `node:` built-ins (never
   SDK internals); a namespace with write methods (`inventory`, `pricing`, `feeds`, `orders`,
-  `listings`, `volumeDiscounts`, `rma`, `refunds`) may only be used as `client.<namespace>.<documented read>(...)`
+  `listings`, `volumeDiscounts`, `rma`, `refunds`, `shippingLabels`) may only be used as `client.<namespace>.<documented read>(...)`
   (no aliasing, destructuring in any position, or naming a write method on any receiver);
   computed member access with a non-literal key, `Object.*` reflection and `Reflect` are
   banned; and every `NeweggClient` namespace and write-namespace method must be classified in
