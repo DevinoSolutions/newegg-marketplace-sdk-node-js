@@ -147,6 +147,12 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
   `UnsupportedMarketplaceOperationError`. Label download URLs may embed credentials and are never
   returned (`labels` carry type, host and file name only). Creating or voiding an inbound shipment
   is not implemented.
+- **`client.ads`** - read-only Sponsored Ads (Newegg.com `us` only; every call is a `POST` but only
+  reads): `listCampaigns`, `listGroups`, `listProducts`, `listKeywords`, `listNegativeKeywords`,
+  `listMatchTypes`, `suggestKeywords`, `suggestCategoryTargeting`, `suggestItemTargeting`, and the
+  synchronous `getGroupPerformance`, `getProductPerformance`, `getKeywordPerformance` (contracts §25).
+  `b2b` / `ca` throw `UnsupportedMarketplaceOperationError`. Creating or changing campaigns, groups,
+  products, keywords or bids is not implemented.
 - **`client.storefront`** - UNOFFICIAL, read-only reader of the public storefront's buy box and
   competing offers (`getOffers`; `us`/`ca` only; no SLA).
 - **`client.inventory`** — `getItem`, `getMany`, `previewUpdate`, `updateItem`, `updateMany`.
