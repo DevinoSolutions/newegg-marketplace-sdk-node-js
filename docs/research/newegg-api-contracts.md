@@ -3207,6 +3207,158 @@ Inbound Shipment Status Request and Get Inbound Shipment Request Result (§21.3,
 optional filters are accepted there and the `ErrorList` entry shape; the list filters and dates (§21.2); the
 non-empty shipment row shape; and that `ShippingMethodCode` takes only 1 or 2.
 
+## 22. Volume discounts
+
+Quantity-tier pricing ("buy 5+ at X, 10+ at Y") per item. Sources (read 2026-10-20):
+<https://developer.newegg.com/newegg_marketplace_api/item_management/get_volume_discount_request_result>
+(read) and
+<https://developer.newegg.com/newegg_marketplace_api/item_management/volume_discount_creation_update-removal>
+(direct submit). The documented direct submit is **not used by the SDK** (§22.2); the write goes through the
+`VOLUME_DISCOUNT_DATA` data feed (§22.3).
+
+The SDK surface is `client.volumeDiscounts` (`get`, `tryGet` = reads; `previewUpdate`, `update` = the feed
+write). Platform differences (URL prefix, whether the feed write is verified) live in
+`packages/sdk/src/platform/volume-discount.ts` (ADR 0002).
+
+### 22.1 Get Volume Discount (READ, via PUT)
+
+`PUT {prefix}contentmgmt/item/volumediscount?sellerid=…` with prefix `` (US, `api.newegg.com/marketplace/`),
+`b2b/` (Newegg Business) or `can/` (Newegg.ca). Rate limit per the page: 100 requests/hour. This is a READ
+despite the verb (classify by this contract, not the verb); it is the only member of the namespace that is
+safe in the live suite. Body:
+
+```json
+{
+  "OperationType": "GetVolumeDiscountRequest",
+  "RequestBody": { "NeweggItemNumber": "9SIAFAKE0000001" }
+}
+```
+
+`RequestBody` takes `NeweggItemNumber` OR `SellerPartNumber` (the page: each is required only when the other is
+absent). The SDK sends `NeweggItemNumber` when both are supplied.
+
+Response (documented): `ResponseBody > ItemVolumeDiscountInfo { SellerPartNumber, NeweggItemNumber,
+DiscountSetting { Tier { Priority, Quantity, SellingPrice, EnableFreeShipping } } }`, all values quoted strings;
+the XML example has two `Tier` elements while the JSON example shows one object, i.e. `Tier` is object-OR-array.
+
+**Live-verified 2026-10-16 (Newegg.ca):** the read works on CAN with the body above. A populated discount comes
+back with `DiscountSetting` as a **bare array** of tier objects (no `Tier` key) whose values are **numbers**
+(`Priority`, `Quantity`, `SellingPrice`, `EnableFreeShipping` 0|1), and `IsSuccess` as a boolean. The parser
+(`parseVolumeDiscount`) accepts both this and the documented `{ Tier: object|array }` string form and orders
+tiers by `Priority`.
+
+An item with no discount returns HTTP 400 with `[{ "Code": "CT060", "Message": "Not found. The requested item
+does not have volume discount yet." }]`. `tryGet` maps exactly `CT060` to `undefined`; every other error code
+(`CT001` invalid item number, `CT002` invalid seller part number, `CT059` identifier missing) still throws.
+A 200 with no `ItemVolumeDiscountInfo` is a `NeweggApiError`.
+
+**Propagation lag:** after a feed finished successfully the read kept returning `CT060` for about 13 minutes
+(feed submitted 04:33 Pacific; 400 `CT060` at +2 and +8 minutes; 200 with the tiers at +13 minutes). Do not read
+a discount back immediately after `update` and conclude it failed; poll the feed result instead (§7.5, §7.6).
+
+### 22.2 Submit Volume Discount (direct) - documented, NOT used
+
+`POST {prefix}contentmgmt/item/volumediscount?sellerid=…`, `OperationType: "SubmitVolumeDiscountRequest"`,
+body `RequestBody > ItemVolumeDiscountInfo { SellerPartNumber?, NeweggItemNumber?, VolumeActivation,
+DiscountSetting { Tier[] { Priority, Quantity, SellingPrice, EnableFreeShipping } } }`. Documented rules:
+
+- Up to 3 tiers (the page describes a "3-tier calculation"; `Priority` is 1-3).
+- Quantity: `1 pc < tier-1 < tier-2 < tier-3` (the page also writes "minimum purchase quantity (if any) <=
+  tier-1"). Errors `CT058` (invalid first-tier quantity), `CT061` (quantities not ascending).
+- Price: regular selling price `> tier-1 > tier-2 > tier-3`. Error `CT062`.
+- Shipping: `EnableFreeShipping` 0 = default, 1 = free; `tier-1 >= tier-2 >= tier-3` (a higher tier cannot have free shipping if a lower one does not). Error `CT063` (invalid shipping method).
+- `CT064` tiers fractured (set them from tier 1 in order); `CT066` item restricted; `CT059` identifier missing.
+- An ongoing promotion price below the tier-1 price disables the volume discount for customers; the discount is
+  documented as applying to US shipping destinations only. Rate limit 100 requests/hour.
+- `VolumeActivation` `true` creates/updates, `false` removes (documented).
+
+**Live-observed 2026-10-16 (Newegg.ca): this endpoint is unusable for writes.** With `VolumeActivation: "True"`
+(the capitalised value the schema's enumeration accepts) the call returned HTTP 500 `InternalError`; `"true"`,
+`"1"` and `"Yes"` return 400 `CE003` ("The value ... is invalid ... The Enumeration constraint failed").
+The SDK therefore does not call it, and the live guard forbids the `SubmitVolumeDiscountRequest` marker.
+
+### 22.3 The `VOLUME_DISCOUNT_DATA` feed (the SDK write path)
+
+`POST {prefix}datafeedmgmt/feeds/submitfeed?sellerid=…&requesttype=VOLUME_DISCOUNT_DATA` with a JSON envelope,
+through the shared ledgered submit (ADR 0004; response shape and indeterminate-submission handling as §7.3).
+`Overwrite` is not part of this envelope (repo hard rule 4 concerns `Overwrite`, which the SDK never sets).
+
+```json
+{
+  "NeweggEnvelope": {
+    "Header": { "DocumentVersion": "1.0" },
+    "MessageType": "VolumeDiscount",
+    "Message": {
+      "VolumeDiscountList": {
+        "ItemVolumeDiscountInfo": [
+          {
+            "SellerPartNumber": "FAKE-SKU-1",
+            "NeweggItemNumber": "9SIAFAKE0000001",
+            "VolumeActivation": "True",
+            "DiscountSetting": {
+              "Tier": [
+                {
+                  "Priority": "1",
+                  "Quantity": "5",
+                  "SellingPrice": "95.50",
+                  "EnableFreeShipping": "1"
+                },
+                {
+                  "Priority": "2",
+                  "Quantity": "10",
+                  "SellingPrice": "90.00",
+                  "EnableFreeShipping": "0"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+**Live-verified 2026-10-16 (Newegg.ca):** this exact envelope (one item, two tiers) was accepted by `submitfeed`
+(HTTP 200, `RequestStatus: SUBMITTED`, `RequestType: VOLUME_DISCOUNT_DATA`), reached `FINISHED` within about two
+minutes, and the feed result was a `ProcessingReport` with `OriginalMessageType: VolumeDiscount` and
+`ProcessedCount 1 / SuccessCount 1 / WithErrorCount 0`. The discount became readable ~13 minutes later (§22.1).
+`SellerPartNumber` and `NeweggItemNumber` were both sent; every numeric field is a quoted string and
+`VolumeActivation` is the literal `"True"`.
+
+SDK behaviour on top of the wire:
+
+- An update **replaces the item's whole discount** (it sends `VolumeActivation: "True"` with the full tier set).
+  Removing a discount (`VolumeActivation: "False"`) is not implemented - **ASSUMPTION** about its feed form.
+- Prices are rounded to the cent and serialised with two decimals; priorities are assigned from array order.
+- Feeds are chunked at 10,000 items - **ASSUMPTION** (the generic feed record limit of §7.4; no volume-discount
+  specific limit is documented).
+- `previewUpdate` is offline (no network) and returns exactly the envelopes `update` would submit.
+
+### 22.4 SDK validation (client side, before any network call)
+
+1 to 3 tiers per item (more is rejected: the docs name three tiers); `quantity` an integer `>= 2` and strictly
+ascending; `sellingPrice` finite, `> 0`, at most 99999.99 and, after cent rounding, strictly descending;
+`freeShipping` optional (default false); at least one of `neweggItemNumber` / `sellerPartNumber` per item (seller
+part number <= 40 characters); no two inputs for the same item; unknown keys rejected. The rules that need the
+item's regular price (`regular > tier-1`, `CT062`) and its minimum purchase quantity (`CT058`) cannot be checked
+offline: they surface as warnings on the preview and as feed-result errors. A tier with free shipping after a lower tier
+without it (breaking `tier-1 >= tier-2 >= tier-3`, `CT063`) produces a warning.
+
+Writes are enabled only for the Canadian marketplace, the only one verified live; US and B2B throw
+`UnsupportedMarketplaceOperationError` from `previewUpdate` / `update` (reads work on all three).
+
+**ASSUMPTIONs (unverified, retire with a live probe or the official doc):**
+
+- The US and B2B `VOLUME_DISCOUNT_DATA` feed (envelope and acceptance) - only Newegg.ca was exercised.
+- `VolumeActivation: "False"` removal through the feed, and a feed that omits `NeweggItemNumber` (only seller part
+  number) - both identifiers were sent in the live feed.
+- That feed-level errors for `CT058` to `CT066` appear in the feed `ProcessingReport` result with the codes listed
+  in 22.2 (only the success report was observed).
+- The 10,000-item feed chunk size (22.3) and the 100 requests/hour limit applying to the feed path.
+- The upper bound of 99999.99 on `sellingPrice` and 1,000,000 on `quantity` are SDK sanity limits, not documented.
+- The read's behaviour for a deactivated item or for an item the seller does not own (assumed `CT001`/`CT060`).
+
 ## 24. Order Management — Get Additional Order Information (read)
 
 Source: `https://developer.newegg.com/newegg_marketplace_api/order_management/get_additional_order_information/` (2026-10-20).

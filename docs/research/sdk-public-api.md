@@ -60,6 +60,7 @@ export interface NeweggClient {
   readonly catalog: CatalogApi; // read-only catalog resolution (Item Lookup Report, contracts §12)
   readonly reports: ReportsApi; // read-only settlement / daily inventory / daily price reports (contracts §17)
   readonly listings: ListingsApi; // WRITE: existing-item listing creation (ITEM_DATA&v2 feed, contracts §13)
+  readonly volumeDiscounts: VolumeDiscountsApi; // volume-discount reads + WRITE via the VOLUME_DISCOUNT_DATA feed (contracts §22); update is Newegg.ca only
   // UNOFFICIAL public storefront buy-box/offers reader (contracts §14). Unauthenticated,
   // read-only, no SLA — NOT part of the seller API. "us"/"ca" only; "b2b" throws
   // UnsupportedMarketplaceOperationError on call (never at construction).
@@ -1885,6 +1886,92 @@ export interface ListingsApi {
   // requestId(s) with feeds.getStatus / feeds.getResult. Returns FeedSubmission.
   create(
     input: CreateListingInputOrNormalized | CreateListingInputOrNormalized[],
+    options?: RequestOptions,
+  ): Promise<FeedSubmission>;
+}
+
+// ----------------------------------------------------------------------------
+// volumeDiscounts (quantity-tier pricing — contracts §22)
+// ----------------------------------------------------------------------------
+// get/tryGet are READS (Get Volume Discount is a PUT on the wire; works on all three platforms).
+// update() submits a VOLUME_DISCOUNT_DATA data feed (the direct Submit Volume Discount endpoint is
+// unusable on Newegg.ca, §22.2) and is enabled for the Canadian marketplace only; other
+// marketplaces throw UnsupportedMarketplaceOperationError from previewUpdate/update.
+// An update REPLACES the item's whole discount. previewUpdate() is offline (zero network).
+export interface GetVolumeDiscountInput {
+  neweggItemNumber?: string; // wins when both are given
+  sellerPartNumber?: string;
+}
+
+export interface VolumeDiscountTierSnapshot {
+  priority: number; // 1-based
+  quantity: number;
+  sellingPrice: number;
+  freeShipping: boolean; // EnableFreeShipping 1
+}
+
+export interface VolumeDiscountSnapshot {
+  marketplace: NeweggMarketplace;
+  neweggItemNumber?: string;
+  sellerPartNumber?: string;
+  tiers: VolumeDiscountTierSnapshot[]; // ordered by priority
+  correlationId: string;
+  rateLimit?: RateLimitInfo;
+  raw?: unknown; // only with includeRaw, sanitized
+}
+
+export interface VolumeDiscountTier {
+  quantity: number; // integer >= 2, strictly above the previous tier's
+  sellingPrice: number; // > 0, strictly below the previous tier's (cent-rounded)
+  freeShipping?: boolean; // default false
+}
+
+export interface VolumeDiscountUpdate {
+  neweggItemNumber?: string; // at least one identifier is required
+  sellerPartNumber?: string;
+  tiers: VolumeDiscountTier[]; // 1-3, tier 1 first
+}
+
+export interface NormalizedVolumeDiscountTier {
+  priority: number;
+  quantity: number;
+  sellingPrice: number;
+  freeShipping: boolean;
+}
+
+export interface NormalizedVolumeDiscountUpdate {
+  inputIndex: number;
+  neweggItemNumber?: string;
+  sellerPartNumber?: string;
+  tiers: NormalizedVolumeDiscountTier[];
+}
+
+export interface VolumeDiscountUpdatePreview {
+  marketplace: NeweggMarketplace;
+  items: NormalizedVolumeDiscountUpdate[];
+  itemCount: number;
+  chunkCount: number;
+  warnings: string[];
+  envelopes: unknown[]; // one §22.3 envelope per chunk — exactly what update() would submit
+}
+
+// Accepts raw inputs OR the normalized output of a prior previewUpdate (round-trip safe).
+export type VolumeDiscountUpdateOrNormalized =
+  VolumeDiscountUpdate | NormalizedVolumeDiscountUpdate;
+
+export interface VolumeDiscountsApi {
+  get(input: GetVolumeDiscountInput, options?: RequestOptions): Promise<VolumeDiscountSnapshot>; // CT060 => NeweggApiError
+  tryGet(
+    input: GetVolumeDiscountInput,
+    options?: RequestOptions,
+  ): Promise<VolumeDiscountSnapshot | undefined>; // undefined only for CT060 (no discount yet)
+  previewUpdate(
+    input: VolumeDiscountUpdateOrNormalized | VolumeDiscountUpdateOrNormalized[],
+  ): VolumeDiscountUpdatePreview;
+  // WRITE: submit the VOLUME_DISCOUNT_DATA feed (chunked at 10,000). Poll the returned requestId(s)
+  // with feeds.getStatus / feeds.getResult; the discount is readable ~13 minutes after FINISHED.
+  update(
+    input: VolumeDiscountUpdateOrNormalized | VolumeDiscountUpdateOrNormalized[],
     options?: RequestOptions,
   ): Promise<FeedSubmission>;
 }

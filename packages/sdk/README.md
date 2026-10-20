@@ -136,6 +136,9 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
   Newegg item number to Newegg item numbers), plus `submitLookup`, `lookupStatus`, `lookupResult`.
 - **`client.listings`** - `previewCreate` (offline) and **`create`** (write): add seller offers
   on EXISTING Newegg items through an `ITEM_DATA` feed. It never creates product records.
+- **`client.volumeDiscounts`** - reads `get`, `tryGet` (Get Volume Discount is a `PUT`, still a read);
+  `previewUpdate` (offline) and **`update`** (write): set 1-3 quantity tiers per item through a
+  `VOLUME_DISCOUNT_DATA` feed. Newegg.ca only for writes; an update replaces the item's whole discount.
 - **`client.reference`** - read-only: `getSellerStatus`, `listIndustries`, `listSubcategories`,
   `listSubcategoryProperties`, `listPropertyValues` (requires `subcategoryId`).
 - **`client.sbn`** - read-only Shipped-by-Newegg inbound shipments: `listShipments`,
