@@ -32,6 +32,9 @@ const WRITE_NAMESPACE_READS: Readonly<Record<string, readonly string[]>> = {
   // Get Volume Discount is a READ via PUT (contracts §22.1); update/previewUpdate submit the
   // VOLUME_DISCOUNT_DATA feed and are in WRITE_METHOD_NAMES.
   volumeDiscounts: ["get", "tryGet"],
+  // Shipping Label Service (contracts §23): buying or reprinting a label spends money, and even the
+  // quote needs a real order number and is unverified, so the namespace may not be touched at all.
+  shippingLabels: [],
 };
 
 /**
@@ -70,6 +73,11 @@ const WRITE_METHOD_NAMES: ReadonlySet<string> = new Set([
   "previewVoidShipment",
   "createInboundShipment",
   "voidInboundShipment",
+  // Shipping Label Service (contracts §23): `create` / `previewCreate` are listed above. `reprint`
+  // re-issues a label (treated as billable) and `estimate` is an unverified quote; none may be named.
+  "reprint",
+  "previewReprint",
+  "estimate",
   // Function.prototype helpers that re-bind or re-invoke a method without naming a write verb.
   "call",
   "apply",

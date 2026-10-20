@@ -120,6 +120,22 @@ const FORBIDDEN: ReadonlyArray<{ re: RegExp; why: string }> = [
     re: /inboundshipment\/plansuggestion|\bplansuggestion\b|\bGetPlanSuggestion(Request|Response)\b/i,
     why: "SBN plan-suggestion endpoint (not classified as a read)",
   },
+  // Shipping Label Service (contracts §23). Create buys a UPS label and bills the seller; reprint is
+  // treated as billable; the estimate is unverified and needs a real order. The SDK namespace is in
+  // live-readonly-ast.ts (no method may be called); the wire endpoints and OperationTypes are listed
+  // here so a hand-built request cannot land in a live test either.
+  {
+    re: /\bshippingLabels\s*\??\.\s*\w+\s*\(/i,
+    why: "shippingLabels call (buys or reprints a UPS label, or an unverified quote)",
+  },
+  {
+    re: /shippinglabel\/(create|estimate|reprint)shippinglabel|\b(create|estimate|reprint)shippinglabel\b/i,
+    why: "Shipping Label Service endpoint (buys or reprints a label)",
+  },
+  {
+    re: /\b(Create|Estimate|Reprint)ShippingLabel(Request|Response)?\b/,
+    why: "raw Shipping Label Service OperationType (write)",
+  },
   // Listing creation (Existing Item Creation feed, contracts §13) — WRITE surface.
   { re: /listings\s*\.\s*create\s*\(/, why: "listings.create (write)" },
   { re: /BatchItemCreation/, why: "item-creation feed MessageType (write)" },
