@@ -3697,13 +3697,27 @@ Response:
 }
 ```
 
-`totalRows` may arrive as a number or a string. **ASSUMPTIONs (unprobed):**
+`totalRows` may arrive as a number or a string.
+
+**Input checks (SDK and MCP, before sending).** `fromDate` / `toDate` must be real calendar days
+(`2026-13-45` and `2026-02-30` are refused, a leap day is accepted) and `fromDate` must not be after
+`toDate` (equal is fine). `page` is an integer from 1 to **10,000**; the pages document no page ceiling, so
+the bound is an SDK sanity limit, not a Newegg rule. A `Date` input is read as Pacific time and checked the
+same way.
+
+**ASSUMPTIONs (unprobed):**
 
 - the **failure** shape. No page documents one. The SDK treats a response that has no `rows` member (an
   error `header`, or a bare `[ { "Code": "...", "Message": "..." } ]` list as the other families use) as a
   `NeweggApiError` carrying `bizCode` as `neweggErrorCode`, so a failure can never read as an empty result;
 - that an empty result is `"rows": []` (the readers also accept `""` and a single object);
-- what `bizCode` values mean (only `025` with `msg: "success"` appears in the samples).
+- what `bizCode` values mean (only `025` with `msg: "success"` appears in the samples);
+- a **200 that carries a `rows` member next to an error-looking `header`** (for example `msg: "seller not
+  enrolled"`, `bizCode: "403"`) is **not** thrown. Decision: no page documents which `bizCode` values mean
+  failure (the success codes already differ per endpoint: `025` and `061`), so the SDK cannot classify the
+  header reliably and a wrong guess would turn real data into an error. It returns the page with `rows` as sent
+  and surfaces `message` and `bizCode`; the MCP list and report tools expose both next to each other so the
+  caller can see the header. Revisit and throw once a failing `header` has been observed live.
 
 ### 25.3 List reads
 
