@@ -750,3 +750,95 @@ describe("ads write endpoints are unreachable (contracts section 25.1)", () => {
     expect(seen).toEqual(READ_PATHS);
   });
 });
+
+describe("ads input validation", () => {
+  type Client = ReturnType<typeof makeClient>["client"];
+  const rangeCalls: ReadonlyArray<readonly [string, (c: Client, r: object) => Promise<unknown>]> = [
+    ["listCampaigns", (c, r) => c.ads.listCampaigns(r)],
+    ["listGroups", (c, r) => c.ads.listGroups({ campaignNumber: 1, ...r })],
+    [
+      "getGroupPerformance",
+      (c, r) => c.ads.getGroupPerformance({ fromDate: "2026-09-01", toDate: "2026-09-30", ...r }),
+    ],
+    [
+      "getProductPerformance",
+      (c, r) =>
+        c.ads.getProductPerformance({
+          campaignNumber: 1,
+          groupNumber: 2,
+          fromDate: "2026-09-01",
+          toDate: "2026-09-30",
+          ...r,
+        }),
+    ],
+    [
+      "getKeywordPerformance",
+      (c, r) =>
+        c.ads.getKeywordPerformance({
+          campaignNumber: 1,
+          groupNumber: 2,
+          fromDate: "2026-09-01",
+          toDate: "2026-09-30",
+          ...r,
+        }),
+    ],
+  ];
+
+  it.each(rangeCalls)("%s rejects dates that are not real calendar days", async (_name, call) => {
+    const { client, calls } = makeClient("us", route("", ok([])));
+    for (const bad of ["2026-13-45", "2026-02-30", "2026-00-10", "2026-04-31"]) {
+      await expect(call(client, { fromDate: bad })).rejects.toBeInstanceOf(NeweggValidationError);
+      await expect(call(client, { toDate: bad })).rejects.toBeInstanceOf(NeweggValidationError);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each(rangeCalls)("%s rejects fromDate after toDate", async (_name, call) => {
+    const { client, calls } = makeClient("us", route("", ok([])));
+    await expect(call(client, { fromDate: "2026-10-02", toDate: "2026-10-01" })).rejects.toThrow(
+      NeweggValidationError,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  it("accepts a leap day, an equal range and a Date input", async () => {
+    const { client, calls } = makeClient("us", route("/search", ok([])));
+    await client.ads.listCampaigns({ fromDate: "2028-02-29", toDate: "2028-02-29" });
+    await client.ads.listCampaigns({
+      fromDate: new Date("2026-09-01T12:00:00Z"),
+      toDate: "2026-09-30",
+    });
+    expect(calls).toHaveLength(2);
+    await expect(client.ads.listCampaigns({ fromDate: "2027-02-29" })).rejects.toBeInstanceOf(
+      NeweggValidationError,
+    );
+  });
+
+  it("bounds page at 10000 and rejects page 0", async () => {
+    const { client, calls } = makeClient("us", route("/search", ok([])));
+    await client.ads.listCampaigns({ page: 10_000 });
+    expect(calls).toHaveLength(1);
+    await expect(client.ads.listCampaigns({ page: 10_001 })).rejects.toBeInstanceOf(
+      NeweggValidationError,
+    );
+    await expect(client.ads.listCampaigns({ page: 0 })).rejects.toBeInstanceOf(
+      NeweggValidationError,
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it("keeps an empty page for a 200 with rows and an error-looking header, exposing msg and bizCode", async () => {
+    const { client } = makeClient(
+      "us",
+      route("/search", {
+        header: [{ msg: "seller not enrolled", bizCode: "403" }],
+        rows: [],
+        totalRows: 0,
+      }),
+    );
+    const page = await client.ads.listCampaigns();
+    expect(page.rows).toEqual([]);
+    expect(page.message).toBe("seller not enrolled");
+    expect(page.bizCode).toBe("403");
+  });
+});

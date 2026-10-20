@@ -46,6 +46,7 @@ import {
   ADS_GROUP_PERFORMANCE_EXT_URL,
   ADS_KEYWORD_PERFORMANCE_EXT_URL,
   ADS_LIST_PAGE_SIZE_MAX,
+  ADS_PAGE_MAX,
   ADS_PAGE_SIZE_DEFAULT,
   ADS_PAGE_SIZE_MAX,
   ADS_PRODUCT_PERFORMANCE_EXT_URL,
@@ -133,6 +134,29 @@ function checkText(
   return trimmed;
 }
 
+/** True for a real `YYYY-MM-DD` calendar day (rejects `2026-13-45` and `2026-02-30`). */
+function isCalendarDay(value: string): boolean {
+  if (!DATE_ONLY.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number) as [number, number, number];
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
+}
+
+/** Flags a range whose `fromDate` falls after its `toDate` (both already validated; ISO sorts). */
+function checkDayOrder(
+  fromDate: string | undefined,
+  toDate: string | undefined,
+  issues: NeweggValidationIssue[],
+): void {
+  if (fromDate !== undefined && toDate !== undefined && fromDate > toDate) {
+    issues.push({ path: "fromDate", message: "must not be after toDate" });
+  }
+}
+
 /** Renders a date-only criterion (`YYYY-MM-DD`); a `Date` is read as Pacific time. */
 function checkDay(
   value: Date | string | undefined,
@@ -141,7 +165,7 @@ function checkDay(
 ): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value === "string") {
-    if (DATE_ONLY.test(value)) return value;
+    if (isCalendarDay(value)) return value;
   } else if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return formatPacificWallClock(value).slice(0, 10);
   }
@@ -217,8 +241,8 @@ function buildPaging(
     issues.push({ path: "pageSize", message: `must be an integer between 1 and ${maxPageSize}` });
   }
   const page = input.page ?? 1;
-  if (!Number.isInteger(page) || page < 1) {
-    issues.push({ path: "page", message: "must be an integer >= 1" });
+  if (!Number.isInteger(page) || page < 1 || page > ADS_PAGE_MAX) {
+    issues.push({ path: "page", message: `must be an integer between 1 and ${ADS_PAGE_MAX}` });
   }
   const { sortField, sortOrder } = input;
   if (sortField !== undefined && !SORT_FIELD.test(sortField)) {
@@ -294,6 +318,7 @@ export function buildCampaignListRequest(
   const activeStatus = activeStatusWire(input.activeStatus, issues);
   const fromDate = checkDay(input.fromDate, "fromDate", issues);
   const toDate = checkDay(input.toDate, "toDate", issues);
+  checkDayOrder(fromDate, toDate, issues);
   throwIfInvalid("Invalid Sponsored Ads campaign list request.", issues);
   return {
     body: {
@@ -326,6 +351,7 @@ export function buildGroupListRequest(
   const activeStatus = activeStatusWire(input.activeStatus, issues);
   const fromDate = checkDay(input.fromDate, "fromDate", issues);
   const toDate = checkDay(input.toDate, "toDate", issues);
+  checkDayOrder(fromDate, toDate, issues);
   throwIfInvalid("Invalid Sponsored Ads group list request.", issues);
   return {
     body: {
@@ -568,6 +594,7 @@ export function buildGroupPerformanceRequest(
   const activeStatus = activeStatusWire(input.activeStatus, issues);
   const fromDate = checkRequiredDay(input.fromDate, "fromDate", issues);
   const toDate = checkRequiredDay(input.toDate, "toDate", issues);
+  checkDayOrder(fromDate, toDate, issues);
   throwIfInvalid("Invalid Sponsored Ads group performance request.", issues);
   // The performance pages send identifiers as strings in their samples; mirror them.
   return {
@@ -603,6 +630,7 @@ export function buildProductPerformanceRequest(
   const activeStatus = activeStatusWire(input.activeStatus, issues);
   const fromDate = checkRequiredDay(input.fromDate, "fromDate", issues);
   const toDate = checkRequiredDay(input.toDate, "toDate", issues);
+  checkDayOrder(fromDate, toDate, issues);
   throwIfInvalid("Invalid Sponsored Ads product performance request.", issues);
   return {
     body: {
@@ -636,6 +664,7 @@ export function buildKeywordPerformanceRequest(
   const activeStatus = activeStatusWire(input.activeStatus, issues);
   const fromDate = checkRequiredDay(input.fromDate, "fromDate", issues);
   const toDate = checkRequiredDay(input.toDate, "toDate", issues);
+  checkDayOrder(fromDate, toDate, issues);
   throwIfInvalid("Invalid Sponsored Ads keyword performance request.", issues);
   return {
     body: {
