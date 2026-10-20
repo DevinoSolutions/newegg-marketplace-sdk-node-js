@@ -49,7 +49,11 @@ export function resolveRedirectTarget(
   if (original.protocol === "https:" && next.protocol !== "https:") {
     return REDIRECT_REFUSED_DOWNGRADE;
   }
-  if (next.origin !== original.origin) return REDIRECT_REFUSED_CROSS_ORIGIN;
+  // `blob:http://host/...` reports the origin of its inner URL, so the scheme is compared on its
+  // own: only a URL with the same scheme can be the same origin.
+  if (next.protocol !== original.protocol || next.origin !== original.origin) {
+    return REDIRECT_REFUSED_CROSS_ORIGIN;
+  }
   return next;
 }
 

@@ -65,6 +65,43 @@ describe("redirect target rules", () => {
     }
   });
 
+  it("treats spellings of the same origin as one origin, and look-alikes as another", () => {
+    for (const location of [
+      "https://api.example.test:443/abs",
+      "https://API.EXAMPLE.TEST/abs",
+      "https://api.example.test:/abs",
+      "  https://api.example.test/abs  ",
+      "\\api.example.test\abs",
+    ]) {
+      expect(resolveRedirectTarget(original, original, location), location).toBeInstanceOf(URL);
+    }
+    for (const location of [
+      "https://api.example.test./steal",
+      "https://api.example.test@elsewhere.example/steal",
+      "https://api.example.test%2eelsewhere.example/steal",
+      "https://api.examplе.test/steal",
+      "\\elsewhere.example\steal",
+      "/\elsewhere.example/steal",
+      "https://[::1]/steal",
+      "https://api.example.test:8443/steal",
+    ]) {
+      const next = resolveRedirectTarget(original, original, location);
+      const host = typeof next === "string" ? "" : next.host;
+      // Either refused, or resolved onto the original host: never onto another one.
+      expect(typeof next === "string" || host === original.host, location).toBe(true);
+    }
+  });
+
+  it("refuses a blob: Location, whose origin is that of its inner URL", () => {
+    const loopback = new URL("http://127.0.0.1:1234/marketplace/x");
+    expect(resolveRedirectTarget(loopback, loopback, "blob:http://127.0.0.1:1234/uuid")).toBe(
+      REDIRECT_REFUSED_CROSS_ORIGIN,
+    );
+    expect(resolveRedirectTarget(original, original, "blob:https://api.example.test/uuid")).toBe(
+      REDIRECT_REFUSED_DOWNGRADE,
+    );
+  });
+
   it("refuses an https -> http downgrade, even to the same host", () => {
     expect(resolveRedirectTarget(original, original, "http://api.example.test/marketplace/x")).toBe(
       REDIRECT_REFUSED_DOWNGRADE,
@@ -321,6 +358,84 @@ describe("read redirects with a stubbed fetch", () => {
     expect(snapshot.itemNumber).toBe("9SIA0060884598");
     expect(seen.map((s) => s.redirect)).toEqual(["manual", "manual"]);
     expect(seen[1]?.url).toBe("https://api.example.test/marketplace/moved");
+  });
+
+  it("cancels the body of every redirect it follows or refuses", async () => {
+    let cancelled = 0;
+    const redirectWithBody = (location: string): Response =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("moved"));
+          },
+          cancel() {
+            cancelled++;
+          },
+        }),
+        { status: 302, headers: { Location: location } },
+      );
+    let calls = 0;
+    const client = httpsClient(() => {
+      calls++;
+      return Promise.resolve(
+        redirectWithBody(calls === 1 ? "/marketplace/next" : "https://elsewhere.example/x"),
+      );
+    });
+    const err = await client.inventory.getItem(READ).catch((e: unknown) => e);
+    expect((err as NeweggApiError).details).toMatchObject({
+      causeCode: REDIRECT_REFUSED_CROSS_ORIGIN,
+    });
+    expect(calls).toBe(2);
+    expect(cancelled).toBe(2);
+  });
+
+  it("shares one timeout across all hops and does not retry past it", async () => {
+    let calls = 0;
+    const client = createNeweggClient({
+      sellerId: "A006",
+      apiKey: TEST_API_KEY,
+      secretKey: TEST_SECRET_KEY,
+      marketplace: "us",
+      baseUrl: "https://api.example.test/marketplace/",
+      timeoutMs: 100,
+      retry: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
+      fetch: (_target, init) => {
+        calls++;
+        if (calls === 1) {
+          return Promise.resolve(
+            new Response(null, { status: 302, headers: { Location: "/marketplace/slow" } }),
+          );
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        });
+      },
+    });
+    const err = await client.inventory.getItem(READ).catch((e: unknown) => e);
+    expect((err as Error).name).toBe("NeweggTimeoutError");
+    expect(calls).toBe(2);
+  });
+
+  it("passes a caller abort through to a followed hop", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const client = httpsClient((_target, init) => {
+      calls++;
+      if (calls === 1) {
+        return Promise.resolve(
+          new Response(null, { status: 302, headers: { Location: "/marketplace/slow" } }),
+        );
+      }
+      queueMicrotask(() => controller.abort());
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      });
+    });
+    const err = await client.inventory
+      .getItem(READ, { signal: controller.signal })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DOMException);
+    expect(calls).toBe(2);
   });
 
   it("refuses a redirect whose Location cannot be parsed", async () => {
