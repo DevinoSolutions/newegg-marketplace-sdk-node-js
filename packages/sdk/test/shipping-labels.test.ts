@@ -488,6 +488,16 @@ describe("shippingLabels.create", () => {
     expect(posts(calls)).toHaveLength(1);
   });
 
+  it("treats a package with neither a label nor an error as indeterminate, not a refusal", async () => {
+    const { client, calls } = setup("us", [
+      orderRoute(),
+      createOk(createResponse([{ ProcessResult: "", ErrorMessage: "" }])),
+    ]);
+    const err = await client.shippingLabels.create(input).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(IndeterminateOrderWriteError);
+    expect(posts(calls)).toHaveLength(1);
+  });
+
   it("refuses to send when the order check finds a blocker", async () => {
     const { client, calls } = setup("us", [
       orderRoute(unshippedOrder({ OrderStatus: 2, OrderStatusDescription: "Shipped" })),

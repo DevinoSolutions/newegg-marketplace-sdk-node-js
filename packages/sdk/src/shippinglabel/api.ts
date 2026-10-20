@@ -137,6 +137,17 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
       );
     }
     if (succeeded.length === 0) {
+      // A refusal is definitive only when Newegg says why. A package with no tracking number, no
+      // link and no error text is neither a success nor a stated failure, so a label may exist.
+      if (failed.some((pkg) => pkg.errorMessage === undefined)) {
+        throw indeterminateLabelWrite(
+          this.#http,
+          ctx,
+          meta,
+          "Newegg answered the label request with a success status but a package with neither a label nor an error, so whether a label was bought is unknown.",
+          submittedAtIso,
+        );
+      }
       const reasons = failed
         .map((pkg) => pkg.errorMessage)
         .filter((message): message is string => message !== undefined)
