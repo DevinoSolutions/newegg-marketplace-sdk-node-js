@@ -180,7 +180,9 @@ describe("newegg_ads_groups_list", () => {
       ],
     });
     try {
-      const res = await callTool(harness.mcp, "newegg_ads_groups_list", { campaignNumber: 1000001 });
+      const res = await callTool(harness.mcp, "newegg_ads_groups_list", {
+        campaignNumber: 1000001,
+      });
       expect(res.isError).toBe(false);
       expect(res.json).toMatchObject({
         totalRows: 1,
@@ -248,7 +250,14 @@ describe("newegg_ads_keywords_list", () => {
 });
 
 describe("newegg_ads_report", () => {
-  const METRICS = { spend: 12.5, sales: 100, acos: 0.125, impressions: 1000, clicks: 50, orders: 4 };
+  const METRICS = {
+    spend: 12.5,
+    sales: 100,
+    acos: 0.125,
+    impressions: 1000,
+    clicks: 50,
+    orders: 4,
+  };
 
   it("runs the group report with string ids and the fixed extUrl", async () => {
     const harness = await startHarness({
@@ -322,9 +331,9 @@ describe("newegg_ads_report", () => {
   it("rejects missing dates and unknown levels", async () => {
     const harness = await startHarness({ env: US, routes: [] });
     try {
-      expect(
-        (await callTool(harness.mcp, "newegg_ads_report", { level: "group" })).isError,
-      ).toBe(true);
+      expect((await callTool(harness.mcp, "newegg_ads_report", { level: "group" })).isError).toBe(
+        true,
+      );
       expect(
         (
           await callTool(harness.mcp, "newegg_ads_report", {

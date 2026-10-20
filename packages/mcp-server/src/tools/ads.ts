@@ -34,7 +34,10 @@ import { TOOL_NAMES } from "./names.js";
 // shared schemas + helpers
 // ---------------------------------------------------------------------------
 const dayString = (what: string) =>
-  z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD").describe(`${what} (YYYY-MM-DD).`);
+  z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD")
+    .describe(`${what} (YYYY-MM-DD).`);
 
 const campaignNumberSchema = z
   .number()
@@ -53,7 +56,10 @@ const activeStatusSchema = z
   .optional()
   .describe("active = Processing / Delivering / Out of budget; inactive = Inactive / Ended.");
 
-const sortOrderSchema = z.enum(["asc", "desc"]).optional().describe("Sort direction (default desc).");
+const sortOrderSchema = z
+  .enum(["asc", "desc"])
+  .optional()
+  .describe("Sort direction (default desc).");
 
 const nameOrNumberSchema = z
   .enum(["name", "number"])
@@ -111,10 +117,21 @@ const campaignRowSchema = z.object({
 // ---------------------------------------------------------------------------
 const campaignsListInputSchema = z
   .strictObject({
-    keyword: z.string().min(1).max(200).optional().describe("Campaign name, or number(s) per searchBy."),
+    keyword: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Campaign name, or number(s) per searchBy."),
     searchBy: nameOrNumberSchema,
     activeStatus: activeStatusSchema,
-    type: z.number().int().min(0).max(8).optional().describe("0 manual targeting, 1 auto targeting."),
+    type: z
+      .number()
+      .int()
+      .min(0)
+      .max(8)
+      .optional()
+      .describe("0 manual targeting, 1 auto targeting."),
     sponsorType: z
       .number()
       .int()
@@ -125,8 +142,18 @@ const campaignsListInputSchema = z
     fromDate: dayString("Campaign start filter").optional(),
     toDate: dayString("Campaign end filter").optional(),
     page: z.number().int().min(1).optional().describe("1-based page index (default 1)."),
-    pageSize: z.number().int().min(1).max(100).optional().describe("Page size, max 100 (default 100)."),
-    sortField: z.string().regex(/^[A-Za-z]{1,40}$/).optional().describe("Field to sort by (default InDate)."),
+    pageSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe("Page size, max 100 (default 100)."),
+    sortField: z
+      .string()
+      .regex(/^[A-Za-z]{1,40}$/)
+      .optional()
+      .describe("Field to sort by (default InDate)."),
     sortOrder: sortOrderSchema,
   })
   .describe("Sponsored Ads campaign list criteria; all fields optional.");
@@ -213,7 +240,10 @@ async function campaignGetHandler(
     return okResult({
       marketplace: result.marketplace,
       found: campaign !== undefined,
-      campaign: campaign === undefined ? undefined : { ...campaign, declineReason: clip(campaign.declineReason) },
+      campaign:
+        campaign === undefined
+          ? undefined
+          : { ...campaign, declineReason: clip(campaign.declineReason) },
       correlationId: result.correlationId,
       rateLimit: serializeRateLimit(result.rateLimit),
     });
@@ -243,12 +273,27 @@ export const adsCampaignGetTool: ToolDefinition<
 const groupsListInputSchema = z
   .strictObject({
     campaignNumber: campaignNumberSchema,
-    keyword: z.string().min(1).max(200).optional().describe("Group name, or number(s) per searchBy."),
+    keyword: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe("Group name, or number(s) per searchBy."),
     searchBy: nameOrNumberSchema,
     activeStatus: activeStatusSchema,
     page: z.number().int().min(1).optional().describe("1-based page index (default 1)."),
-    pageSize: z.number().int().min(1).max(100).optional().describe("Page size, max 100 (default 100)."),
-    sortField: z.string().regex(/^[A-Za-z]{1,40}$/).optional().describe("Field to sort by (default InDate)."),
+    pageSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe("Page size, max 100 (default 100)."),
+    sortField: z
+      .string()
+      .regex(/^[A-Za-z]{1,40}$/)
+      .optional()
+      .describe("Field to sort by (default InDate)."),
     sortOrder: sortOrderSchema,
   })
   .describe("Ad group list criteria for one campaign.");
@@ -356,7 +401,11 @@ const keywordsListInputSchema = z
       .max(1000)
       .optional()
       .describe("Page size, max 1000 here (default 100)."),
-    sortField: z.string().regex(/^[A-Za-z]{1,40}$/).optional().describe("Field to sort by (default InDate)."),
+    sortField: z
+      .string()
+      .regex(/^[A-Za-z]{1,40}$/)
+      .optional()
+      .describe("Field to sort by (default InDate)."),
     sortOrder: sortOrderSchema,
   })
   .describe("Keyword list criteria for one campaign (optionally one ad group).");
@@ -461,7 +510,9 @@ const performanceInputSchema = z
       .min(1)
       .max(200)
       .optional()
-      .describe("Group name filter (group level), item filter (product) or keyword text (keyword)."),
+      .describe(
+        "Group name filter (group level), item filter (product) or keyword text (keyword).",
+      ),
     activeStatus: activeStatusSchema,
     page: z.number().int().min(1).optional().describe("1-based page index (default 1)."),
     pageSize: z
@@ -471,7 +522,11 @@ const performanceInputSchema = z
       .max(1000)
       .optional()
       .describe("Page size, max 1000 here (default 100; group level caps at 100)."),
-    sortField: z.string().regex(/^[A-Za-z]{1,40}$/).optional().describe("Field to sort by (default InDate)."),
+    sortField: z
+      .string()
+      .regex(/^[A-Za-z]{1,40}$/)
+      .optional()
+      .describe("Field to sort by (default InDate)."),
     sortOrder: sortOrderSchema,
   })
   .describe("Synchronous Sponsored Ads performance report criteria.");
@@ -512,7 +567,8 @@ async function performanceHandler(
   ctx: ToolContext,
 ): Promise<ToolResult> {
   const range = { fromDate: input.fromDate, toDate: input.toDate };
-  const paging: Pick<GetAdsGroupPerformanceInput, "page" | "pageSize" | "sortField" | "sortOrder"> = {};
+  const paging: Pick<GetAdsGroupPerformanceInput, "page" | "pageSize" | "sortField" | "sortOrder"> =
+    {};
   if (input.page !== undefined) paging.page = input.page;
   if (input.pageSize !== undefined) paging.pageSize = input.pageSize;
   if (input.sortField !== undefined) paging.sortField = input.sortField;
@@ -527,7 +583,10 @@ async function performanceHandler(
       return okResult({ ...pageFields(result), level: "group", rows: result.rows });
     }
     if (input.campaignNumber === undefined || input.groupNumber === undefined) {
-      return failInput(`The ${input.level} performance report needs campaignNumber and groupNumber.`, ctx);
+      return failInput(
+        `The ${input.level} performance report needs campaignNumber and groupNumber.`,
+        ctx,
+      );
     }
     const base = {
       ...range,

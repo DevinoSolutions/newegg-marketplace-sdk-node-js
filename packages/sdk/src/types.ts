@@ -3543,7 +3543,10 @@ export interface AdsKeywordSuggestionsResult extends AdsPage<AdsKeywordSuggestio
  */
 export interface AdsApi {
   /** Campaign List / Campaign Performance Report (1,000 req/hr). */
-  listCampaigns(input?: ListAdsCampaignsInput, options?: RequestOptions): Promise<AdsPage<AdsCampaign>>;
+  listCampaigns(
+    input?: ListAdsCampaignsInput,
+    options?: RequestOptions,
+  ): Promise<AdsPage<AdsCampaign>>;
   /** Group List. */
   listGroups(input: ListAdsGroupsInput, options?: RequestOptions): Promise<AdsPage<AdsGroup>>;
   /** Product List: the items in one ad group. */
@@ -3556,7 +3559,10 @@ export interface AdsApi {
     options?: RequestOptions,
   ): Promise<AdsPage<AdsNegativeKeyword>>;
   /** Auto Targeting Match Type List: the bid of each match type of an auto-targeting group. */
-  listMatchTypes(input: ListAdsMatchTypesInput, options?: RequestOptions): Promise<AdsPage<AdsMatchType>>;
+  listMatchTypes(
+    input: ListAdsMatchTypesInput,
+    options?: RequestOptions,
+  ): Promise<AdsPage<AdsMatchType>>;
   /** Keywords Suggest: recommended keywords and bids for items. Creates nothing. */
   suggestKeywords(
     input: SuggestAdsKeywordsInput,

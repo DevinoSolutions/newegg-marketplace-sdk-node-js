@@ -79,7 +79,11 @@ const CAMPAIGN_SEARCH: SearchTypes = { name: "CAMPAIGN_NAME", number: "CAMPAIGN_
 const GROUP_SEARCH: SearchTypes = { name: "GROUP_NAME", number: "GROUP_NUM" };
 const NEGATIVE_SEARCH: SearchTypes = { name: "NEGATIVE_NAME", number: "NEGATIVE_NUM" };
 
-function checkId(value: unknown, path: string, issues: NeweggValidationIssue[]): number | undefined {
+function checkId(
+  value: unknown,
+  path: string,
+  issues: NeweggValidationIssue[],
+): number | undefined {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
     issues.push({ path, message: "must be a positive integer identifier" });
     return undefined;
@@ -179,14 +183,18 @@ function searchFilter(
     issues.push({ path: "searchBy", message: 'must be "name" or "number"' });
   }
   if (keyword === undefined) {
-    if (searchBy !== undefined) issues.push({ path: "keyword", message: "is required with searchBy" });
+    if (searchBy !== undefined)
+      issues.push({ path: "keyword", message: "is required with searchBy" });
     return { searchKeywordType: null, keyword: null };
   }
   const text = checkText(keyword, "keyword", issues);
   if (text === undefined) return { searchKeywordType: null, keyword: null };
   if (searchBy === "number") {
     if (!NUMBER_LIST.test(text)) {
-      issues.push({ path: "keyword", message: "must be identifier number(s) with searchBy=number" });
+      issues.push({
+        path: "keyword",
+        message: "must be identifier number(s) with searchBy=number",
+      });
     }
     return { searchKeywordType: types.number, keyword: text.replace(/\s+/g, "") };
   }
@@ -243,7 +251,11 @@ function checkList(
     if (required) issues.push({ path, message: "is required" });
     return [];
   }
-  if (!Array.isArray(values) || (required && values.length < 1) || values.length > MAX_LIST_ENTRIES) {
+  if (
+    !Array.isArray(values) ||
+    (required && values.length < 1) ||
+    values.length > MAX_LIST_ENTRIES
+  ) {
     issues.push({
       path,
       message: `must be an array of ${required ? "1" : "0"}-${MAX_LIST_ENTRIES} ${what}`,
@@ -302,7 +314,10 @@ export function buildCampaignListRequest(
   };
 }
 
-export function buildGroupListRequest(sellerId: string, input: ListAdsGroupsInput): BuiltAdsRequest {
+export function buildGroupListRequest(
+  sellerId: string,
+  input: ListAdsGroupsInput,
+): BuiltAdsRequest {
   const issues: NeweggValidationIssue[] = [];
   const paging = buildPaging(input, ADS_LIST_PAGE_SIZE_MAX, issues);
   const campaignNumber = checkId(input.campaignNumber, "campaignNumber", issues);
@@ -430,11 +445,21 @@ export function buildKeywordSuggestRequest(
   input: SuggestAdsKeywordsInput,
 ): BuiltAdsRequest {
   const issues: NeweggValidationIssue[] = [];
-  const itemList = checkList(input.itemNumbers, "itemNumbers", ITEM_NUMBER, "item numbers", issues, true);
+  const itemList = checkList(
+    input.itemNumbers,
+    "itemNumbers",
+    ITEM_NUMBER,
+    "item numbers",
+    issues,
+    true,
+  );
   const keywordList: string[] = [];
   if (input.keywords !== undefined) {
     if (!Array.isArray(input.keywords) || input.keywords.length > MAX_LIST_ENTRIES) {
-      issues.push({ path: "keywords", message: `must be an array of 0-${MAX_LIST_ENTRIES} keywords` });
+      issues.push({
+        path: "keywords",
+        message: `must be an array of 0-${MAX_LIST_ENTRIES} keywords`,
+      });
     } else {
       input.keywords.forEach((value, i) => {
         const text = checkText(value, `keywords.${i}`, issues);
@@ -867,10 +892,12 @@ export function parseKeywordSuggestion(row: unknown): AdsKeywordSuggestion | und
   return {
     keyword,
     normalizedKeyword: text(getField(row, "normalizedKeyword")),
-    itemNumbers: (Array.isArray(items) ? items : items === undefined ? [] : [items]).flatMap((i) => {
-      const v = text(i);
-      return v === undefined ? [] : [v];
-    }),
+    itemNumbers: (Array.isArray(items) ? items : items === undefined ? [] : [items]).flatMap(
+      (i) => {
+        const v = text(i);
+        return v === undefined ? [] : [v];
+      },
+    ),
     keywordUrl: text(getField(row, "keywordUrl")),
     ...bids(row),
     matchType: asNumber(getField(row, "matchType")),

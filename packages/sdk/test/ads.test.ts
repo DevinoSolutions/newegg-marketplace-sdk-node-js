@@ -460,9 +460,9 @@ describe("ads keywords", () => {
     await expect(client.ads.suggestKeywords({ itemNumbers: [] })).rejects.toBeInstanceOf(
       NeweggValidationError,
     );
-    await expect(
-      client.ads.suggestKeywords({ itemNumbers: ["bad item!"] }),
-    ).rejects.toBeInstanceOf(NeweggValidationError);
+    await expect(client.ads.suggestKeywords({ itemNumbers: ["bad item!"] })).rejects.toBeInstanceOf(
+      NeweggValidationError,
+    );
   });
 });
 
@@ -474,7 +474,13 @@ describe("ads match types and targeting", () => {
         "/autotargeting/matchtypesearch",
         ok(
           [
-            { matchType: 2, matchTypeName: "Close match", suggBid: 0.55, bid: 0.76, status: "Delivering" },
+            {
+              matchType: 2,
+              matchTypeName: "Close match",
+              suggBid: 0.55,
+              bid: 0.76,
+              status: "Delivering",
+            },
             { matchTypeName: "no type" },
           ],
           {},
@@ -482,7 +488,10 @@ describe("ads match types and targeting", () => {
         ),
       ),
     );
-    const result = await client.ads.listMatchTypes({ campaignNumber: 1000001, groupNumber: 1000002 });
+    const result = await client.ads.listMatchTypes({
+      campaignNumber: 1000001,
+      groupNumber: 1000002,
+    });
     expect(calls[0]?.bodyJson).toEqual({
       sellerID: "A006",
       campaignNumber: 1000001,
