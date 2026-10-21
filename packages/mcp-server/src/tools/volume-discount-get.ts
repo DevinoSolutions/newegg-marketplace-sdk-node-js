@@ -33,7 +33,10 @@ const inputSchema = z
   .describe("The single item whose volume discount to read.");
 
 const tierSchema = z.object({
-  priority: z.number().int(),
+  // Newegg documents 1-3, but the SDK reads it with asNumber, which also yields "2.0" -> 2 and
+  // "1.5" -> 1.5. A read must never fail on an echoed upstream value, so no .int() here
+  // (the write path's normalized tiers, which WE generate, stay integers).
+  priority: z.number(),
   quantity: z.number(),
   sellingPrice: z.number(),
   freeShipping: z.boolean(),
