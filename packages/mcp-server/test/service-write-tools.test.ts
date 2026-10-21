@@ -676,6 +676,48 @@ describe("NEWEGG_MCP_MAX_REFUND_AMOUNT config", () => {
     ).toBe(12.5);
   });
 
+  // Strict plain decimal, like NEWEGG_MCP_MAX_LABEL_AMOUNT: Number() would accept all of these.
+  it.each([
+    "0x1F4",
+    "0b11",
+    "0o7",
+    "+5",
+    "1e3",
+    "1E3",
+    "00100",
+    ".5",
+    "5.",
+    "5.123",
+    "1 000",
+    "Infinity",
+    "NaN",
+    "unlimited",
+    "off",
+    "99999.999",
+  ])("rejects the non-decimal spelling %j", (value) => {
+    expect(() => loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_REFUND_AMOUNT: value }))).toThrow(
+      /NEWEGG_MCP_MAX_REFUND_AMOUNT/,
+    );
+  });
+
+  it.each([
+    ["250", 250],
+    [" 250 ", 250],
+    ["0.01", 0.01],
+    ["49.99", 49.99],
+    ["99999.99", 99_999.99],
+  ])("accepts the plain decimal %j", (value, expected) => {
+    expect(
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_REFUND_AMOUNT: value })).limits.maxRefundAmount,
+    ).toBe(expected);
+  });
+
+  it("does not echo a rejected value", () => {
+    expect(() =>
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_REFUND_AMOUNT: "0x1F4" })),
+    ).not.toThrow(/0x1F4/);
+  });
+
   it.each(["0", "-1", "abc", "100000"])("rejects %s", (value) => {
     expect(() => loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_REFUND_AMOUNT: value }))).toThrow(
       /NEWEGG_MCP_MAX_REFUND_AMOUNT/,

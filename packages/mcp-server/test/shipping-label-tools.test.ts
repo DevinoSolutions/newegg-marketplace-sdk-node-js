@@ -6,6 +6,7 @@ import {
   type ShippingLabelPreviewRecord,
 } from "../src/index.js";
 import { callTool, makeEnv, startHarness, type Harness } from "./helpers.js";
+import { ReprintLimiter } from "../src/tools/label-reprint-limiter.js";
 
 /**
  * Mocked end-to-end coverage (real MCP client over an in-memory transport) of the Shipping Label
@@ -1368,4 +1369,204 @@ describe("NEWEGG_MCP_MAX_LABEL_AMOUNT strict parsing", () => {
     expect(() => parse("0.00")).toThrow(/NEWEGG_MCP_MAX_LABEL_AMOUNT/);
     expect(() => parse("100000")).toThrow(/NEWEGG_MCP_MAX_LABEL_AMOUNT/);
   });
+});
+
+describe("label reprint limits (per-order cooldown and per-hour counter)", () => {
+  // The cap is lifted so only the limiter is under test; reprints have no quote either way.
+  const clock = (start = Date.parse("2026-10-21T12:00:00Z")) => {
+    let t = start;
+    return {
+      now: () => new Date(t),
+      advance: (seconds: number) => {
+        t += seconds * 1000;
+      },
+    };
+  };
+  const previewReprint = (harness: Harness) =>
+    callTool(harness.mcp, TOOLS.previewReprint, { orderNumber: ORDER_NUMBER });
+  const applyReprint = (harness: Harness, previewId: unknown) =>
+    callTool(harness.mcp, TOOLS.applyReprint, { previewId: previewId as string });
+  const start = (env = writesEnv(), now?: () => Date) =>
+    harnessFor([postRoute(REPRINT, 200, reprintBody)], env, now, true);
+
+  it("warns on every reprint preview that it may be charged for an unknown amount", async () => {
+    const harness = await start();
+    try {
+      const preview = await previewReprint(harness);
+      expect(preview.json.eligible).toBe(true);
+      const warnings = (preview.json.warnings as string[]).join("\n");
+      expect(warnings).toContain("may be charged");
+      expect(warnings).toContain("amount is unknown");
+      expect(warnings).toContain("1 per order per 600 s and 6 per hour");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("refuses a second apply for the same order inside the cooldown and allows it after", async () => {
+    const time = clock();
+    const harness = await start(writesEnv(), time.now);
+    try {
+      const first = await previewReprint(harness);
+      const second = await previewReprint(harness);
+      expect(first.json.eligible).toBe(true);
+      expect(second.json.eligible).toBe(true);
+
+      expect((await applyReprint(harness, first.json.previewId)).isError).toBe(false);
+      expect(posts(harness)).toHaveLength(1);
+
+      // The second preview was made before the first apply, so only the apply-time check stops it.
+      time.advance(30);
+      const refused = await applyReprint(harness, second.json.previewId);
+      expect(refused.isError).toBe(true);
+      expect(refused.json.errorCode).toBe("reprint_rate_limited");
+      expect(refused.json.message).toContain("Nothing was sent");
+      expect(refused.json.message).toContain("NEWEGG_MCP_LABEL_REPRINT_COOLDOWN_SECONDS");
+      expect(posts(harness)).toHaveLength(1);
+
+      // A new preview inside the window is already reported as blocked.
+      const blocked = await previewReprint(harness);
+      expect(blocked.json.eligible).toBe(false);
+      expect(blocked.json.previewId).toBeUndefined();
+      expect((blocked.json.blockers as string[]).join("\n")).toContain(
+        "NEWEGG_MCP_LABEL_REPRINT_COOLDOWN_SECONDS",
+      );
+
+      time.advance(571);
+      const later = await previewReprint(harness);
+      expect(later.json.eligible).toBe(true);
+      expect((await applyReprint(harness, later.json.previewId)).isError).toBe(false);
+      expect(posts(harness)).toHaveLength(2);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("honours a configured cooldown and caps reprints per rolling hour", async () => {
+    const time = clock();
+    const env = writesEnv({
+      NEWEGG_MCP_LABEL_REPRINT_COOLDOWN_SECONDS: "1",
+      NEWEGG_MCP_MAX_LABEL_REPRINTS_PER_HOUR: "2",
+    });
+    const harness = await start(env, time.now);
+    try {
+      for (let i = 0; i < 2; i += 1) {
+        time.advance(2);
+        const preview = await previewReprint(harness);
+        expect((await applyReprint(harness, preview.json.previewId)).isError).toBe(false);
+      }
+      time.advance(2);
+      const third = await previewReprint(harness);
+      expect(third.json.eligible).toBe(false);
+      expect((third.json.blockers as string[]).join("\n")).toContain(
+        "NEWEGG_MCP_MAX_LABEL_REPRINTS_PER_HOUR=2",
+      );
+      expect(posts(harness)).toHaveLength(2);
+
+      time.advance(3600);
+      const after = await previewReprint(harness);
+      expect(after.json.eligible).toBe(true);
+      expect((await applyReprint(harness, after.json.previewId)).isError).toBe(false);
+      expect(posts(harness)).toHaveLength(3);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("starts over on a restart (a new server instance has an empty counter)", async () => {
+    const first = await start();
+    try {
+      const preview = await previewReprint(first);
+      expect((await applyReprint(first, preview.json.previewId)).isError).toBe(false);
+      expect((await previewReprint(first)).json.eligible).toBe(false);
+    } finally {
+      await first.close();
+    }
+    const restarted = await start();
+    try {
+      const preview = await previewReprint(restarted);
+      expect(preview.json.eligible).toBe(true);
+      expect((await applyReprint(restarted, preview.json.previewId)).isError).toBe(false);
+    } finally {
+      await restarted.close();
+    }
+  });
+
+  it("limits reprints under a cap with the flag too, and never counts a preview", async () => {
+    const harness = await start(
+      makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "true", NEWEGG_MCP_ALLOW_LABEL_REPRINT: "true" }),
+    );
+    try {
+      const preview = await previewReprint(harness);
+      expect(preview.json.eligible).toBe(true);
+      // Previewing (even repeatedly) records nothing: only an apply attempt does.
+      expect((await previewReprint(harness)).json.eligible).toBe(true);
+      expect((await applyReprint(harness, preview.json.previewId)).isError).toBe(false);
+      expect((await previewReprint(harness)).json.eligible).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe("ReprintLimiter", () => {
+  const limits = { cooldownSeconds: 600, maxPerHour: 3 };
+
+  it("isolates orders from each other's cooldown but shares the hourly count", () => {
+    const limiter = new ReprintLimiter(limits);
+    expect(limiter.reserve("1", 0)).toBeUndefined();
+    expect(limiter.reserve("1", 1000)).toContain("already requested");
+    expect(limiter.reserve("2", 1000)).toBeUndefined();
+    expect(limiter.reserve("3", 2000)).toBeUndefined();
+    expect(limiter.reserve("4", 3000)).toContain("NEWEGG_MCP_MAX_LABEL_REPRINTS_PER_HOUR=3");
+    expect(limiter.check("1", 600_000)).toContain("NEWEGG_MCP_MAX_LABEL_REPRINTS_PER_HOUR=3");
+    // The oldest attempt leaves the rolling hour, freeing one slot.
+    expect(limiter.reserve("4", 3_600_001)).toBeUndefined();
+  });
+
+  it("check never records and a refused reserve never counts", () => {
+    const limiter = new ReprintLimiter({ cooldownSeconds: 60, maxPerHour: 1 });
+    expect(limiter.check("1", 0)).toBeUndefined();
+    expect(limiter.check("1", 0)).toBeUndefined();
+    expect(limiter.reserve("1", 0)).toBeUndefined();
+    expect(limiter.reserve("1", 1)).toBeDefined();
+    expect(limiter.reserve("2", 61_000)).toBeDefined();
+    expect(limiter.reserve("2", 3_600_000)).toBeUndefined();
+  });
+});
+
+describe("NEWEGG_MCP_LABEL_REPRINT_COOLDOWN_SECONDS / NEWEGG_MCP_MAX_LABEL_REPRINTS_PER_HOUR parsing", () => {
+  const cooldown = (value: string | undefined) =>
+    loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_LABEL_REPRINT_COOLDOWN_SECONDS: value })).limits
+      .labelReprintCooldownSeconds;
+  const perHour = (value: string | undefined) =>
+    loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_REPRINTS_PER_HOUR: value })).limits
+      .maxLabelReprintsPerHour;
+
+  it("defaults to 600 s per order and 6 per hour (never unlimited)", () => {
+    expect(cooldown(undefined)).toBe(600);
+    expect(cooldown("  ")).toBe(600);
+    expect(perHour(undefined)).toBe(6);
+  });
+
+  it("accepts plain whole numbers within range", () => {
+    expect(cooldown("60")).toBe(60);
+    expect(cooldown("86400")).toBe(86_400);
+    expect(perHour(" 12 ")).toBe(12);
+    expect(perHour("1000")).toBe(1000);
+  });
+
+  it.each(["0", "-1", "1.5", "0x10", "1e3", "+5", "007", "unlimited", "off", "86401"])(
+    "rejects %j for the cooldown, naming only the variable",
+    (value) => {
+      expect(() => cooldown(value)).toThrow(/NEWEGG_MCP_LABEL_REPRINT_COOLDOWN_SECONDS/);
+    },
+  );
+
+  it.each(["0", "-1", "2.5", "0x10", "1e2", "unlimited", "1001"])(
+    "rejects %j for the hourly limit",
+    (value) => {
+      expect(() => perHour(value)).toThrow(/NEWEGG_MCP_MAX_LABEL_REPRINTS_PER_HOUR/);
+    },
+  );
 });

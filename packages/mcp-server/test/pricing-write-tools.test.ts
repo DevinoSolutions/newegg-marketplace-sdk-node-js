@@ -319,6 +319,49 @@ describe("NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT config", () => {
     ).toThrow(/NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT/);
   });
 
+  // Strict plain decimal, like NEWEGG_MCP_MAX_LABEL_AMOUNT: Number() would accept all of these.
+  it.each([
+    "0x1F4",
+    "0b11",
+    "0o7",
+    "+5",
+    "1e3",
+    "1E3",
+    "00100",
+    ".5",
+    "5.",
+    "5.123",
+    "1 000",
+    "Infinity",
+    "NaN",
+    "unlimited",
+    "off",
+    "10.001",
+  ])("rejects the non-decimal spelling %j", (value) => {
+    expect(() =>
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT: value })),
+    ).toThrow(/NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT/);
+  });
+
+  it.each([
+    ["25", 25],
+    [" 25 ", 25],
+    ["0.5", 0.5],
+    ["99.99", 99.99],
+    ["10000", 10_000],
+  ])("accepts the plain decimal %j", (value, expected) => {
+    expect(
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT: value })).limits
+        .maxPriceChangePercent,
+    ).toBe(expected);
+  });
+
+  it("does not echo a rejected value", () => {
+    expect(() =>
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT: "0x1F4" })),
+    ).not.toThrow(/0x1F4/);
+  });
+
   it("parses a valid value and defaults to 50", () => {
     expect(
       loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT: "12.5" })).limits

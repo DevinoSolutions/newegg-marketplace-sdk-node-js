@@ -100,9 +100,16 @@ describe("resources", () => {
       NEWEGG_MCP_MAX_LABEL_AMOUNT: "off",
       NEWEGG_MCP_ALLOW_LABEL_REPRINT: "true",
     });
-    for (const limits of await reported(off)) {
+    for (const limits of await reported(makeEnv({ ...off, NEWEGG_MCP_ALLOW_WRITES: "true" }))) {
       expect(limits.maxLabelAmount).toBe("unlimited");
       expect(limits.allowLabelReprint).toBe(true);
+      expect(limits.labelReprintCooldownSeconds).toBe(600);
+      expect(limits.maxLabelReprintsPerHour).toBe(6);
+    }
+    // The flag alone is not a permission: the reprint tools do not exist with writes off.
+    for (const limits of await reported(off)) {
+      expect(limits.maxLabelAmount).toBe("unlimited");
+      expect(limits.allowLabelReprint).toBe(false);
     }
     for (const limits of await reported(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: "49.99" }))) {
       expect(limits.maxLabelAmount).toBe(49.99);

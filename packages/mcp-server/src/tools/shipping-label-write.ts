@@ -13,7 +13,9 @@
  * quote, an unrated package, or a reprint, which has no quote) is blocked too. The cap is lifted
  * only by the explicit `NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited`, after which a human must read the
  * preview before applying. A reprint alone can be let through a cap with the separate opt-in
- * `NEWEGG_MCP_ALLOW_LABEL_REPRINT=true` (recovery after an indeterminate create).
+ * `NEWEGG_MCP_ALLOW_LABEL_REPRINT=true` (recovery after an indeterminate create). Every reprint, allowed
+ * or not by the cap, is also bounded by an in-memory per-order cooldown and per-hour counter
+ * (`label-reprint-limiter.ts`), reported at preview and enforced at apply.
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -45,6 +47,7 @@ import { numberInputSchema } from "./service-write.js";
 import { shippingLabelRequestSchema } from "./shipping-label.js";
 import { appendConsumedNote, consumeTypedPreview } from "./preview-apply-core.js";
 import { TOOL_NAMES } from "./names.js";
+import { reprintLimiterFor, type ReprintLimiter } from "./label-reprint-limiter.js";
 
 const operationSchema = z.enum(["shippingLabels.create", "shippingLabels.reprint"]);
 
@@ -147,8 +150,30 @@ const REPRINT_UNQUOTABLE =
   "or restart with NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited (which lifts the create cap too).";
 
 const REPRINT_UNMETERED =
-  "Reprint allowed by NEWEGG_MCP_ALLOW_LABEL_REPRINT=true: Newegg has no quote for a reprint and " +
-  "does not say whether it is billed, so NEWEGG_MCP_MAX_LABEL_AMOUNT is not applied to it.";
+  "Reprint allowed by NEWEGG_MCP_ALLOW_LABEL_REPRINT=true: Newegg has no quote for a reprint, so " +
+  "NEWEGG_MCP_MAX_LABEL_AMOUNT is not applied to it.";
+
+/** Shown on every reprint preview, whichever way the cap is configured. */
+const REPRINT_MAY_BE_CHARGED =
+  "This reprint may be charged; the amount is unknown (Newegg does not say whether a reprint is " +
+  "billed). Check the order's existing label first.";
+
+/** Per-order cooldown and per-hour counter of this server instance. */
+const limiterFor = (ctx: ToolContext): ReprintLimiter =>
+  reprintLimiterFor(ctx.previewStore, {
+    cooldownSeconds: ctx.config.limits.labelReprintCooldownSeconds,
+    maxPerHour: ctx.config.limits.maxLabelReprintsPerHour,
+  });
+
+/** Reprint-only preview additions: the billing warning and the limiter's current verdict (no reservation). */
+const reprintPreviewExtras = (ctx: ToolContext) => ({
+  warnings: [
+    `${REPRINT_MAY_BE_CHARGED} Limits: 1 per order per ${ctx.config.limits.labelReprintCooldownSeconds} s and ` +
+      `${ctx.config.limits.maxLabelReprintsPerHour} per hour, counted from apply (in memory, reset on restart).`,
+  ],
+  refused: (input: ShippingLabelInputs["shippingLabelReprint"]) =>
+    limiterFor(ctx).check(String(input.orderNumber), ctx.now().getTime()),
+});
 
 /** Reprint "quote": blocked under a cap unless the operator opted in to label reprints. */
 const reprintCost = (ctx: ToolContext) => async (): Promise<LabelCost> =>
@@ -262,6 +287,10 @@ async function runLabelPreview<K extends ShippingLabelKind>(
   kind: K,
   plan: () => Promise<ShippingLabelPreview<ShippingLabelInputs[K]>>,
   quote: (input: ShippingLabelInputs[K]) => Promise<LabelCost>,
+  extras?: {
+    warnings: string[];
+    refused: (input: ShippingLabelInputs[K]) => string | undefined;
+  },
 ): Promise<ToolResult> {
   let preview: ShippingLabelPreview<ShippingLabelInputs[K]>;
   try {
@@ -274,6 +303,7 @@ async function runLabelPreview<K extends ShippingLabelKind>(
   const blockers = [...preview.blockers];
   const warnings = [...preview.warnings];
   let estimatedCost: number | undefined;
+  if (extras !== undefined) warnings.push(...extras.warnings);
   // Only quote a plan nothing else blocks: the quote is another Newegg call.
   if (maxLabelAmount !== undefined && blockers.length === 0) {
     const cost = await quote(preview.normalized);
@@ -286,6 +316,11 @@ async function runLabelPreview<K extends ShippingLabelKind>(
       const exceeded = overCap(cost, maxLabelAmount);
       if (exceeded !== undefined) blockers.push(exceeded);
     }
+  }
+
+  if (extras !== undefined && blockers.length === 0) {
+    const refused = extras.refused(preview.normalized);
+    if (refused !== undefined) blockers.push(refused);
   }
 
   const eligible = blockers.length === 0;
@@ -340,6 +375,7 @@ async function runLabelApply<K extends ShippingLabelKind>(
   previewId: string,
   quote: (input: ShippingLabelInputs[K]) => Promise<LabelCost>,
   send: (input: ShippingLabelInputs[K]) => Promise<Record<string, unknown>>,
+  reserve?: (input: ShippingLabelInputs[K]) => string | undefined,
 ): Promise<ToolResult> {
   const outcome = await consumeTypedPreview(ctx, previewId, kind);
   if ("error" in outcome) {
@@ -391,6 +427,18 @@ async function runLabelApply<K extends ShippingLabelKind>(
         ),
       );
     }
+  }
+
+  // Last gate before the write, with nothing awaited between the check and the send: a refusal is
+  // reported here, an admitted attempt is already recorded.
+  const limited = reserve?.(record.input);
+  if (limited !== undefined) {
+    return errorResult(
+      businessError(
+        "reprint_rate_limited",
+        `Nothing was sent: ${limited} The preview has been consumed; create a new preview later.`,
+      ),
+    );
   }
 
   try {
@@ -511,8 +559,10 @@ export const shippingLabelPreviewReprintTool: ToolDefinition<
     "BLOCKERS (unknown order, Newegg-fulfilled, order not shipped yet). Newegg does not say " +
     "whether a reprint is billed, so it is treated as billable and, because it has no quote, it is " +
     "BLOCKED unless the operator has set NEWEGG_MCP_ALLOW_LABEL_REPRINT=true (or " +
-    "NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited). Only a clean plan gets a single-use " +
-    "previewId for newegg_shipping_label_apply_reprint. No Newegg mutation happens here.",
+    "NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited). A reprint may be charged (amount unknown) and is also " +
+    "limited to one per order per cooldown window and a per-hour count (reported here, enforced at " +
+    "apply). Only a clean plan gets a single-use previewId for " +
+    "newegg_shipping_label_apply_reprint. No Newegg mutation happens here.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: reprintInputSchema,
   outputSchema: previewOutputSchema,
@@ -522,6 +572,7 @@ export const shippingLabelPreviewReprintTool: ToolDefinition<
       "shippingLabelReprint",
       () => ctx.client.shippingLabels.previewReprint(input.orderNumber),
       reprintCost(ctx),
+      reprintPreviewExtras(ctx),
     ),
 };
 
@@ -534,7 +585,9 @@ export const shippingLabelApplyReprintTool: ToolDefinition<
   description:
     "Request the reprint captured by a previewId from newegg_shipping_label_preview_reprint and " +
     "return the order's tracking numbers and label links. Newegg does not document whether a " +
-    "reprint is billed, so it is treated as a charge. Accepts only the previewId; single-use. If " +
+    "reprint is billed, so it is treated as a charge. Refused (nothing sent, preview consumed) when " +
+    "the order was already reprinted inside the cooldown window or the per-hour reprint limit is " +
+    "reached. Accepts only the previewId; single-use. If " +
     "the outcome is unknown the error says so and the write is NOT retried. Exists only when the " +
     "server is started with writes enabled.",
   annotations: {
@@ -566,5 +619,6 @@ export const shippingLabelApplyReprintTool: ToolDefinition<
           rateLimit: serializeRateLimit(result.rateLimit),
         };
       },
+      (stored) => limiterFor(ctx).reserve(String(stored.orderNumber), ctx.now().getTime()),
     ),
 };
