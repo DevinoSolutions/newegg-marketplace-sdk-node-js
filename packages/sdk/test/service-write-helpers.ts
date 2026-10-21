@@ -5,6 +5,8 @@ import { paths } from "./helpers.js";
  * Synthetic fixtures for the RMA / courtesy-refund WRITE tests (contracts §20). Every identifier,
  * amount and part number is a fictional placeholder: the repo is public and these tests never
  * touch a real account. The order is worth 110.00: 2 x 50.00 of SKU-PLACEHOLDER plus 10.00 shipping.
+ * The order carries no `CurrencyCode`: these fixtures are shared by us/b2b/ca tests, and the orders
+ * currency guard (T-5911) rejects a page whose every order is in the wrong marketplace's currency.
  */
 export const ORDER_NUMBER = "900000002";
 export const SKU = "SKU-PLACEHOLDER";
@@ -31,7 +33,6 @@ export function orderResponse(overrides: Json = {}): unknown {
           OrderStatusDescription: "Shipped",
           SalesChannel: 0,
           FulfillmentOption: 0,
-          CurrencyCode: "CAD",
           ShippingAmount: "10.00",
           RefundAmount: "0.00",
           OrderTotalAmount: "110.00",

@@ -38,6 +38,8 @@ describe.skipIf(!liveEnabled)("live (read-only): order reads", () => {
       expect(order.amounts).toBeTypeOf("object");
       expect(Array.isArray(order.items)).toBe(true);
       expect(Array.isArray(order.packages)).toBe(true);
+      // The CA account only ever has CAD orders; this is the currency tell the SDK guard relies on.
+      if (marketplace() === "ca") expect(order.currencyCode).toBe("CAD");
     }
   });
 

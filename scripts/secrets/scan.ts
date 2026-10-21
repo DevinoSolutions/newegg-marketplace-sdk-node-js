@@ -127,9 +127,10 @@ function findNeedle(
   return undefined;
 }
 
-const API_KEY = /(?:Authorization|apiKey|NEWEGG_API_KEY)["'\s:=]+([0-9a-f]{32})\b/gi;
+const API_KEY =
+  /(?:Authorization|apiKey|NEWEGG_(?:(?:US|B2B|CA)_)?API_KEY)["'\s:=]+([0-9a-f]{32})\b/gi;
 const SECRET_KEY =
-  /(?:SecretKey|secretKey|NEWEGG_SECRET_KEY)["'\s:=]+([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\b/g;
+  /(?:SecretKey|secretKey|NEWEGG_(?:(?:US|B2B|CA)_)?SECRET_KEY)["'\s:=]+([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\b/g;
 
 function patternFindings(file: string, view: string): Finding[] {
   const out: Finding[] = [];

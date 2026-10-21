@@ -31,12 +31,18 @@ export const SENTINELS = {
 
 export type FakeEnv = Record<string, string | undefined>;
 
+/**
+ * Legacy unprefixed credentials labeled (NEWEGG_CREDENTIALS_MARKETPLACE) with the marketplace being
+ * selected, so a test that only switches NEWEGG_MARKETPLACE stays valid (T-5911). Pass
+ * NEWEGG_CREDENTIALS_MARKETPLACE explicitly (or undefined) to test the binding itself.
+ */
 export function makeEnv(overrides: FakeEnv = {}): FakeEnv {
   return {
     NEWEGG_SELLER_ID: SENTINELS.sellerId,
     NEWEGG_API_KEY: SENTINELS.apiKey,
     NEWEGG_SECRET_KEY: SENTINELS.secretKey,
     NEWEGG_MARKETPLACE: "ca",
+    NEWEGG_CREDENTIALS_MARKETPLACE: overrides["NEWEGG_MARKETPLACE"] ?? "ca",
     ...overrides,
   };
 }

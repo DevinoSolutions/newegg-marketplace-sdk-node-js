@@ -75,7 +75,7 @@ describe("tools/list", () => {
         "newegg_subcategory_properties",
       ].sort(),
     );
-    // The estimate is a POST to a write-adjacent service (contracts §23.6): gated with the writes.
+    // The estimate is a POST to a write-adjacent service (contracts ï¿½23.6): gated with the writes.
     expect(names).not.toContain("newegg_shipping_label_estimate");
     expect(names).not.toContain("newegg_inventory_apply_update");
     expect(names).not.toContain("newegg_listing_apply_create");

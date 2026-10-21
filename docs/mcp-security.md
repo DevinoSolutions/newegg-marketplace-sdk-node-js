@@ -223,8 +223,12 @@ migration is scoped to the `server/` layer and does not touch tool behaviour or 
 
 Stdio is the default transport (a subprocess launched by the MCP client).
 
-- [ ] Provide credentials in the process environment: `NEWEGG_SELLER_ID`, `NEWEGG_API_KEY`,
-      `NEWEGG_SECRET_KEY`, `NEWEGG_MARKETPLACE`. Remember credentials are platform-specific.
+- [ ] Provide credentials in the process environment, bound to the marketplace: either
+      `NEWEGG_<MP>_SELLER_ID`/`NEWEGG_<MP>_API_KEY`/`NEWEGG_<MP>_SECRET_KEY` (`<MP>` = `US`, `B2B`, `CA`)
+      for the `NEWEGG_MARKETPLACE` you selected, or the unprefixed `NEWEGG_SELLER_ID`,
+      `NEWEGG_API_KEY`, `NEWEGG_SECRET_KEY` plus `NEWEGG_CREDENTIALS_MARKETPLACE` equal to
+      `NEWEGG_MARKETPLACE`. Newegg ignores the URL prefix when authenticating, so unlabeled keys could
+      silently operate another marketplace's account (ADR 0006); the server refuses to start otherwise.
 - [ ] Leave `NEWEGG_MCP_ALLOW_WRITES=false` unless you intend writes; set it to `true` only
       for deployments that must mutate inventory.
 - [ ] Set guard limits appropriate to the account: `NEWEGG_MCP_MAX_ITEMS_PER_OPERATION`,

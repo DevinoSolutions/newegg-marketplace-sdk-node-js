@@ -12,6 +12,7 @@
  *
  * Run:
  *   NEWEGG_SELLER_ID=... NEWEGG_API_KEY=... NEWEGG_SECRET_KEY=... NEWEGG_MARKETPLACE=us \
+ *   NEWEGG_CREDENTIALS_MARKETPLACE=us \
  *     npm run start -w example-mcp-http
  *   # then, in another terminal:
  *   curl -s http://127.0.0.1:3919/healthz

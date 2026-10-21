@@ -18,8 +18,9 @@ import {
  * an item without a discount (CT060) is a valid outcome. Only `volumeDiscounts.get` / `tryGet` are
  * used — there is deliberately NO volume-discount write in the live suite.
  *
- * On US/B2B Newegg answers HTTP 500 InternalError for a real SKU (contracts section 22.1, observed
- * 2026-10-21, T-5611); that skips on non-CA, while CA stays strict.
+ * With the CA key pair under the us/b2b prefix Newegg answered HTTP 500 InternalError for a real SKU
+ * (contracts section 22.1, observed 2026-10-21, T-5611; a foreign-key effect, T-5911). That now only
+ * matters with real Newegg.com / Business keys and skips on non-CA, while CA stays strict.
  */
 describe.skipIf(!liveEnabled)("live (read-only): volume discount reads", () => {
   let identifiers: ItemIdentifier[] = [];
@@ -66,12 +67,12 @@ describe.skipIf(!liveEnabled)("live (read-only): volume discount reads", () => {
         sellerPartNumber: "NONEXISTENT-PROBE-SKU-XYZ",
       });
     } catch (error) {
-      // Contracts §22.1: an unknown SKU answers 400 CT002 on CA, US and B2B (CA observed live
-      // 2026-10-21, T-5776); CT060 is only for a real item without a discount.
+      // Contracts §22.1: an unknown SKU answers 400 CT002 on CA (observed live 2026-10-21, T-5776);
+      // CT060 is only for a real item without a discount. us/b2b are unproven without real keys.
       expectUnknownSkuNotFound(ctx, error, ["CT002"]);
       return;
     }
-    expect(isCa()).toBe(false);
+    expect(isCa(), "CA must answer CT002 for an unknown SKU, not resolve a snapshot").toBe(false);
     expect(snapshot.marketplace).toBe(marketplace());
   });
 });

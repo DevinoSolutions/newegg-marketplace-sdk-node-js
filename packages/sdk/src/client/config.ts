@@ -7,7 +7,7 @@ import type {
   ReportFileDownloader,
   RetryOptions,
 } from "../types.js";
-import { NeweggConfigurationError } from "../errors/index.js";
+import { NeweggConfigurationError, NeweggMarketplaceMismatchError } from "../errors/index.js";
 import { noopLogger } from "../logging/index.js";
 import { InMemoryRateLimitStore } from "../rate-limit/index.js";
 import { InMemoryOperationStore } from "../operation-store/index.js";
@@ -115,6 +115,25 @@ export function resolveConfig(config: NeweggClientConfig): ResolvedConfig {
 
   if (!MARKETPLACES.includes(config.marketplace)) {
     fail('Configuration field "marketplace" must be one of "us", "b2b", "ca".');
+  }
+
+  if (config.credentialMarketplace !== undefined) {
+    if (!MARKETPLACES.includes(config.credentialMarketplace)) {
+      fail('Configuration field "credentialMarketplace" must be one of "us", "b2b", "ca".');
+    }
+    if (config.credentialMarketplace !== config.marketplace) {
+      // Names only: never echo credential values. Newegg authenticates on the key pair alone, so
+      // this combination would silently read/write the key owner's account (contracts §2).
+      throw new NeweggMarketplaceMismatchError(
+        `The credentials were issued for the "${config.credentialMarketplace}" marketplace but the ` +
+          `client targets "${config.marketplace}". Newegg authenticates on the key pair alone and ` +
+          `would serve the key owner's own account, so this combination is refused.`,
+        {
+          expectedMarketplace: config.marketplace,
+          actualMarketplace: config.credentialMarketplace,
+        },
+      );
+    }
   }
 
   const baseUrl = resolveBaseUrl(config.baseUrl);

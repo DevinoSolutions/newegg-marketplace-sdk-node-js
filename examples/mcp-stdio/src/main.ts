@@ -12,6 +12,7 @@
  *
  * Run (read-only):
  *   NEWEGG_SELLER_ID=... NEWEGG_API_KEY=... NEWEGG_SECRET_KEY=... NEWEGG_MARKETPLACE=us \
+ *   NEWEGG_CREDENTIALS_MARKETPLACE=us \
  *     npm run start -w example-mcp-stdio
  */
 import {

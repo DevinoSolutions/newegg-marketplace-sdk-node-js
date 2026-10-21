@@ -16,7 +16,7 @@ mirrors the HTTP path of the package `bin` (`newegg-marketplace-mcp --transport 
 
 ## Environment
 
-Required: `NEWEGG_SELLER_ID`, `NEWEGG_API_KEY`, `NEWEGG_SECRET_KEY`, `NEWEGG_MARKETPLACE`.
+Required: `NEWEGG_SELLER_ID`, `NEWEGG_API_KEY`, `NEWEGG_SECRET_KEY`, `NEWEGG_MARKETPLACE`, `NEWEGG_CREDENTIALS_MARKETPLACE` (the marketplace the keys were issued for; must equal `NEWEGG_MARKETPLACE`; or use the `NEWEGG_<MP>_*` credential names).
 Optional HTTP knobs: `NEWEGG_MCP_HTTP_HOST` (default `127.0.0.1`), `NEWEGG_MCP_HTTP_PORT`
 (default `3919`), `NEWEGG_MCP_HTTP_BEARER_TOKEN`, `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`,
 `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`. Never commit real values — see
@@ -26,6 +26,7 @@ Optional HTTP knobs: `NEWEGG_MCP_HTTP_HOST` (default `127.0.0.1`), `NEWEGG_MCP_H
 
 ```bash
 NEWEGG_SELLER_ID=... NEWEGG_API_KEY=... NEWEGG_SECRET_KEY=... NEWEGG_MARKETPLACE=us \
+  NEWEGG_CREDENTIALS_MARKETPLACE=us \
   npm run start -w example-mcp-http
 
 # in another terminal:

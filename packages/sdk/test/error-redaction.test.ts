@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NeweggApiError, NeweggError } from "../src/index.js";
+import { NeweggApiError, NeweggError, NeweggMarketplaceMismatchError } from "../src/index.js";
 import { parseUpstreamBody, parseUpstreamError } from "../src/errors/parse-upstream.js";
 import { redactUrlCredentials, sanitizeRaw } from "../src/errors/redact.js";
 import { makeClient, paths } from "./helpers.js";
@@ -177,5 +177,16 @@ describe("sanitizeRaw", () => {
     const out = sanitizeRaw({ a: shared, b: shared }) as { a: { u: string }; b: { u: string } };
     expect(out.a.u).toBe("ftp://***@ftp03.newegg.com/x.pdf");
     expect(out.b.u).toBe("ftp://***@ftp03.newegg.com/x.pdf");
+  });
+
+  it("redacts URL credentials carried by a marketplace-mismatch error", () => {
+    const error = new NeweggMarketplaceMismatchError(`Mismatch, see ${FTP_URL}`, {
+      expectedMarketplace: "ca",
+      actualMarketplace: "us",
+      details: { link: HTTPS_URL },
+    });
+    expectNoCredentials(JSON.stringify(error.toJSON()), "ftp03.newegg.com");
+    expect(error.message).not.toContain("Pa55word");
+    expect(JSON.stringify(error.toJSON())).not.toContain("LabelUser");
   });
 });

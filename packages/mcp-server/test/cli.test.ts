@@ -92,30 +92,27 @@ describe("loadMcpConfigFromEnv", () => {
   it("aggregates every missing/invalid variable into a single message", () => {
     let message = "";
     try {
-      loadMcpConfigFromEnv(
-        makeEnv({
-          NEWEGG_SELLER_ID: undefined,
-          NEWEGG_API_KEY: undefined,
-          NEWEGG_SECRET_KEY: undefined,
-          NEWEGG_MARKETPLACE: "moon",
-          NEWEGG_MCP_HTTP_PORT: "70000",
-        }),
-      );
+      loadMcpConfigFromEnv({
+        NEWEGG_MARKETPLACE: "ca",
+        NEWEGG_CA_SELLER_ID: SENTINELS.sellerId,
+        NEWEGG_MCP_HTTP_PORT: "70000",
+        NEWEGG_MCP_MAX_ITEMS_PER_OPERATION: "abc",
+      });
       throw new Error("expected loadMcpConfigFromEnv to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(McpConfigError);
       message = error instanceof Error ? error.message : String(error);
     }
-    // One pass reports ALL problems at once — an operator fixes everything in one restart.
+    // One pass reports ALL problems at once - an operator fixes everything in one restart.
     for (const name of [
-      "NEWEGG_SELLER_ID",
-      "NEWEGG_API_KEY",
-      "NEWEGG_SECRET_KEY",
-      "NEWEGG_MARKETPLACE",
+      "NEWEGG_CA_API_KEY",
+      "NEWEGG_CA_SECRET_KEY",
       "NEWEGG_MCP_HTTP_PORT",
+      "NEWEGG_MCP_MAX_ITEMS_PER_OPERATION",
     ]) {
       expect(message).toContain(name);
     }
+    expect(message).not.toContain(SENTINELS.sellerId);
   });
 
   it("rejects an unknown marketplace value by name", () => {

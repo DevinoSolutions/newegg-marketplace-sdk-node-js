@@ -317,12 +317,29 @@ around:
 
 ---
 
-## Credentials are platform-specific
+## Credentials belong to a seller account, not to a URL prefix
 
-> **A US API key is not valid on `/b2b/` or `/can/`, and vice versa.** Each marketplace
-> requires its own credential set.
+> **Newegg authenticates on `sellerid` + API key + secret key only and never checks the URL prefix**
+> (observed live 2026-10-21, T-5911; §2). The prefix (none / `b2b/` / `can/`) selects the request
+> schema and response shape, but the DATA is the account the key resolves to. Keys issued under the
+> Newegg.ca tab used on `marketplace: "us"` or `"b2b"` therefore return the CA account's own orders,
+> RMAs, inventory and so on, labelled `us`/`b2b`, with no error. Each marketplace is a separate seller
+> account with its own API settings, and a missing one shows "No API account has been set up".
 
-When you use the wrong credentials for a platform, the Newegg gateway answers `HTTP 401`.
+The SDK refuses that combination instead of trusting the prefix: set
+`credentialMarketplace` (the marketplace the keys were issued for) and a mismatch throws
+`NeweggMarketplaceMismatchError` at `createNeweggClient`. The MCP server requires either
+`NEWEGG_<MP>_{SELLER_ID,API_KEY,SECRET_KEY}` for the selected marketplace, or the unprefixed
+variables plus `NEWEGG_CREDENTIALS_MARKETPLACE` equal to `NEWEGG_MARKETPLACE` (ADR 0006). As defense
+in depth, order reads compare `currencyCode` with the platform's expected currencies (ca: CAD; us and b2b:
+USD, an ASSUMPTION).
+
+Only a handful of catalog-bound routes react to the prefix with a foreign key (batch inventory 401
+`InvalidToken`, volume discount 500, B2B price `CT026`; §5.3, §22.1), which is why those were first
+mistaken for per-marketplace key enforcement. Unproven until real Newegg.com / Business keys exist: that a
+US key answers USD orders on `/`, and the reverse direction (a US key on `/can/`).
+
+When you use wrong or unknown credentials the Newegg gateway answers `HTTP 401`.
 During live verification on 2026-07-10 (§9), read-only probes with the available CA
 credentials returned **`HTTP 401` with the plain-text body `Gateway: Seller Auth failed.`**
 on the CA, US, and B2B prefixes alike — the endpoints and header format matched the docs,

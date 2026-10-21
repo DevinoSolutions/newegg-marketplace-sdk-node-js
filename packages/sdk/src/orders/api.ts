@@ -26,6 +26,7 @@ import { fullJitterDelay } from "../client/retry.js";
 import { TransportError } from "../client/transport.js";
 import { rateLimitKey } from "../rate-limit/index.js";
 import { delay, isAbortError } from "../util.js";
+import { assertOrdersMatchMarketplace } from "../platform/order-currency.js";
 import {
   assertOrderAdditionalInfoSupported,
   getOrderAdditionalInfoPlatform,
@@ -92,6 +93,8 @@ export class OrdersApiImpl implements OrdersApi {
       rateLimitKey: rateLimitKey(marketplace, sellerId, Operation.OrderList),
     });
     const parsed = parseOrdersResponse(result.json);
+    // Fail closed when the keys belong to another marketplace's seller account (T-5911).
+    assertOrdersMatchMarketplace(this.#http.adapter, parsed.orders);
     return {
       marketplace,
       orders: parsed.orders,

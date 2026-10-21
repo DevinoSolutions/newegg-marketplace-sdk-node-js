@@ -26,6 +26,17 @@ export interface NeweggClientConfig {
   apiKey: string;
   secretKey: string;
   marketplace: NeweggMarketplace;
+  /**
+   * The marketplace the key pair was issued under (the Seller Portal API Settings of that
+   * marketplace's seller account). Strongly recommended: Newegg authenticates on `sellerId` +
+   * `apiKey` + `secretKey` only and never checks the URL prefix, so a key from one seller
+   * account used with another marketplace silently reads and writes THAT key's own account
+   * (`contracts §2`). When set and different from {@link NeweggClientConfig.marketplace},
+   * `createNeweggClient` throws {@link NeweggMarketplaceMismatchError} before any request is
+   * made. When absent the check is skipped and behaviour is unchanged (unsafe if the key and
+   * marketplace can disagree); the MCP server always sets it.
+   */
+  credentialMarketplace?: NeweggMarketplace;
   /** Trusted-config-only override (tests, proxies). Never exposed via MCP. Must end in `/`. */
   baseUrl?: string;
   /** Per-request timeout in milliseconds. Default `30_000`. */

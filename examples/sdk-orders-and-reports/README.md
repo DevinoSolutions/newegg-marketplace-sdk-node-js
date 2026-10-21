@@ -13,7 +13,7 @@ Read-only: list unshipped orders and fetch the Settlement Summary report for a d
 
 ## Environment
 
-Required: `NEWEGG_SELLER_ID`, `NEWEGG_API_KEY`, `NEWEGG_SECRET_KEY`, `NEWEGG_MARKETPLACE`.
+Required: `NEWEGG_SELLER_ID`, `NEWEGG_API_KEY`, `NEWEGG_SECRET_KEY`, `NEWEGG_MARKETPLACE`, `NEWEGG_CREDENTIALS_MARKETPLACE` (the marketplace the keys were issued for; must equal `NEWEGG_MARKETPLACE`).
 Optional: `EXAMPLE_SETTLEMENT_FROM` / `EXAMPLE_SETTLEMENT_TO` (`YYYY-MM-DD`, default last 30 days).
 
 Credentials are read from the environment and never printed. See
@@ -23,6 +23,7 @@ Credentials are read from the environment and never printed. See
 
 ```bash
 NEWEGG_SELLER_ID=... NEWEGG_API_KEY=... NEWEGG_SECRET_KEY=... NEWEGG_MARKETPLACE=us \
+  NEWEGG_CREDENTIALS_MARKETPLACE=us \
   npm run start -w example-sdk-orders-and-reports
 ```
 

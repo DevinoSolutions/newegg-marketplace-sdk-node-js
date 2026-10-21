@@ -55,7 +55,7 @@ newegg-marketplace-sdk-node-js/
 │  ├─ mcp-stdio/              MCP client over stdio
 │  └─ mcp-http/               MCP client over Streamable HTTP
 ├─ docs/
-│  ├─ adr/          architecture decision records (0001–0005)
+│  ├─ adr/          architecture decision records (0001–0006)
 │  └─ research/     verified Newegg wire contracts + the binding SDK API contract
 ├─ scripts/         TypeScript checks run via tsx (check-secrets, check-live-readonly,
 │                   verify-exports), typechecked by tsconfig.scripts.json
@@ -117,6 +117,9 @@ const client = createNeweggClient({
   apiKey: process.env.NEWEGG_API_KEY!,
   secretKey: process.env.NEWEGG_SECRET_KEY!,
   marketplace: "us",
+  // The marketplace these keys were issued for. Newegg ignores the URL prefix, so this guard is what
+  // stops Newegg.ca keys from silently serving the CA account under a "us" client.
+  credentialMarketplace: "us",
 });
 
 const preview = await client.inventory.previewUpdate([
@@ -418,7 +421,8 @@ Generic MCP client (`mcpServers` config), run via `npx`:
         "NEWEGG_SELLER_ID": "${NEWEGG_SELLER_ID}",
         "NEWEGG_API_KEY": "${NEWEGG_API_KEY}",
         "NEWEGG_SECRET_KEY": "${NEWEGG_SECRET_KEY}",
-        "NEWEGG_MARKETPLACE": "us"
+        "NEWEGG_MARKETPLACE": "us",
+        "NEWEGG_CREDENTIALS_MARKETPLACE": "us"
       }
     }
   }
@@ -438,6 +442,7 @@ Claude Desktop style (same shape; run the built CLI directly from a local checko
         "NEWEGG_API_KEY": "${NEWEGG_API_KEY}",
         "NEWEGG_SECRET_KEY": "${NEWEGG_SECRET_KEY}",
         "NEWEGG_MARKETPLACE": "us",
+        "NEWEGG_CREDENTIALS_MARKETPLACE": "us",
         "NEWEGG_MCP_ALLOW_WRITES": "false"
       }
     }
@@ -485,20 +490,35 @@ before exposing the server beyond loopback.
 
 ## Environment variables
 
-Canonical names and defaults from [`.env.example`](.env.example). Credentials are
-**platform-specific**: a US key is not valid for B2B or CA. For `401` errors (a wrong Seller ID or a
-key from another platform is the usual cause), see
-[`docs/platform-differences.md`](docs/platform-differences.md#credentials-are-platform-specific).
+Canonical names and defaults from [`.env.example`](.env.example). Credentials belong to a
+**seller account, not to a URL prefix**: Newegg ignores the `/b2b/` and `/can/` prefix when
+authenticating, so a key pair always reaches the account it was issued under. For `401` errors (a wrong
+Seller ID or a key from another platform is the usual cause), see
+[`docs/platform-differences.md`](docs/platform-differences.md#credentials-belong-to-a-seller-account-not-to-a-url-prefix).
+
+> **Breaking change in 0.1.0 (T-5911): credentials are now bound to a marketplace.** Newegg
+> authenticates on `sellerid` + API key + secret key only and ignores the URL prefix, so keys issued
+> for one marketplace's seller account (for example Newegg.ca) used with `NEWEGG_MARKETPLACE=us|b2b`
+> silently read and write THAT account while labeling it `us`/`b2b`. The MCP server therefore refuses
+> to start unless the credentials are labeled for the selected marketplace. **Migration:** either set
+> `NEWEGG_<MP>_SELLER_ID`, `NEWEGG_<MP>_API_KEY` and `NEWEGG_<MP>_SECRET_KEY` (`<MP>` = `US`, `B2B` or `CA`;
+> all three required) for the marketplace in `NEWEGG_MARKETPLACE`, or keep the unprefixed
+> `NEWEGG_SELLER_ID`/`NEWEGG_API_KEY`/`NEWEGG_SECRET_KEY` and add `NEWEGG_CREDENTIALS_MARKETPLACE` set to the
+> marketplace they were issued for (it must equal `NEWEGG_MARKETPLACE`). There is no fallback to another
+> marketplace's set. SDK users should pass `credentialMarketplace` to `createNeweggClient`; omitting it
+> keeps the old, unsafe behaviour. See ADR 0006.
 
 ### SDK / credentials
 
-| Variable              | Default           | Meaning                                                                                                        |
-| --------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------- |
-| `NEWEGG_SELLER_ID`    | — (required)      | Seller ID; sent as the `?sellerid=` query parameter.                                                           |
-| `NEWEGG_API_KEY`      | — (required)      | API key; sent as the `Authorization` header value.                                                             |
-| `NEWEGG_SECRET_KEY`   | — (required)      | Secret key; sent as the `SecretKey` header value.                                                              |
-| `NEWEGG_MARKETPLACE`  | `us`              | Platform: `us` \| `b2b` \| `ca`.                                                                               |
-| `NEWEGG_API_BASE_URL` | official endpoint | Trusted override for tests/proxies. Defaults to `https://api.newegg.com/marketplace/`. Never settable via MCP. |
+| Variable                                       | Default           | Meaning                                                                                                                                                                                                                           |
+| ---------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NEWEGG_SELLER_ID`                             | see below         | Seller ID; sent as the `?sellerid=` query parameter. MCP: legacy unprefixed name, needs `NEWEGG_CREDENTIALS_MARKETPLACE`.                                                                                                         |
+| `NEWEGG_API_KEY`                               | see below         | API key; sent as the `Authorization` header value. MCP: legacy unprefixed name, as above.                                                                                                                                         |
+| `NEWEGG_SECRET_KEY`                            | see below         | Secret key; sent as the `SecretKey` header value. MCP: legacy unprefixed name, as above.                                                                                                                                          |
+| `NEWEGG_US_*` / `NEWEGG_B2B_*` / `NEWEGG_CA_*` | —                 | MCP: `SELLER_ID`, `API_KEY`, `SECRET_KEY` issued for that marketplace (e.g. `NEWEGG_CA_API_KEY`). When any of the three is set for the selected `NEWEGG_MARKETPLACE`, all three are required. Never used for another marketplace. |
+| `NEWEGG_CREDENTIALS_MARKETPLACE`               | —                 | MCP: the marketplace the unprefixed keys were issued for (`us` \| `b2b` \| `ca`). Required with the unprefixed names and must equal `NEWEGG_MARKETPLACE`, otherwise the server refuses to start.                                  |
+| `NEWEGG_MARKETPLACE`                           | `us`              | Platform: `us` \| `b2b` \| `ca`.                                                                                                                                                                                                  |
+| `NEWEGG_API_BASE_URL`                          | official endpoint | Trusted override for tests/proxies. Defaults to `https://api.newegg.com/marketplace/`. Never settable via MCP.                                                                                                                    |
 
 ### MCP server
 
@@ -659,12 +679,13 @@ failures; feed submissions never blindly retry after an ambiguous send (they rai
   `NEWEGG_LIVE_TEST_WAREHOUSE` on US) and skip cleanly without them. Run with
   `NEWEGG_LIVE_TESTS=true npm run test:live` (fast reads) and
   `NEWEGG_LIVE_TESTS=true npm run test:live:reports` (slow report and catalog-lookup polling, up to
-  several minutes per test, so run it in the background with the output sent to a file). On US/B2B
-  a few reads hit documented Newegg-side limitations and skip with a reason; CA is strict. The strict
-  reference pass needs `NEWEGG_MARKETPLACE=ca`: the live helpers default to `us` (and warn when the
-  variable is unset or not `us`/`b2b`/`ca`). Non-CA coverage for this account is near zero unless
-  `NEWEGG_LIVE_TEST_SELLER_PART_NUMBER` points at an item that exists on that marketplace, because
-  order-derived SKUs are CA-store SKUs; discovery errors are shown in the skip reasons.
+  several minutes per test, so run it in the background with the output sent to a file). The live
+  keys are bound to the marketplace they were issued for (`NEWEGG_LIVE_CREDENTIALS_MARKETPLACE`, or
+  `NEWEGG_CREDENTIALS_MARKETPLACE`, default `ca`): selecting a different `NEWEGG_MARKETPLACE` skips the whole
+  live suite with `no <mp> credentials (T-5911)` instead of reading the CA account under a `us`/`b2b`
+  label. The strict reference pass needs `NEWEGG_MARKETPLACE=ca`: the live helpers default to `us` (and warn
+  when the variable is unset or not `us`/`b2b`/`ca`). us/b2b live coverage needs real Newegg.com / Business
+  API keys, which the account does not have yet.
 - **The live suite is guarded READ-ONLY.** `npm run check:live-readonly` (its own CI job)
   scans `packages/sdk/test/live/` and fails if a mutating call is ever added there, so the
   opt-in live suite is structurally prevented from writing to a real account. It is an

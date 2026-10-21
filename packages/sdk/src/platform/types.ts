@@ -93,6 +93,12 @@ export interface PlatformAdapter {
   readonly requiresWarehouseForUpdate: boolean;
   /** INVENTORY_DATA (US) or INVENTORY_AND_PRICE_DATA (B2B/CAN). */
   readonly feedRequestType: string;
+  /**
+   * ISO currency codes an order of this marketplace's own seller account can carry (CAN: CAD;
+   * US and B2B: USD, an ASSUMPTION - no US/B2B key has been available to verify; contracts §10).
+   * Used by the orders currency guard (`order-currency.ts`) to catch a key pair from another marketplace.
+   */
+  readonly expectedOrderCurrencies: readonly string[];
 
   getItemRequest(identifier: ItemIdentifier, warehouses: string[] | undefined): RequestSpec;
   parseItem(json: unknown): ParsedItem | undefined;
