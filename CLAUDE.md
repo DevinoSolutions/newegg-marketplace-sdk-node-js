@@ -62,6 +62,7 @@ npm run check:live-readonly
 npm run verify:exports   # requires a fresh build
 NEWEGG_LIVE_TESTS=true npm run test:live          # READ-ONLY fast live suite (needs .env creds)
 NEWEGG_LIVE_TESTS=true npm run test:live:reports  # READ-ONLY slow report/catalog polling (minutes; run in background)
+# The strict reference live pass needs NEWEGG_MARKETPLACE=ca (the live helpers default to `us` and warn).
 ```
 
 All of these must exit 0 before claiming work is done. Trust exit codes, not output
