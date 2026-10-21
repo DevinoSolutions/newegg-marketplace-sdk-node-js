@@ -555,7 +555,10 @@ Types mirror the official sample (paging/enum values sent as strings, all accept
   (shipped by seller) · 3 Multi-Channel · 4 NWS. `OrderDownloaded` 0 include downloaded
   (default) · 1 exclude already-downloaded. `PremierOrder` 0 All · 1 Premier only · 2 No
   Premier. `VoidSoon` (optional) 24 | 48 — orders auto-voiding within N hours.
-- `OrderDateFrom`/`OrderDateTo`: Pacific-Time strings (§2).
+- `OrderDateFrom`/`OrderDateTo`: Pacific-Time strings (§2). The SDK sends a string verbatim, so it accepts only the two
+  `LastUpdatedAfter` forms below (`MM/DD/YYYY HH:mm:ss`, `YYYY-MM-DD HH:mm:ss`) and rejects anything else with
+  `NeweggValidationError` (**ASSUMPTION**: Newegg takes these two forms for the order-date criteria too; only
+  `LastUpdatedAfter` was probed, and the doc sample above uses the second form).
 
 **Criteria per platform (observed live, read-only, 2026-10-21, T-5912).** Newegg validates `RequestCriteria`
 strictly: an element the platform does not know answers HTTP **400 `CE003`** ("The element 'RequestCriteria' has
@@ -576,7 +579,7 @@ validates against, which is the part the prefix does select):
 - The CA error lists the valid elements as `OrderNumberList, Status, LastUpdatedAfter, VoidSoon, OrderDownloaded,
 SellerOrderNumberList, IsInternal, Type`.
 - `LastUpdatedAfter` accepts `MM/DD/YYYY HH:mm:ss` and `YYYY-MM-DD HH:mm:ss` (Pacific, §2); the SDK rejects any other
-  string with `NeweggValidationError` (a `Date` is rendered to the second form). Verified on CA: a date in
+  string (or an invalid `Date`) with `NeweggValidationError` (a `Date` is rendered to the second form). Verified on CA: a date in
   2030 returned 0 orders and a date in 2020 returned all of them. **ASSUMPTION**: it filters on the order's
   last-update time (not the order date); only the wire format and the far-past/far-future behaviour were observed.
 - `IsInternal` is an integer (`"true"` is rejected); `0` and `1` both returned every order on the CA account.
@@ -586,6 +589,11 @@ SellerOrderNumberList, IsInternal, Type`.
 - The SDK does not send a criterion the platform rejects: `orders.list` throws
   `UnsupportedMarketplaceOperationError` before any request for `countryCode`, `premierOrder` or `type: "nws"` on
   `ca`/`b2b` (`platform/order-criteria.ts`, ADR 0002); a filter is never silently dropped.
+- Input is validated before any request, and a value the SDK cannot map is an error, not an omission: `status` must be one
+  of the six concrete statuses (`"unknown"` has no wire code), `type` / `premierOrder` must be known keys, and `countryCode`
+  must be a non-blank string. A blank `countryCode` is `NeweggValidationError` on every marketplace; this check runs
+  BEFORE the per-platform one, so `countryCode: ""` on `ca`/`b2b` is a validation error, not an unsupported-operation
+  error (a blank value is malformed everywhere, it would not be fine on `us`).
 
 Response — envelope + `ResponseBody.PageInfo` + `ResponseBody.OrderInfoList`; each order nests
 `ItemInfoList` and `PackageInfoList`. XML wraps lists as `<OrderInfoList><OrderInfo>…`; JSON
@@ -3675,7 +3683,7 @@ when looking one up). The field table
 documents a flat `OrderNumber` but both samples use the `OrderNumberList` wrapper; the SDK sends the
 wrapper (same as §10.1). Differences from §10.1: `Status` 0 Unshipped, 1 Partially Shipped, 2 Shipped,
 3 Invoiced, 4 Voided, **5 All** (blank returns Unshipped); `Type` 0 All, 1 SBN, 2 SBS, **3 NISP**
-(§10.1's codes 3/4 are multi-channel/NWS); `VoidSoon` (24/48 h) and `IssueUser` are documented but not
+(§10.1's codes 3/4 are multi-channel/NWS); the SDK rejects `status` values outside the first five (`paymentPending`, `unknown`), unrecognized `dateFrom`/`dateTo` strings and a blank `countryCode` with `NeweggValidationError`; `VoidSoon` (24/48 h) and `IssueUser` are documented but not
 exposed.
 
 Response: `ResponseBody > { PageInfo { TotalCount, TotalPageCount, PageSize, PageIndex }, AddOrderInfoList >

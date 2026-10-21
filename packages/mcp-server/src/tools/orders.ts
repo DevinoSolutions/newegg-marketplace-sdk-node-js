@@ -181,11 +181,23 @@ const orderNumberSchema = z
   .union([z.string().min(1).max(32), z.number().int().positive()])
   .describe("A Newegg order number.");
 
-/** ISO 8601 (or `YYYY-MM-DD HH:mm:ss`) → Date so the SDK renders Pacific; otherwise pass through. */
-function toDateInput(value: string | undefined): Date | string | undefined {
+/** An ISO 8601 instant that carries an explicit UTC designator or numeric offset. */
+const ZONED_INSTANT =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
+
+/**
+ * An instant with an explicit `Z` / offset becomes a `Date` so the SDK renders it as Pacific. A
+ * zone-less string is a Pacific wall clock (`YYYY-MM-DD HH:mm:ss` or `MM/DD/YYYY HH:mm:ss`) and goes
+ * to the SDK untouched: parsing it with `new Date()` would read it in the MACHINE's zone and shift the
+ * window on any non-Pacific host. The SDK validates the string and fails before any request.
+ */
+export function toDateInput(value: string | undefined): Date | string | undefined {
   if (value === undefined) return undefined;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date;
+  if (ZONED_INSTANT.test(value)) {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -202,7 +214,9 @@ const listInputSchema = z
     status: z
       .enum(["unshipped", "partiallyShipped", "shipped", "invoiced", "voided", "paymentPending"])
       .optional()
-      .describe("Filter by order status."),
+      .describe(
+        "Filter by order status. A value outside this list is rejected before any request, never ignored.",
+      ),
     type: z
       .enum(["all", "sbn", "sbs", "multiChannel", "nws"])
       .optional()
@@ -224,23 +238,27 @@ const listInputSchema = z
       .min(1)
       .optional()
       .describe(
-        "Lower bound on order date, ISO 8601 (e.g. 2024-01-01T00:00:00Z), Pacific-converted.",
+        "Lower bound on order date. Either an ISO 8601 instant with Z or an offset (e.g. 2024-01-01T00:00:00Z, converted to Pacific) or a zone-less Pacific wall-clock string as YYYY-MM-DD HH:mm:ss or MM/DD/YYYY HH:mm:ss. Anything else, including a date-only value, is rejected before any request.",
       ),
-    dateTo: z.string().min(1).optional().describe("Upper bound on order date (see dateFrom)."),
+    dateTo: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Upper bound on order date (same formats as dateFrom)."),
     countryCode: z
       .string()
       .min(1)
       .max(3)
       .optional()
       .describe(
-        "ISO 3-letter ship-to country code (e.g. USA). Newegg.com (us) only: on ca/b2b the call fails with an unsupported_operation error before anything is sent (Newegg rejects it with CE003), so do not send it for Newegg.ca or Business.",
+        "ISO 3-letter ship-to country code (e.g. USA); a blank value is rejected. Newegg.com (us) only: on ca/b2b the call fails before anything is sent (Newegg rejects it with CE003), so do not send it for Newegg.ca or Business.",
       ),
     lastUpdatedAfter: z
       .string()
       .min(1)
       .optional()
       .describe(
-        "Only orders last updated after this instant, ISO 8601 (e.g. 2024-01-01T00:00:00Z), Pacific-converted. Valid on every marketplace.",
+        "Only orders last updated after this instant (same formats as dateFrom: ISO 8601 with Z or offset, or a zone-less Pacific YYYY-MM-DD HH:mm:ss / MM/DD/YYYY HH:mm:ss). Valid on every marketplace.",
       ),
     isInternal: z
       .boolean()

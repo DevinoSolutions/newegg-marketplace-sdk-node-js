@@ -160,7 +160,7 @@ Where:
 - **`Update`** = `{ identifier: Identifier; quantity: integer >= 0; warehouseLocation?: string; fulfillmentOption?: "Seller" }`.
 - **`Condition`** ∈ `new | refurbished | usedLikeNew | usedVeryGood | usedGood | usedAcceptable`.
 - **`ServiceDomain`** ∈ `contentmgmt | ordermgmt | datafeedmgmt | servicemgmt | reportmgmt | sellermgmt | sbnmgmt | shippingservice`.
-- **Order `status`** ∈ `unshipped | partiallyShipped | shipped | invoiced | voided | paymentPending`; **`type`** ∈ `all | sbn | sbs | multiChannel | nws`; **`premierOrder`** ∈ `all | premierOnly | noPremier`. `dateFrom`/`dateTo` are ISO 8601 and are converted to Newegg Pacific time.
+- **Order `status`** ∈ `unshipped | partiallyShipped | shipped | invoiced | voided | paymentPending`; **`type`** ∈ `all | sbn | sbs | multiChannel | nws`; **`premierOrder`** ∈ `all | premierOnly | noPremier`. `dateFrom`/`dateTo`/`lastUpdatedAfter` take either an ISO 8601 instant with `Z` or a numeric offset (converted to Newegg Pacific time) or a zone-less string, which is a Pacific wall clock as `YYYY-MM-DD HH:mm:ss` or `MM/DD/YYYY HH:mm:ss` (sent unchanged, so the server's time zone never shifts the window); any other form, including a date-only value, is rejected before any request. An unknown `status` or a blank `countryCode` is rejected too, never ignored.
 
 The preview `updates` array is bound to `NEWEGG_MCP_MAX_ITEMS_PER_OPERATION` (default 500) at
 registration time via a Zod `.max(...)`, so an oversized request is rejected by the tool's own

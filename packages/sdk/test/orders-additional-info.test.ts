@@ -102,6 +102,29 @@ describe("orders additional info (us)", () => {
   });
 });
 
+describe("orders additional info strict validation (T-5948)", () => {
+  it("rejects unknown statuses, bad dates and blank countryCode before any request", async () => {
+    const bad: Array<[string, Record<string, unknown>]> = [
+      ["status", { status: "unknown" }],
+      ["status", { status: "paymentPending" }],
+      ["status", { status: "bogus" }],
+      ["dateFrom", { dateFrom: "2026-01-02" }],
+      ["dateTo", { dateTo: "tomorrow" }],
+      ["countryCode", { countryCode: "" }],
+      ["countryCode", { countryCode: "   " }],
+    ];
+    for (const [path, input] of bad) {
+      const t = makeClient("us", route());
+      const error: unknown = await t.client.orders
+        .listAdditionalInfo(input as never)
+        .catch((e: unknown) => e);
+      expect(error, JSON.stringify(input)).toBeInstanceOf(NeweggValidationError);
+      expect((error as NeweggValidationError).issues[0]?.path).toBe(path);
+      expect(t.calls).toHaveLength(0);
+    }
+  });
+});
+
 describe("orders additional info (b2b / ca)", () => {
   it.each(["b2b", "ca"] as const)("%s fails before sending", async (marketplace) => {
     const t = makeClient(marketplace, route());
