@@ -397,7 +397,7 @@ export function astViolations(source: string): string[] {
       if (BANNED_PROPERTY_NAMES.has(name)) flag(`access to .${name} (reflection)`);
       if (WRITE_METHOD_NAMES.has(name)) {
         flag(
-          `.${name} named in a live file — write methods (and call/apply/bind) may not be referenced on any receiver; if it is a plain data field the guard cannot tell it from an SDK method: pick another field or local name, or add a reviewed exception in scripts/live-readonly-ast.ts with a reason`,
+          `.${name} named in a live file — write methods (and call/apply/bind) may not be referenced on any receiver; if it is a plain data field the guard cannot tell it from an SDK method: pick another field or local name, or add a reviewed exception in scripts/live-readonly/allowlists.ts with a reason`,
         );
       }
       if (namespaces.includes(name)) checkNamespaceUse(node, name);

@@ -673,7 +673,7 @@ failures; feed submissions never blindly retry after an ambiguous send (they rai
   (no aliasing, destructuring in any position, or naming a write method on any receiver);
   computed member access with a non-literal key, `Object.*` reflection and `Reflect` are
   banned; and every `NeweggClient` namespace and write-namespace method must be classified in
-  `scripts/live-readonly-ast.ts`, so a new write surface fails the guard until it is. The
+  `scripts/live-readonly/allowlists.ts`, so a new write surface fails the guard until it is. The
   guard's `MUST_FLAG` / `MUST_PASS` self-test runs on every invocation.
 
 ---
