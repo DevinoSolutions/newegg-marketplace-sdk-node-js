@@ -3554,11 +3554,11 @@ reprint to fetch the label instead of buying another). The estimate goes through
 path (`HttpClient.requestOnce`): one request, no retry, errors mapped. There is no void / refund-a-label
 operation in the documented API.
 
-**Cost ceiling (MCP only, on by default).** `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100; a number above 0 and at
+**Cost ceiling (MCP only, on by default).** `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100; a plain decimal above 0 and at
 most 99,999.99, in the marketplace currency: USD on us/b2b, CAD on ca, and the number is compared as-is, with
 no currency conversion) mirrors `NEWEGG_MCP_MAX_REFUND_AMOUNT`. Leaving it unset or empty keeps the default;
 only the explicit value `unlimited` (or `off`, case-insensitive) disables it, and any other value is rejected
-at startup. With the cap disabled no estimate is requested by the previews. While a cap is active: the create preview
+at startup (parsing is strict: digits with an optional point and at most 2 decimals, no sign, exponent, `0x`/`0b`/`0o` prefix or leading zeros). With the cap disabled no estimate is requested by the previews. While a cap is active: the create preview
 requests one estimate, reports it as `estimatedCost` (with `maxLabelAmount`) and is blocked, with no
 `previewId`, when the total is above the cap; the quoted cost (cents) is part of the stored preview's hash;
 `apply_create` first refuses with `preview_stale` when the stored quote is above the CURRENT cap (a restart with a
@@ -3566,7 +3566,7 @@ lower cap), then asks for a **fresh** estimate (the carrier rate can move) and r
 sending nothing, when that is above the cap. It fails closed: a quote that errors, a quote for a different
 number of packages than the purchase, a package Newegg did not rate, or a total that is not above 0 blocks the preview and the apply. A **reprint** has no quote (its
 request carries only the order number) and may be billed, so while a cap is active (the default) a reprint preview is
-blocked as an undeterminable cost; the operator must set `NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited` to reprint. The SDK enforces no ceiling; SDK callers are the operator.
+blocked as an undeterminable cost. To recover a label after an indeterminate create the operator either sets the separate opt-in `NEWEGG_MCP_ALLOW_LABEL_REPRINT=true` (exact literal; reprint previews and applies then pass a cap, with a warning, and the create cap is untouched; reprint billing stays an **ASSUMPTION**), or restarts with `NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited` (which also lifts the create cap). The switch does nothing while `NEWEGG_MCP_ALLOW_WRITES` is not `true` (no label tool is registered), and apply re-checks it, so a reprint preview made under the flag is refused after a restart without it. Both resources report it as `limits.allowLabelReprint`. The SDK enforces no ceiling; SDK callers are the operator.
 
 ### 23.6 ASSUMPTIONs (retire only with an owner-authorized live probe)
 

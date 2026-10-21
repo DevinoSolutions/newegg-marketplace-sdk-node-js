@@ -1197,3 +1197,175 @@ describe("configuration", () => {
     expect(loadMcpConfigFromEnv(writesEnv()).allowWrites).toBe(true);
   });
 });
+
+describe("NEWEGG_MCP_ALLOW_LABEL_REPRINT", () => {
+  // A cap is active (the default) and only the reprint switch differs.
+  const capped = (extra: Record<string, string | undefined> = {}) =>
+    makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "true", ...extra });
+
+  it.each([
+    [undefined, false],
+    ["", false],
+    ["false", false],
+    ["TRUE", false],
+    ["1", false],
+    [" true ", false],
+    ["true", true],
+  ])("reads %j as %s (exact literal true only)", (value, expected) => {
+    const config = loadMcpConfigFromEnv(capped({ NEWEGG_MCP_ALLOW_LABEL_REPRINT: value }));
+    expect(config.limits.allowLabelReprint).toBe(expected);
+  });
+
+  it("blocks a reprint under a cap without the flag and points at both ways out", async () => {
+    const harness = await harnessFor(
+      [postRoute(REPRINT, 200, reprintBody)],
+      capped(),
+      undefined,
+      true,
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewReprint, {
+        orderNumber: ORDER_NUMBER,
+      });
+      expect(preview.json.eligible).toBe(false);
+      expect(preview.json.previewId).toBeUndefined();
+      const blockers = (preview.json.blockers as string[]).join("\n");
+      expect(blockers).toContain("NEWEGG_MCP_ALLOW_LABEL_REPRINT=true");
+      expect(blockers).toContain("NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited");
+      expect(posts(harness)).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("allows preview and apply of a reprint under a cap with the flag, keeping the create cap", async () => {
+    const harness = await harnessFor(
+      [
+        postRoute(REPRINT, 200, reprintBody),
+        postRoute(ESTIMATE, 200, estimateBody("100.01")),
+        postRoute(CREATE, 200, createBody()),
+      ],
+      capped({ NEWEGG_MCP_ALLOW_LABEL_REPRINT: "true" }),
+      undefined,
+      true,
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewReprint, {
+        orderNumber: ORDER_NUMBER,
+      });
+      expect(preview.json).toMatchObject({ eligible: true, maxLabelAmount: 100 });
+      expect(preview.json.blockers).toEqual([]);
+      expect(preview.json.estimatedCost).toBeUndefined();
+      expect((preview.json.warnings as string[]).join("\n")).toContain(
+        "NEWEGG_MCP_ALLOW_LABEL_REPRINT",
+      );
+      expect(posts(harness)).toHaveLength(0);
+
+      const applied = await callTool(harness.mcp, TOOLS.applyReprint, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(false);
+      const sent = posts(harness);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.url.pathname).toMatch(REPRINT);
+
+      // The flag does not lift the create cap: a quote above it still blocks the purchase.
+      const create = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(create.json.eligible).toBe(false);
+      expect(wasCreateSent(harness)).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("apply refuses a reprint preview once the flag is gone, sending nothing", async () => {
+    const previewStore = new InMemoryPreviewStore();
+    const flagged = await startHarness({
+      env: capped({ NEWEGG_MCP_ALLOW_LABEL_REPRINT: "true" }),
+      routes: [orderRoute(true), postRoute(REPRINT, 200, reprintBody)],
+      previewStore,
+    });
+    let id: string;
+    try {
+      const preview = await callTool(flagged.mcp, TOOLS.previewReprint, {
+        orderNumber: ORDER_NUMBER,
+      });
+      expect(preview.json.eligible).toBe(true);
+      id = preview.json.previewId as string;
+    } finally {
+      await flagged.close();
+    }
+    const restarted = await startHarness({
+      env: capped(),
+      routes: [orderRoute(true), postRoute(REPRINT, 200, reprintBody)],
+      previewStore,
+    });
+    try {
+      const applied = await callTool(restarted.mcp, TOOLS.applyReprint, { previewId: id });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(posts(restarted)).toHaveLength(0);
+    } finally {
+      await restarted.close();
+    }
+  });
+
+  it("does nothing on its own when writes are disabled: no label tool is registered", async () => {
+    const harness = await harnessFor(
+      [postRoute(REPRINT, 200, reprintBody)],
+      makeEnv({ NEWEGG_MCP_ALLOW_LABEL_REPRINT: "true" }),
+    );
+    try {
+      const listed = (await harness.mcp.listTools()) as { tools: Array<{ name: string }> };
+      const names = listed.tools.map((tool) => tool.name);
+      for (const name of WRITE_TOOLS) expect(names).not.toContain(name);
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe("NEWEGG_MCP_MAX_LABEL_AMOUNT strict parsing", () => {
+  const parse = (value: string) =>
+    loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: value })).limits.maxLabelAmount;
+
+  it.each([
+    "0x64",
+    "0b11",
+    "0o7",
+    "+100",
+    "1e2",
+    "00100",
+    ".5",
+    "5.",
+    "1 0",
+    "-5",
+    "100.123",
+    "1,5",
+  ])("rejects %j naming only the variable", (value) => {
+    let message = "";
+    try {
+      parse(value);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toMatch(/NEWEGG_MCP_MAX_LABEL_AMOUNT must be .*unlimited/);
+    expect(message).not.toContain(value);
+  });
+
+  it.each([
+    ["100", 100],
+    ["100.5", 100.5],
+    ["99999.99", 99999.99],
+    ["0.5", 0.5],
+    [" 25 ", 25],
+  ])("accepts %j", (value, expected) => {
+    expect(parse(value)).toBe(expected);
+  });
+
+  it("still enforces the range on well-formed values", () => {
+    expect(() => parse("0")).toThrow(/NEWEGG_MCP_MAX_LABEL_AMOUNT/);
+    expect(() => parse("0.00")).toThrow(/NEWEGG_MCP_MAX_LABEL_AMOUNT/);
+    expect(() => parse("100000")).toThrow(/NEWEGG_MCP_MAX_LABEL_AMOUNT/);
+  });
+});

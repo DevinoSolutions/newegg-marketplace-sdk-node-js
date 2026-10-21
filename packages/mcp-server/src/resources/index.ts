@@ -37,6 +37,7 @@ export function buildCapabilities(
       maxPriceChangePercent: config.limits.maxPriceChangePercent,
       maxRefundAmount: config.limits.maxRefundAmount,
       maxLabelAmount: config.limits.maxLabelAmount ?? "unlimited",
+      allowLabelReprint: config.limits.allowLabelReprint,
       allowedWarehouses: config.limits.allowedWarehouses,
       allowedMarketplaces: config.limits.allowedMarketplaces,
     },
@@ -66,6 +67,7 @@ export function buildPublicConfiguration(
       maxPriceChangePercent: config.limits.maxPriceChangePercent,
       maxRefundAmount: config.limits.maxRefundAmount,
       maxLabelAmount: config.limits.maxLabelAmount ?? "unlimited",
+      allowLabelReprint: config.limits.allowLabelReprint,
     },
     batchLimits: {
       feedMaxRecords: INVENTORY_FEED_MAX_RECORDS,

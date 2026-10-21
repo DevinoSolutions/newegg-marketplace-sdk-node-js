@@ -81,6 +81,34 @@ describe("resources", () => {
     }
   });
 
+  it("reports the label cap and reprint switch in capabilities and public config", async () => {
+    const reported = async (env: ReturnType<typeof makeEnv>) => {
+      const harness = await startHarness({ env });
+      try {
+        const caps = await readResource(harness.mcp, "newegg://capabilities");
+        const pub = await readResource(harness.mcp, "newegg://configuration/public");
+        return [caps.json.limits, pub.json.limits] as Array<Record<string, unknown>>;
+      } finally {
+        await harness.close();
+      }
+    };
+    for (const limits of await reported(makeEnv())) {
+      expect(limits.maxLabelAmount).toBe(100);
+      expect(limits.allowLabelReprint).toBe(false);
+    }
+    const off = makeEnv({
+      NEWEGG_MCP_MAX_LABEL_AMOUNT: "off",
+      NEWEGG_MCP_ALLOW_LABEL_REPRINT: "true",
+    });
+    for (const limits of await reported(off)) {
+      expect(limits.maxLabelAmount).toBe("unlimited");
+      expect(limits.allowLabelReprint).toBe(true);
+    }
+    for (const limits of await reported(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: "49.99" }))) {
+      expect(limits.maxLabelAmount).toBe(49.99);
+    }
+  });
+
   it("resolves the feeds template resource to a status payload", async () => {
     const harness = await startHarness({ routes: [feedStatusRoute("REQ1", "IN_PROGRESS")] });
     try {
