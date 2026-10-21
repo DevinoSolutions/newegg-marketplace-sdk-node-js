@@ -60,7 +60,8 @@ npm test                 # mocked suites only (154+); no credentials needed
 npm run check:secrets    # working-tree secret scan
 npm run check:live-readonly
 npm run verify:exports   # requires a fresh build
-NEWEGG_LIVE_TESTS=true npm run test:live   # READ-ONLY live suite (needs .env creds)
+NEWEGG_LIVE_TESTS=true npm run test:live          # READ-ONLY fast live suite (needs .env creds)
+NEWEGG_LIVE_TESTS=true npm run test:live:reports  # READ-ONLY slow report/catalog polling (minutes; run in background)
 ```
 
 All of these must exit 0 before claiming work is done. Trust exit codes, not output
