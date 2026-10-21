@@ -1,4 +1,4 @@
-/** Public storefront buy-box / offers types (contracts §14). Re-exported from `../types.ts`. */
+// Public storefront buy-box / offers types (contracts §14). Re-exported from `../types.ts`.
 
 // ----------------------------------------------------------------------------
 // storefront (public buy-box / offers; contracts §14) — UNOFFICIAL, read-only
