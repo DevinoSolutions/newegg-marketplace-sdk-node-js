@@ -218,6 +218,149 @@ describe("order criteria per marketplace (T-5912)", () => {
     }
   });
 
+  describe("strict status, date and countryCode validation (T-5948)", () => {
+    /** Runs `list` on a client whose fetch throws, returning what the call rejected with. */
+    async function rejection(marketplace: NeweggMarketplace, input: unknown) {
+      const fetchSpy = vi.fn(() => {
+        throw new Error("fetch must not be called");
+      }) as unknown as typeof globalThis.fetch;
+      const { client } = makeClient(marketplace, [], { fetch: fetchSpy });
+      const error: unknown = await client.orders.list(input as ListOrdersInput).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+      return error;
+    }
+
+    it("rejects an unknown status on every marketplace before any request", async () => {
+      const bad: unknown[] = ["unknown", "Shipped", "bogus", "", "toString", 2, null, {}];
+      for (const marketplace of ["us", "b2b", "ca"] as const) {
+        for (const status of bad) {
+          const error = await rejection(marketplace, { status });
+          expect(error, `${marketplace} status=${String(status)}`).toBeInstanceOf(
+            NeweggValidationError,
+          );
+          expect((error as NeweggValidationError).issues[0]?.path).toBe("status");
+        }
+      }
+    });
+
+    it("still sends every concrete status", async () => {
+      const codes = {
+        unshipped: 0,
+        partiallyShipped: 1,
+        shipped: 2,
+        invoiced: 3,
+        voided: 4,
+        paymentPending: 5,
+      } as const;
+      for (const [status, code] of Object.entries(codes)) {
+        const { client, calls } = clientFor("ca");
+        await client.orders.list({ status: status as keyof typeof codes });
+        expect(criteriaOf(calls).Status).toBe(code);
+      }
+    });
+
+    it("rejects dateFrom and dateTo strings that are not a Pacific wall-clock format", async () => {
+      const bad: unknown[] = [
+        "2026-01-02",
+        "2026-01-02T03:04:05Z",
+        "2026-01-02 03:04",
+        "13/02/2026 03:04:05",
+        "2026-02-31 03:04:05",
+        "02/30/2026 03:04:05",
+        "2025-02-29 00:00:00",
+        "2026-04-31 00:00:00",
+        "2026-01-02 24:00:00",
+        "tomorrow",
+        "",
+        " 2026-01-02 03:04:05",
+        new Date("not a date"),
+        20260102,
+      ];
+      for (const field of ["dateFrom", "dateTo"] as const) {
+        for (const value of bad) {
+          const error = await rejection("ca", { [field]: value });
+          expect(error, `${field}=${String(value)}`).toBeInstanceOf(NeweggValidationError);
+          expect((error as NeweggValidationError).issues[0]?.path).toBe(field);
+        }
+      }
+    });
+
+    it("accepts real calendar edges such as a leap day and a month end", async () => {
+      const { client, calls } = clientFor("ca");
+      await client.orders.list({ dateFrom: "2024-02-29 00:00:00", dateTo: "12/31/2026 23:59:59" });
+      expect(criteriaOf(calls)).toEqual({
+        OrderDateFrom: "2024-02-29 00:00:00",
+        OrderDateTo: "12/31/2026 23:59:59",
+      });
+    });
+
+    it("also rejects an impossible calendar date in lastUpdatedAfter", async () => {
+      for (const value of ["2026-02-31 03:04:05", "02/31/2026 03:04:05"]) {
+        const error = await rejection("ca", { lastUpdatedAfter: value });
+        expect(error, value).toBeInstanceOf(NeweggValidationError);
+        expect((error as NeweggValidationError).issues[0]?.path).toBe("lastUpdatedAfter");
+      }
+    });
+
+    it("reports every invalid field in one error", async () => {
+      const error = await rejection("ca", {
+        status: "bogus",
+        dateFrom: "x",
+        dateTo: "y",
+        lastUpdatedAfter: "z",
+        type: "nope",
+      });
+      expect(error).toBeInstanceOf(NeweggValidationError);
+      const paths = (error as NeweggValidationError).issues.map((issue) => issue.path).sort();
+      expect(paths).toEqual(["dateFrom", "dateTo", "lastUpdatedAfter", "status", "type"]);
+    });
+
+    it("sends valid dateFrom/dateTo strings verbatim and renders a Date as Pacific", async () => {
+      const strings = clientFor("ca");
+      await strings.client.orders.list({
+        dateFrom: "01/01/2020 00:00:00",
+        dateTo: "2026-12-31 23:59:59",
+      });
+      expect(criteriaOf(strings.calls)).toEqual({
+        OrderDateFrom: "01/01/2020 00:00:00",
+        OrderDateTo: "2026-12-31 23:59:59",
+      });
+      const dates = clientFor("ca");
+      await dates.client.orders.list({
+        dateFrom: new Date("2026-06-15T20:30:00.000Z"),
+        dateTo: new Date("2026-01-15T20:30:00.000Z"),
+      });
+      expect(criteriaOf(dates.calls)).toEqual({
+        OrderDateFrom: "2026-06-15 13:30:00",
+        OrderDateTo: "2026-01-15 12:30:00",
+      });
+    });
+
+    it("rejects a blank or non-string countryCode on every marketplace (validation wins over unsupported)", async () => {
+      for (const marketplace of ["us", "b2b", "ca"] as const) {
+        for (const countryCode of ["", "  ", "\t", " USA", "USA ", "USA\n", 840, null]) {
+          const error = await rejection(marketplace, { countryCode });
+          expect(error, `${marketplace} countryCode=${String(countryCode)}`).toBeInstanceOf(
+            NeweggValidationError,
+          );
+          expect((error as NeweggValidationError).issues[0]?.path).toBe("countryCode");
+        }
+      }
+    });
+
+    it("a non-blank countryCode on ca stays an unsupported-operation error, on us it is sent", async () => {
+      expect(await rejection("ca", { countryCode: "USA" })).toBeInstanceOf(
+        UnsupportedMarketplaceOperationError,
+      );
+      const { client, calls } = clientFor("us");
+      await client.orders.list({ countryCode: "USA" });
+      expect(criteriaOf(calls)).toEqual({ CountryCode: "USA" });
+    });
+  });
+
   it("the capability map matches the 2026-10-21 probes", () => {
     expect(getOrderCriteriaPlatform("us")).toMatchObject({
       countryCode: true,
@@ -232,5 +375,10 @@ describe("order criteria per marketplace (T-5912)", () => {
       });
     }
     expect(() => assertOrderCriteriaSupported(getOrderCriteriaPlatform("ca"), {})).not.toThrow();
+    // A defined countryCode counts as set even when blank; orders.list rejects a blank one as
+    // invalid input first, so this only matters to direct callers of the assertion.
+    expect(() =>
+      assertOrderCriteriaSupported(getOrderCriteriaPlatform("ca"), { countryCode: "" }),
+    ).toThrow(UnsupportedMarketplaceOperationError);
   });
 });

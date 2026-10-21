@@ -42,7 +42,11 @@ export interface ListOrdersInput {
   orderNumbers?: Array<string | number>;
   /** Seller order numbers / SBN references (`SellerOrderNumberList`). */
   sellerOrderNumbers?: string[];
-  /** Filter by a single order status (`Status`). */
+  /**
+   * Filter by a single order status (`Status`). `"unknown"` is a read-side fallback with no wire code
+   * and, like any other unrecognized value, throws {@link NeweggValidationError} rather than being
+   * dropped (which would send an unfiltered request).
+   */
   status?: OrderStatus;
   /**
    * Filter by fulfillment/channel type (`Type`). Default `"all"` on the wire. `"nws"` is Newegg.com
@@ -56,18 +60,26 @@ export interface ListOrdersInput {
    * 400 CE003, so the SDK throws {@link UnsupportedMarketplaceOperationError} before any request.
    */
   premierOrder?: PremierOrderFilter;
-  /** Lower bound on order date. `Date` is rendered as Pacific Time; a string is sent verbatim. */
+  /**
+   * Lower bound on order date. A `Date` is rendered as Pacific Time; a string is sent verbatim, so it
+   * must be a Pacific wall clock as `MM/DD/YYYY HH:mm:ss` or `YYYY-MM-DD HH:mm:ss` (both forms verified
+   * live on ca, 2026-10-21; it must name a real calendar date). Anything else, including a date-only
+   * value, an ISO string with `Z` or an invalid `Date`, throws {@link NeweggValidationError} before any
+   * request.
+   */
   dateFrom?: Date | string;
-  /** Upper bound on order date (see {@link ListOrdersInput.dateFrom}). */
+  /** Upper bound on order date; same accepted forms as {@link ListOrdersInput.dateFrom}. */
   dateTo?: Date | string;
   /**
    * ISO 3-digit ship-to country code (`CountryCode`). Newegg.com (`us`) only: throws
-   * {@link UnsupportedMarketplaceOperationError} on `ca`/`b2b` (Newegg answers 400 CE003).
+   * {@link UnsupportedMarketplaceOperationError} on `ca`/`b2b` (Newegg answers 400 CE003). An empty,
+   * whitespace-only or whitespace-padded value is malformed input on EVERY marketplace and throws
+   * {@link NeweggValidationError} first (it is never silently dropped or trimmed).
    */
   countryCode?: string;
   /**
    * Orders last updated after this instant (`LastUpdatedAfter`). A `Date` is rendered as Pacific Time; a
-   * string is sent verbatim (`MM/DD/YYYY HH:mm:ss` or `YYYY-MM-DD HH:mm:ss`, Pacific). Valid on every
+   * string is sent verbatim and must be `MM/DD/YYYY HH:mm:ss` or `YYYY-MM-DD HH:mm:ss` (Pacific). Valid on every
    * marketplace (wire format verified live 2026-10-21; the exact "updated" semantics are an ASSUMPTION).
    */
   lastUpdatedAfter?: Date | string;

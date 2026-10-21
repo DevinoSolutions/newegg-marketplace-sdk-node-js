@@ -265,12 +265,86 @@ function isKnownKey(known: Record<string, true>, value: unknown): boolean {
   return typeof value === "string" && Object.hasOwn(known, value);
 }
 
+/** Concrete statuses `Status` can filter on; `"unknown"` is a read-side fallback with no wire code. */
+const ORDER_STATUS_FILTERS: Record<string, true> = {
+  unshipped: true,
+  partiallyShipped: true,
+  shipped: true,
+  invoiced: true,
+  voided: true,
+  paymentPending: true,
+};
+/** Get Additional Order Information reads `Status` 5 as "All", so `paymentPending` is not a filter there. */
+const ADDITIONAL_INFO_STATUS_FILTERS: Record<string, true> = {
+  unshipped: true,
+  partiallyShipped: true,
+  shipped: true,
+  invoiced: true,
+  voided: true,
+};
+
 /**
  * The two wire formats Newegg accepted for `LastUpdatedAfter` in the 2026-10-21 probe (contracts
  * §10.1), both Pacific wall clock with seconds: `MM/DD/YYYY HH:mm:ss` and `YYYY-MM-DD HH:mm:ss`.
+ * The same check guards `OrderDateFrom` / `OrderDateTo`, which take the same Pacific strings (§10).
  */
-const LAST_UPDATED_AFTER_FORMAT =
+const PACIFIC_WALL_CLOCK_STRING =
   /^(?:(?:0[1-9]|1[0-2])\/(?:0[1-9]|[12]\d|3[01])\/\d{4}|\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])) (?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
+
+/** True when the year/month/day of a wall-clock string is a real calendar date (no 2026-02-31). */
+function isRealCalendarDate(wall: string): boolean {
+  const iso = /^(\d{4})-(\d{2})-(\d{2}) /.exec(wall);
+  const mdy = /^(\d{2})\/(\d{2})\/(\d{4}) /.exec(wall);
+  const [year, month, day] = iso
+    ? [Number(iso[1]), Number(iso[2]), Number(iso[3])]
+    : mdy
+      ? [Number(mdy[3]), Number(mdy[1]), Number(mdy[2])]
+      : [0, 0, 0];
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return daysInMonth !== undefined && day >= 1 && day <= daysInMonth;
+}
+
+/**
+ * Records an issue unless `value` is a valid `Date` or a Pacific wall-clock string in one of the
+ * two wire formats naming a real calendar date and time. A string is sent verbatim, so anything
+ * else would reach Newegg unvalidated.
+ */
+function checkPacificDateInput(
+  path: string,
+  value: unknown,
+  issues: NeweggValidationIssue[],
+): void {
+  const valid =
+    value instanceof Date
+      ? !Number.isNaN(value.getTime())
+      : typeof value === "string" &&
+        PACIFIC_WALL_CLOCK_STRING.test(value) &&
+        isRealCalendarDate(value);
+  if (!valid) {
+    issues.push({
+      path,
+      message:
+        'must be a valid Date or a Pacific string "MM/DD/YYYY HH:mm:ss" or "YYYY-MM-DD HH:mm:ss"',
+    });
+  }
+}
+
+/**
+ * Records an issue when a defined `countryCode` is not a non-blank string without surrounding
+ * whitespace. It is rejected rather than trimmed: the SDK never rewrites a caller's value.
+ */
+function checkCountryCodeInput(value: unknown, issues: NeweggValidationIssue[]): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "string" || value === "" || value !== value.trim())
+  ) {
+    issues.push({
+      path: "countryCode",
+      message: "must be a non-empty string without leading or trailing whitespace, e.g. USA",
+    });
+  }
+}
 
 /**
  * Builds the Get Order Information request body from normalized criteria. Validates paging
@@ -296,6 +370,12 @@ export function buildOrderInfoRequest(input: ListOrdersInput): {
   }
   // A defined value that is not a known filter must fail, never be dropped (that would send an
   // unfiltered request that looks filtered). Callers that bypass TypeScript can pass anything.
+  if (input.status !== undefined && !isKnownKey(ORDER_STATUS_FILTERS, input.status)) {
+    issues.push({
+      path: "status",
+      message: `must be one of ${Object.keys(ORDER_STATUS_FILTERS).join(", ")}`,
+    });
+  }
   if (input.type !== undefined && !isKnownKey(ORDER_TYPE_FILTERS, input.type)) {
     issues.push({
       path: "type",
@@ -312,19 +392,11 @@ export function buildOrderInfoRequest(input: ListOrdersInput): {
     issues.push({ path: "isInternal", message: "must be a boolean" });
   }
   if (input.lastUpdatedAfter !== undefined) {
-    const value: unknown = input.lastUpdatedAfter;
-    const valid =
-      value instanceof Date
-        ? !Number.isNaN(value.getTime())
-        : typeof value === "string" && LAST_UPDATED_AFTER_FORMAT.test(value);
-    if (!valid) {
-      issues.push({
-        path: "lastUpdatedAfter",
-        message:
-          'must be a valid Date or a Pacific string "MM/DD/YYYY HH:mm:ss" or "YYYY-MM-DD HH:mm:ss"',
-      });
-    }
+    checkPacificDateInput("lastUpdatedAfter", input.lastUpdatedAfter, issues);
   }
+  if (input.dateFrom !== undefined) checkPacificDateInput("dateFrom", input.dateFrom, issues);
+  if (input.dateTo !== undefined) checkPacificDateInput("dateTo", input.dateTo, issues);
+  checkCountryCodeInput(input.countryCode, issues);
   if (issues.length > 0) {
     throw new NeweggValidationError("Invalid list-orders input.", issues);
   }
@@ -336,10 +408,7 @@ export function buildOrderInfoRequest(input: ListOrdersInput): {
   if (input.sellerOrderNumbers && input.sellerOrderNumbers.length > 0) {
     criteria.SellerOrderNumberList = { SellerOrderNumber: [...input.sellerOrderNumbers] };
   }
-  if (input.status) {
-    const code = orderStatusToCode(input.status);
-    if (code !== undefined) criteria.Status = code;
-  }
+  if (input.status !== undefined) criteria.Status = statusCode(input.status);
   if (input.type !== undefined) criteria.Type = orderTypeFilterToCode(input.type);
   // false = exclude already-downloaded (OrderDownloaded=1); default includes all.
   if (input.includeDownloaded === false) criteria.OrderDownloaded = 1;
@@ -348,7 +417,7 @@ export function buildOrderInfoRequest(input: ListOrdersInput): {
   }
   if (input.dateFrom !== undefined) criteria.OrderDateFrom = renderOrderDate(input.dateFrom);
   if (input.dateTo !== undefined) criteria.OrderDateTo = renderOrderDate(input.dateTo);
-  if (input.countryCode) criteria.CountryCode = input.countryCode;
+  if (input.countryCode !== undefined) criteria.CountryCode = input.countryCode;
   if (input.lastUpdatedAfter !== undefined) {
     criteria.LastUpdatedAfter = renderOrderDate(input.lastUpdatedAfter);
   }
@@ -359,6 +428,13 @@ export function buildOrderInfoRequest(input: ListOrdersInput): {
     RequestBody: { PageIndex: pageIndex, PageSize: pageSize, RequestCriteria: criteria },
   };
   return { body, pageIndex, pageSize };
+}
+
+/** Wire code of a status already validated as a concrete filter (never `"unknown"`). */
+function statusCode(status: OrderStatus): number {
+  const code = orderStatusToCode(status);
+  if (code === undefined) throw new Error(`Unmapped order status "${status}".`);
+  return code;
 }
 
 function renderOrderDate(value: Date | string): string {
@@ -644,6 +720,15 @@ export function buildAdditionalOrderInfoRequest(input: ListAdditionalOrderInfoIn
   if (!Number.isInteger(pageIndex) || pageIndex < 1) {
     issues.push({ path: "page", message: "must be an integer >= 1" });
   }
+  if (input.status !== undefined && !isKnownKey(ADDITIONAL_INFO_STATUS_FILTERS, input.status)) {
+    issues.push({
+      path: "status",
+      message: `must be one of ${Object.keys(ADDITIONAL_INFO_STATUS_FILTERS).join(", ")}`,
+    });
+  }
+  if (input.dateFrom !== undefined) checkPacificDateInput("dateFrom", input.dateFrom, issues);
+  if (input.dateTo !== undefined) checkPacificDateInput("dateTo", input.dateTo, issues);
+  checkCountryCodeInput(input.countryCode, issues);
   if (issues.length > 0) {
     throw new NeweggValidationError("Invalid list-additional-order-info input.", issues);
   }
@@ -652,15 +737,12 @@ export function buildAdditionalOrderInfoRequest(input: ListAdditionalOrderInfoIn
   if (input.orderNumbers && input.orderNumbers.length > 0) {
     criteria.OrderNumberList = { OrderNumber: input.orderNumbers.map((value) => String(value)) };
   }
-  if (input.status) {
-    const code = orderStatusToCode(input.status);
-    if (code !== undefined) criteria.Status = code;
-  }
+  if (input.status !== undefined) criteria.Status = statusCode(input.status);
   if (input.type) criteria.Type = ADDITIONAL_INFO_TYPE_CODES[input.type];
   if (input.includeDownloaded === false) criteria.OrderDownloaded = 1;
   if (input.dateFrom !== undefined) criteria.OrderDateFrom = renderOrderDate(input.dateFrom);
   if (input.dateTo !== undefined) criteria.OrderDateTo = renderOrderDate(input.dateTo);
-  if (input.countryCode) criteria.CountryCode = input.countryCode;
+  if (input.countryCode !== undefined) criteria.CountryCode = input.countryCode;
 
   const body = {
     OperationType: ORDER_ADDITIONAL_INFO_OPERATION,

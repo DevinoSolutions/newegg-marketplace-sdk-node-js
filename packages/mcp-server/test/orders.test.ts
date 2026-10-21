@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MockRoute } from "@devino/newegg-marketplace-sdk/testing";
 import { callTool, makeEnv, startHarness } from "./helpers.js";
+import { toDateInput } from "../src/tools/orders.js";
 
 const ORDER_INFO_BODY = {
   IsSuccess: true,
@@ -144,6 +145,139 @@ describe("newegg_orders_list", () => {
     } finally {
       await harness.close();
     }
+  });
+
+  describe("date input is Pacific wall clock, independent of the machine zone (T-5948)", () => {
+    type Criteria = Record<string, unknown>;
+    const criteriaOf = (calls: ReadonlyArray<{ bodyJson?: unknown }>): Criteria =>
+      (calls[0]!.bodyJson as { RequestBody: { RequestCriteria: Criteria } }).RequestBody
+        .RequestCriteria;
+
+    /** Runs `fn` with the process zone forced to `zone`, restoring it afterwards. */
+    async function withZone<T>(zone: string, fn: () => Promise<T>): Promise<T> {
+      const previous = process.env.TZ;
+      process.env.TZ = zone;
+      try {
+        return await fn();
+      } finally {
+        if (previous === undefined) delete process.env.TZ;
+        else process.env.TZ = previous;
+      }
+    }
+
+    it("toDateInput leaves a zone-less string untouched and converts only a zoned instant", async () => {
+      for (const zone of ["Asia/Tokyo", "Pacific/Auckland", "America/Los_Angeles", "UTC"]) {
+        await withZone(zone, () => {
+          expect(toDateInput("2026-03-10 08:00:00")).toBe("2026-03-10 08:00:00");
+          expect(toDateInput("03/10/2026 08:00:00")).toBe("03/10/2026 08:00:00");
+          expect(toDateInput("2026-03-10")).toBe("2026-03-10 00:00:00");
+          expect(toDateInput("2026-03-10", "start")).toBe("2026-03-10 00:00:00");
+          expect(toDateInput("2026-03-10", "end")).toBe("2026-03-10 23:59:59");
+          expect(toDateInput("2026-03-10 08:00:00", "end")).toBe("2026-03-10 08:00:00");
+          expect(toDateInput("2026-03-10T08:00:00")).toBe("2026-03-10T08:00:00");
+          expect(toDateInput("garbage")).toBe("garbage");
+          expect(toDateInput(undefined)).toBeUndefined();
+          const zoned = toDateInput("2023-06-15T20:30:00.000Z");
+          expect(zoned).toBeInstanceOf(Date);
+          expect((zoned as Date).toISOString()).toBe("2023-06-15T20:30:00.000Z");
+          const offset = toDateInput("2023-06-15T20:30:00+02:00");
+          expect((offset as Date).toISOString()).toBe("2023-06-15T18:30:00.000Z");
+          return Promise.resolve();
+        });
+      }
+    });
+
+    it("sends a zone-less dateFrom, dateTo and lastUpdatedAfter as the same Pacific wall clock under a non-Pacific TZ", async () => {
+      for (const zone of ["Asia/Tokyo", "Pacific/Auckland"]) {
+        await withZone(zone, async () => {
+          const harness = await startHarness({ routes: [orderInfoRoute(ORDER_INFO_BODY)] });
+          try {
+            const result = await callTool(harness.mcp, "newegg_orders_list", {
+              dateFrom: "2026-03-10 08:00:00",
+              dateTo: "03/11/2026 17:30:00",
+              lastUpdatedAfter: "2026-03-09 00:00:01",
+            });
+            expect(result.isError, zone).toBe(false);
+            expect(criteriaOf(harness.calls)).toEqual({
+              OrderDateFrom: "2026-03-10 08:00:00",
+              OrderDateTo: "03/11/2026 17:30:00",
+              LastUpdatedAfter: "2026-03-09 00:00:01",
+            });
+          } finally {
+            await harness.close();
+          }
+        });
+      }
+    });
+
+    it("expands a bare date to the Pacific day edge under a non-Pacific TZ", async () => {
+      for (const zone of ["Asia/Tokyo", "Pacific/Auckland"]) {
+        await withZone(zone, async () => {
+          const harness = await startHarness({ routes: [orderInfoRoute(ORDER_INFO_BODY)] });
+          try {
+            const result = await callTool(harness.mcp, "newegg_orders_list", {
+              dateFrom: "2026-03-10",
+              dateTo: "2026-03-11",
+              lastUpdatedAfter: "2026-03-09",
+            });
+            expect(result.isError, zone).toBe(false);
+            expect(criteriaOf(harness.calls)).toEqual({
+              OrderDateFrom: "2026-03-10 00:00:00",
+              OrderDateTo: "2026-03-11 23:59:59",
+              LastUpdatedAfter: "2026-03-09 00:00:00",
+            });
+          } finally {
+            await harness.close();
+          }
+        });
+      }
+    });
+
+    it("rejects an impossible bare date before any request", async () => {
+      const harness = await startHarness({ routes: [orderInfoRoute(ORDER_INFO_BODY)] });
+      try {
+        const result = await callTool(harness.mcp, "newegg_orders_list", {
+          dateFrom: "2026-02-31",
+        });
+        expect(result.isError).toBe(true);
+        expect(harness.calls).toHaveLength(0);
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it("rejects T-separated zone-less and garbage dates before any request", async () => {
+      const harness = await startHarness({ routes: [orderInfoRoute(ORDER_INFO_BODY)] });
+      try {
+        for (const field of ["dateFrom", "dateTo", "lastUpdatedAfter"]) {
+          for (const value of ["2026-03-10T08:00:00", "garbage"]) {
+            const result = await callTool(harness.mcp, "newegg_orders_list", { [field]: value });
+            expect(result.isError, `${field}=${value}`).toBe(true);
+          }
+        }
+        expect(harness.calls).toHaveLength(0);
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it("rejects an unknown status and a blank countryCode before any request", async () => {
+      const harness = await startHarness({ routes: [orderInfoRoute(ORDER_INFO_BODY)] });
+      try {
+        for (const args of [
+          { status: "bogus" },
+          { countryCode: "" },
+          { countryCode: "  " },
+          { countryCode: " USA" },
+        ]) {
+          const result = await callTool(harness.mcp, "newegg_orders_list", args);
+          expect(result.isError, JSON.stringify(args)).toBe(true);
+        }
+        expect(harness.calls).toHaveLength(0);
+      } finally {
+        await harness.close();
+      }
+    });
   });
 
   it("rejects unknown keys and out-of-range page sizes at the schema boundary", async () => {

@@ -508,6 +508,16 @@ Seller ID or a key from another platform is the usual cause), see
 > marketplace's set. SDK users should pass `credentialMarketplace` to `createNeweggClient`; omitting it
 > keeps the old, unsafe behaviour. See ADR 0006.
 
+> **Breaking (0.1.x, T-5948): `orders.list` input validation is strict.** These now throw
+> `NeweggValidationError` before any request instead of being sent or silently dropped: a `dateFrom` /
+> `dateTo` string that is not `MM/DD/YYYY HH:mm:ss` or `YYYY-MM-DD HH:mm:ss` (Pacific), including a
+> date-only string, an ISO string with `Z` or an impossible calendar date; an invalid `Date`; a `status`
+> of `"unknown"` or any unrecognized value; and a `countryCode` that is empty, whitespace-only or has
+> leading or trailing whitespace. `orders.listAdditionalInfo` applies the same checks and also rejects
+> `status: "paymentPending"` (that endpoint reads status 5 as "All"). Pass a `Date` for an instant. The MCP
+> `newegg_orders_list` still accepts ISO instants with `Z`/offset and bare `YYYY-MM-DD` dates (expanded to
+> the Pacific day start, or end for `dateTo`).
+
 ### SDK / credentials
 
 | Variable                                       | Default           | Meaning                                                                                                                                                                                                                           |
