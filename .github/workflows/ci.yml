@@ -15,8 +15,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Each check is its OWN job so the Actions page reads as a checklist and a
-# failure points at exactly one red box (not "the first of 11 steps that broke").
+# Static checks share one job (one `npm ci`), each as its own step; the remaining checks are
+# separate jobs so the Actions page reads as a checklist and a failure points at one red box.
 # Deterministic, Node-version-independent checks run once on 22.x LTS; only the
 # things whose behavior can vary by runtime (tests, ESM export loading) use the
 # 22.x/24.x matrix. Jobs that consume the compiled SDK depend on `build` and pull
@@ -24,36 +24,14 @@ concurrency:
 # every downstream job red.
 
 jobs:
-  lint:
-    name: Lint (ESLint)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22.x
-          cache: npm
-      - run: npm ci
-      - run: npm run lint
-
-  format:
-    name: Format (Prettier --check)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22.x
-          cache: npm
-      - run: npm ci
-      - run: npm run format:check
-
-  secret-scan:
-    name: Secret scan (working tree)
+  static:
+    name: Static checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Lint, format, secret scan, live-suite read-only guard and dead-code (knip) are all
+    # deterministic, build-independent checks, so they share ONE checkout + `npm ci`. Each is its
+    # own step (no `continue-on-error`): a failure stops the job at exactly one red step. Later
+    # checks do not run after an earlier failure, so fix and re-run to see the rest.
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -61,33 +39,16 @@ jobs:
           node-version: 22.x
           cache: npm
       - run: npm ci
-      - run: npm run check:secrets
-
-  live-readonly-guard:
-    name: Live-suite read-only guard
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22.x
-          cache: npm
-      - run: npm ci
-      - run: npm run check:live-readonly
-
-  deadcode:
-    name: Dead-code (knip)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22.x
-          cache: npm
-      - run: npm ci
-      - run: npm run check:deadcode
+      - name: Lint (ESLint)
+        run: npm run lint
+      - name: Format (Prettier --check)
+        run: npm run format:check
+      - name: Secret scan (working tree)
+        run: npm run check:secrets
+      - name: Live-suite read-only guard
+        run: npm run check:live-readonly
+      - name: Dead-code (knip)
+        run: npm run check:deadcode
 
   docs:
     name: API docs (typedoc)
@@ -232,11 +193,7 @@ jobs:
     if: always()
     needs:
       [
-        lint,
-        format,
-        secret-scan,
-        live-readonly-guard,
-        deadcode,
+        static,
         docs,
         build,
         typecheck,
