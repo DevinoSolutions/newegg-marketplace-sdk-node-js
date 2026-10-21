@@ -7,6 +7,7 @@
  * anyone writing a fixture) and compares against the JSON Schema a real MCP host receives from
  * `tools/list`.
  */
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -36,6 +37,8 @@ export interface DriftFinding {
   path: string;
   /** The SDK type declaring the key, as `TypeName.key`, to make the message actionable. */
   sdkOwner: string;
+  /** True when the SDK type could not be resolved (`any` / error type), so nothing was compared. */
+  unresolved?: boolean;
 }
 
 export interface SdkTypeProbe {
@@ -45,6 +48,8 @@ export interface SdkTypeProbe {
     schemaRoot: JsonSchemaNode,
     schemaPath: string,
     omitted: ReadonlySet<string>,
+    /** Receives every omit entry that actually suppressed a key, so stale entries can be found. */
+    usedOmits?: Set<string>,
   ) => DriftFinding[];
   /** Compiler diagnostics for the probe file itself (a bad type expression shows up here). */
   diagnostics: () => string[];
@@ -213,13 +218,20 @@ export function createSdkTypeProbe(typeExpressions: readonly string[]): SdkTypeP
     out: DriftFinding[],
     seen: Set<string>,
     depth: number,
+    used: Set<string>,
   ): void {
     if (depth > MAX_DEPTH) return;
     const nonNull = checker.getNonNullableType(type);
     if (nonNull.isUnion()) {
       for (const member of nonNull.types) {
-        walk(member, nodes, root, pathSoFar, omitted, out, seen, depth);
+        walk(member, nodes, root, pathSoFar, omitted, out, seen, depth, used);
       }
+      return;
+    }
+    // `any` and the error type (an unresolvable import) would otherwise hide every key beneath
+    // them. `any` is banned in this repo, so reaching one means the SDK types did not resolve.
+    if (nonNull.flags & ts.TypeFlags.Any) {
+      out.push({ path: pathSoFar, sdkOwner: "unresolved SDK type (any)", unresolved: true });
       return;
     }
     if (isLeaf(nonNull)) return;
@@ -240,6 +252,7 @@ export function createSdkTypeProbe(typeExpressions: readonly string[]): SdkTypeP
         out,
         seen,
         depth + 1,
+        used,
       );
       return;
     }
@@ -257,6 +270,7 @@ export function createSdkTypeProbe(typeExpressions: readonly string[]): SdkTypeP
           out,
           seen,
           depth + 1,
+          used,
         );
       }
       return;
@@ -276,7 +290,15 @@ export function createSdkTypeProbe(typeExpressions: readonly string[]): SdkTypeP
       const propertyType = checker.getTypeOfSymbol(property);
       if (propertyType.getCallSignatures().length > 0) continue;
       const propertyPath = pathSoFar === "" ? key : `${pathSoFar}.${key}`;
-      if (omitted.has(propertyPath) || omitted.has(`*.${key}`)) continue;
+      const omitKey = omitted.has(propertyPath)
+        ? propertyPath
+        : omitted.has(`*.${key}`)
+          ? `*.${key}`
+          : undefined;
+      if (omitKey !== undefined) {
+        used.add(omitKey);
+        continue;
+      }
       const propertySchema = schemaProperty(nodes, key, root);
       if (propertySchema === undefined) {
         out.push({ path: propertyPath, sdkOwner: `${owner}.${key}` });
@@ -291,6 +313,7 @@ export function createSdkTypeProbe(typeExpressions: readonly string[]): SdkTypeP
         out,
         nextSeen,
         depth + 1,
+        used,
       );
     }
   }
@@ -321,14 +344,24 @@ export function createSdkTypeProbe(typeExpressions: readonly string[]): SdkTypeP
   }
 
   return {
-    check: (typeExpression, schemaRoot, schemaPath, omitted) => {
+    check: (typeExpression, schemaRoot, schemaPath, omitted, usedOmits = new Set<string>()) => {
       const alias = aliasOf.get(typeExpression);
       const type = alias === undefined ? undefined : aliasTypes.get(alias);
       if (type === undefined) {
         throw new Error(`drift guard: type expression not probed: ${typeExpression}`);
       }
       const out: DriftFinding[] = [];
-      walk(type, descend(schemaRoot, schemaPath), schemaRoot, "", omitted, out, new Set(), 0);
+      walk(
+        type,
+        descend(schemaRoot, schemaPath),
+        schemaRoot,
+        "",
+        omitted,
+        out,
+        new Set(),
+        0,
+        usedOmits,
+      );
       return out;
     },
     diagnostics: () =>
@@ -336,4 +369,41 @@ export function createSdkTypeProbe(typeExpressions: readonly string[]): SdkTypeP
         .getPreEmitDiagnostics(program, sourceFile)
         .map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n")),
   };
+}
+
+/**
+ * The probe reads the SDK's built `.d.ts` (dist), so a dist older than src (e.g. a OneDrive
+ * rollback, or a forgotten rebuild) would silently compare against stale types. Returns a
+ * human-readable problem, or undefined when dist is current.
+ */
+export function sdkDistStaleness(): string | undefined {
+  const sdkRoot = path.resolve(PACKAGE_ROOT, "..", "sdk");
+  const newest = (dir: string, ext: string): number => {
+    let latest = 0;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) latest = Math.max(latest, newest(full, ext));
+      else if (entry.name.endsWith(ext)) latest = Math.max(latest, fs.statSync(full).mtimeMs);
+    }
+    return latest;
+  };
+  const distIndex = path.join(sdkRoot, "dist", "index.d.ts");
+  if (!fs.existsSync(distIndex)) return "packages/sdk/dist is missing; run `npm run build` first.";
+  const srcNewest = newest(path.join(sdkRoot, "src"), ".ts");
+  // Compare against the OLDEST relevant dist declaration so a partially rolled-back dist is caught.
+  const distOldest = (() => {
+    let oldest = Infinity;
+    const visit = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) visit(full);
+        else if (entry.name.endsWith(".d.ts")) oldest = Math.min(oldest, fs.statSync(full).mtimeMs);
+      }
+    };
+    visit(path.join(sdkRoot, "dist"));
+    return oldest;
+  })();
+  return distOldest < srcNewest
+    ? "packages/sdk/dist is older than packages/sdk/src; run `npm run build` before trusting this guard."
+    : undefined;
 }

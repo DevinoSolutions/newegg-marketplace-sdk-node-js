@@ -22,6 +22,7 @@ import { makeEnv, startHarness, type Harness } from "./helpers.js";
 import {
   createSdkTypeProbe,
   type JsonSchemaNode,
+  sdkDistStaleness,
   type SdkTypeProbe,
 } from "./output-schema-drift-lib.js";
 
@@ -498,6 +499,13 @@ const EXEMPT: Record<string, string> = {
     "Rows are an open record by design (explicit PII-free mapper); the envelope is built by pagedOutput().",
 };
 
+/** Identity of an omit entry for stale-entry detection (global entries are shared). */
+function omitId(mapping: Mapping, omit: string): string {
+  return mapping.omit !== undefined && omit in mapping.omit
+    ? `${mapping.tool}|${mapping.sdk}|${mapping.schemaPath ?? ""}|${omit}`
+    : `global|${omit}`;
+}
+
 interface ListedTool {
   name: string;
   outputSchema?: unknown;
@@ -510,6 +518,9 @@ const MODES = [
 
 describe("MCP output schemas cover the SDK types the handlers return", () => {
   const listings = new Map<string, ListedTool[]>();
+  // Omit entries that suppressed a key, as `tool|sdk|path|omit`, aggregated over both modes
+  // (a write tool's entries are only reachable with writes on).
+  const usedOmits = new Set<string>();
   let probe: SdkTypeProbe;
 
   beforeAll(async () => {
@@ -528,6 +539,10 @@ describe("MCP output schemas cover the SDK types the handlers return", () => {
 
   afterAll(() => {
     listings.clear();
+  });
+
+  it("reads an up-to-date SDK build", () => {
+    expect(sdkDistStaleness()).toBeUndefined();
   });
 
   it("type-checks every SDK type expression in the table", () => {
@@ -570,14 +585,25 @@ describe("MCP output schemas cover the SDK types the handlers return", () => {
         const tool = tools.get(mapping.tool);
         if (tool === undefined) continue; // a write tool, absent with writes off
         const omitted = new Set([...Object.keys(GLOBAL_OMIT), ...Object.keys(mapping.omit ?? {})]);
+        const used = new Set<string>();
         const findings = probe.check(
           mapping.sdk,
           tool.outputSchema as JsonSchemaNode,
           mapping.schemaPath ?? "",
           omitted,
+          used,
         );
+        for (const omit of used) usedOmits.add(omitId(mapping, omit));
         for (const finding of findings) {
           const where = mapping.schemaPath === undefined ? "" : `${mapping.schemaPath} -> `;
+          if (finding.unresolved) {
+            failures.push(
+              `${mapping.tool}: unresolved SDK type at "${where}${finding.path}" (\`${mapping.sdk}\`): ` +
+                `the type is \`any\` or failed to import, so nothing beneath it was compared. ` +
+                `Fix the SDK type or the mapping's type expression.`,
+            );
+            continue;
+          }
           failures.push(
             `${mapping.tool}: SDK key "${where}${finding.path}" (${finding.sdkOwner}) is not in the ` +
               `output schema. Add it to the schema and serializer, or list it in the mapping's ` +
@@ -588,4 +614,16 @@ describe("MCP output schemas cover the SDK types the handlers return", () => {
       expect(failures).toEqual([]);
     });
   }
+
+  // Declared after the per-mode tests: vitest runs a file's tests in order, so both modes have
+  // contributed to `usedOmits` by now.
+  it("every omit entry still suppresses a real SDK key (no stale entries)", () => {
+    const stale = [
+      ...Object.keys(GLOBAL_OMIT).map((omit) => `global|${omit}`),
+      ...TABLE.flatMap((mapping) =>
+        Object.keys(mapping.omit ?? {}).map((omit) => omitId(mapping, omit)),
+      ),
+    ].filter((id) => !usedOmits.has(id));
+    expect(stale.map((id) => `stale omit (no such SDK key at that path): ${id}`)).toEqual([]);
+  });
 });
