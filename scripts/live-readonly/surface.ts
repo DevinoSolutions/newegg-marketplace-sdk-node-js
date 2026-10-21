@@ -233,7 +233,8 @@ export function classifiedInterfaceNames(typesSource: string): Set<string> {
  *   same module as an interface of that name, and any NeweggClient type alias / class / enum. A
  *   top-level class of the same name in a different module (an implementation class) does not
  *   merge with the interface and is allowed;
- * - in any file: an interface that `extends NeweggClient` (defense in depth).
+ * - in any file: an interface that `extends`, or a class that `extends` / `implements`, NeweggClient
+ *   by bare, aliased-import or qualified (`T.NeweggClient`) name (defense in depth).
  */
 export function strayClientDeclarations(
   source: string,
@@ -246,12 +247,39 @@ export function strayClientDeclarations(
   const topLevelInterfaces = new Set(
     file.statements.filter(ts.isInterfaceDeclaration).map((d) => d.name.text),
   );
+  // Local names bound to NeweggClient by `import { NeweggClient as X }` / `import type ... as X`.
+  const clientAliases = new Set<string>(["NeweggClient"]);
+  for (const stmt of file.statements) {
+    const bindings = ts.isImportDeclaration(stmt) ? stmt.importClause?.namedBindings : undefined;
+    if (bindings === undefined || !ts.isNamedImports(bindings)) continue;
+    for (const el of bindings.elements) {
+      if ((el.propertyName ?? el.name).text === "NeweggClient") clientAliases.add(el.name.text);
+    }
+  }
+  // True when an extends/implements clause names NeweggClient: a bare or aliased identifier, or a
+  // qualified/property-access name ending in it (`T.NeweggClient` through a namespace import).
+  const heritageNamesClient = (node: ts.InterfaceDeclaration | ts.ClassDeclaration): boolean =>
+    node.heritageClauses?.some((clause) =>
+      clause.types.some((t) => {
+        const e = t.expression;
+        if (ts.isIdentifier(e)) return clientAliases.has(e.text);
+        return ts.isPropertyAccessExpression(e) && e.name.text === "NeweggClient";
+      }),
+    ) === true;
   const flag = (what: string): void => {
     problems.push(
       `${fileName} ${what}: its members cannot be classified (declaration merging or augmentation)`,
     );
   };
   const walk = (node: ts.Node, inModule: boolean): void => {
+    if (
+      (ts.isInterfaceDeclaration(node) || ts.isClassDeclaration(node)) &&
+      heritageNamesClient(node)
+    ) {
+      flag(
+        `declares ${node.name?.text ?? "a class"}, which extends NeweggClient (extends or implements clause)`,
+      );
+    }
     if (ts.isInterfaceDeclaration(node)) {
       const name = node.name.text;
       if (names.has(name) && (inModule || !scanned)) {
@@ -259,12 +287,6 @@ export function strayClientDeclarations(
           `declares ${name} outside the top level of packages/sdk/src/types.ts and packages/sdk/src/types/`,
         );
       }
-      const extendsClient = node.heritageClauses?.some((clause) =>
-        clause.types.some(
-          (t) => ts.isIdentifier(t.expression) && t.expression.text === "NeweggClient",
-        ),
-      );
-      if (extendsClient === true) flag(`declares ${name}, which extends NeweggClient`);
     } else if (
       (ts.isTypeAliasDeclaration(node) ||
         ts.isClassDeclaration(node) ||

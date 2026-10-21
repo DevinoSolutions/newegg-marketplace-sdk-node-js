@@ -160,6 +160,43 @@ describe("clientTypeProblems", () => {
     expect(found.join("\n")).toContain("extends NeweggClient");
   });
 
+  it("fails on an interface extending a namespace-qualified NeweggClient", () => {
+    const found = problems({
+      ...ORDERS,
+      "ext.ts":
+        'import type * as T from "./types/client.js";\nexport interface X extends T.NeweggClient { rogue(): void }\n',
+    });
+    expect(found.join("\n")).toContain("ext.ts declares X, which extends NeweggClient");
+  });
+
+  it("fails on a class implementing NeweggClient, bare, qualified or aliased", () => {
+    const bare = problems({
+      ...ORDERS,
+      "k1.ts":
+        'import type { NeweggClient } from "./types/client.js";\nexport class K implements NeweggClient { marketplace = "us"; }\n',
+    });
+    expect(bare.join("\n")).toContain("k1.ts declares K, which extends NeweggClient");
+    const qualified = problems({
+      "k2.ts":
+        'import type * as T from "./types/client.js";\nexport class K implements T.NeweggClient { marketplace = "us"; }\n',
+    });
+    expect(qualified.join("\n")).toContain("k2.ts declares K, which extends NeweggClient");
+    const aliased = problems({
+      "k3.ts":
+        'import type { NeweggClient as C } from "./types/client.js";\nexport class K implements C { marketplace = "us"; }\n',
+    });
+    expect(aliased.join("\n")).toContain("k3.ts declares K, which extends NeweggClient");
+  });
+
+  it("does not flag an unrelated qualified heritage clause", () => {
+    const found = problems({
+      ...ORDERS,
+      "ok.ts":
+        'import type * as Foo from "./foo.js";\nexport interface Y extends Foo.Bar { z(): void }\nexport class Z implements Foo.Bar {}\n',
+    });
+    expect(found.join("\n")).not.toContain("ok.ts");
+  });
+
   it("reports how many type files were read", () => {
     problems(ORDERS);
     expect(clientTypeScan(root).typeFiles).toBe(3);
