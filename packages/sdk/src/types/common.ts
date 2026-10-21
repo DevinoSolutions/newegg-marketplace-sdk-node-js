@@ -1,4 +1,4 @@
-/** Shared marketplace, request-option and item-identifier types. Re-exported from `../types.ts`. */
+// Shared marketplace, request-option and item-identifier types. Re-exported from `../types.ts`.
 
 // ----------------------------------------------------------------------------
 // marketplaces & service domains

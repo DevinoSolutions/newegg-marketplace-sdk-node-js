@@ -1,4 +1,4 @@
-/** Rate limiting, retry / idempotency and logging types. Re-exported from `../types.ts`. */
+// Rate limiting, retry / idempotency and logging types. Re-exported from `../types.ts`.
 
 // ----------------------------------------------------------------------------
 // rate limiting
