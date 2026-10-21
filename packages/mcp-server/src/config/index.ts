@@ -452,19 +452,36 @@ function credentialsFrom(env: EnvRecord, names: readonly string[]): McpCredentia
  *    `NEWEGG_MARKETPLACE`.
  * 3. Never a fallback to another marketplace's set. Messages name variables and marketplaces only,
  *    never values.
+ *
+ * A `NEWEGG_CREDENTIALS_MARKETPLACE` that contradicts `NEWEGG_MARKETPLACE` is refused even when a
+ * prefixed set is present. Unprefixed legacy variables left in the environment next to a prefixed set
+ * are ignored (the prefixed set wins and is the only one used).
  */
 function resolveCredentials(env: EnvRecord, marketplace: NeweggMarketplace): CredentialOutcome {
   const prefixed = prefixedCredentialNames(marketplace);
   if (prefixed.some((name) => isSet(env, name))) {
+    const issues: string[] = [];
     const missing = prefixed.filter((name) => !isSet(env, name));
     if (missing.length > 0) {
-      return {
-        issues: [
-          `Incomplete credential set for marketplace "${marketplace}": ${missing.join(", ")} not set. ` +
-            `When any of ${prefixed.join("/")} is set, all three are required.`,
-        ],
-      };
+      issues.push(
+        `Incomplete credential set for marketplace "${marketplace}": ${missing.join(", ")} not set. ` +
+          `When any of ${prefixed.join("/")} is set, all three are required.`,
+      );
     }
+    const declared = env["NEWEGG_CREDENTIALS_MARKETPLACE"]?.trim() ?? "";
+    if (declared !== "") {
+      const declaredMarketplace = normalizeMarketplace(declared);
+      if (declaredMarketplace === undefined) {
+        issues.push(marketplaceHint("NEWEGG_CREDENTIALS_MARKETPLACE"));
+      } else if (declaredMarketplace !== marketplace) {
+        issues.push(
+          `NEWEGG_CREDENTIALS_MARKETPLACE (${declaredMarketplace}) contradicts NEWEGG_MARKETPLACE ` +
+            `(${marketplace}) while ${prefixed.join("/")} are set; refusing to start. Remove or fix ` +
+            `NEWEGG_CREDENTIALS_MARKETPLACE (it is not needed with the prefixed names).`,
+        );
+      }
+    }
+    if (issues.length > 0) return { issues };
     return { credentials: credentialsFrom(env, prefixed), issues: [] };
   }
 

@@ -6,7 +6,7 @@
 import { type z } from "zod";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
-import { createNeweggClient } from "@devino/newegg-marketplace-sdk";
+import { createNeweggClient, NeweggConfigurationError } from "@devino/newegg-marketplace-sdk";
 import type {
   NeweggClient,
   NeweggClientConfig,
@@ -131,8 +131,19 @@ function adaptLogger(logger: Logger): NeweggLogger {
   };
 }
 
-/** Builds the SDK client from config. Only the trusted base-URL override is forwarded. */
+/**
+ * Builds the SDK client from config. Only the trusted base-URL override is forwarded. Fails closed
+ * when the config carries no `credentialMarketplace` (a hand-built or cast config): without it the SDK
+ * skips the credential binding and a key pair from another marketplace would silently serve its own
+ * account (T-5911, ADR 0006). `loadMcpConfigFromEnv` always sets it.
+ */
 function createClientFromConfig(config: McpServerConfig, logger: Logger): NeweggClient {
+  if ((config.credentialMarketplace as string | undefined) === undefined) {
+    throw new NeweggConfigurationError(
+      "McpServerConfig.credentialMarketplace is required: the credentials must be bound to the " +
+        "marketplace they were issued for (use loadMcpConfigFromEnv, or set it explicitly).",
+    );
+  }
   const clientConfig: NeweggClientConfig = {
     sellerId: config.credentials.sellerId,
     apiKey: config.credentials.apiKey,

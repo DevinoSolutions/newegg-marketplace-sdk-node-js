@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { NeweggMarketplaceMismatchError } from "@devino/newegg-marketplace-sdk";
+import {
+  NeweggConfigurationError,
+  NeweggMarketplaceMismatchError,
+} from "@devino/newegg-marketplace-sdk";
 import { createNeweggMcpServer, loadMcpConfigFromEnv, McpConfigError } from "../src/index.js";
 import type { EnvRecord, McpServerConfig } from "../src/index.js";
 import { SENTINELS } from "./helpers.js";
@@ -192,5 +195,72 @@ describe("MCP credential binding (T-5911)", () => {
     // The SDK re-checks the binding, so a config that disagrees is refused at construction.
     const skewed = { ...config, credentialMarketplace: "us" } as McpServerConfig;
     expect(() => createNeweggMcpServer({ config: skewed })).toThrow(NeweggMarketplaceMismatchError);
+  });
+
+  it("refuses a contradictory NEWEGG_CREDENTIALS_MARKETPLACE next to a complete prefixed set", () => {
+    const message = failure({
+      NEWEGG_MARKETPLACE: "us",
+      NEWEGG_CREDENTIALS_MARKETPLACE: "ca",
+      ...setFor("US"),
+    });
+    expect(message).toContain("NEWEGG_CREDENTIALS_MARKETPLACE (ca)");
+    expect(message).toContain("NEWEGG_MARKETPLACE (us)");
+    expect(message).not.toContain("SENTINEL");
+  });
+
+  it("rejects an invalid NEWEGG_CREDENTIALS_MARKETPLACE next to a prefixed set without echoing it", () => {
+    const message = failure({
+      NEWEGG_MARKETPLACE: "ca",
+      NEWEGG_CREDENTIALS_MARKETPLACE: "moon",
+      ...setFor("CA"),
+    });
+    expect(message).toContain("NEWEGG_CREDENTIALS_MARKETPLACE");
+    expect(message).not.toContain("moon");
+  });
+
+  it("accepts a matching or blank NEWEGG_CREDENTIALS_MARKETPLACE next to a prefixed set", () => {
+    for (const declared of ["us", "US", " ", undefined]) {
+      const config = loadMcpConfigFromEnv({
+        NEWEGG_MARKETPLACE: "us",
+        NEWEGG_CREDENTIALS_MARKETPLACE: declared,
+        ...setFor("US"),
+      });
+      expect(config.credentials.apiKey).toBe("APIKEY-US-SENTINEL-XXXXXXXXXX");
+    }
+  });
+
+  it("reports both a partial prefixed set and a contradictory label in one message", () => {
+    const message = failure({
+      NEWEGG_MARKETPLACE: "us",
+      NEWEGG_CREDENTIALS_MARKETPLACE: "ca",
+      NEWEGG_US_API_KEY: "APIKEY-US-SENTINEL-XXXXXXXXXX",
+    });
+    expect(message).toContain("NEWEGG_US_SELLER_ID");
+    expect(message).toContain("contradicts");
+    expect(message).not.toContain("SENTINEL");
+  });
+
+  it("ignores a legacy set left next to a complete prefixed set (the prefixed set wins)", () => {
+    const config = loadMcpConfigFromEnv({
+      NEWEGG_MARKETPLACE: "ca",
+      ...LEGACY,
+      ...setFor("CA"),
+    });
+    expect(config.credentials.apiKey).toBe("APIKEY-CA-SENTINEL-XXXXXXXXXX");
+  });
+
+  it("fails closed when a hand-built config has no credentialMarketplace", () => {
+    const config = loadMcpConfigFromEnv({ NEWEGG_MARKETPLACE: "us", ...setFor("US") });
+    const { credentialMarketplace: _dropped, ...rest } = config;
+    void _dropped;
+    let thrown: unknown;
+    try {
+      createNeweggMcpServer({ config: rest as unknown as McpServerConfig });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(NeweggConfigurationError);
+    expect((thrown as Error).message).toContain("credentialMarketplace");
+    expect(JSON.stringify(thrown)).not.toContain("SENTINEL");
   });
 });

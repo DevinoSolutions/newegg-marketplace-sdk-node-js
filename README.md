@@ -55,7 +55,7 @@ newegg-marketplace-sdk-node-js/
 │  ├─ mcp-stdio/              MCP client over stdio
 │  └─ mcp-http/               MCP client over Streamable HTTP
 ├─ docs/
-│  ├─ adr/          architecture decision records (0001–0005)
+│  ├─ adr/          architecture decision records (0001–0006)
 │  └─ research/     verified Newegg wire contracts + the binding SDK API contract
 ├─ scripts/         TypeScript checks run via tsx (check-secrets, check-live-readonly,
 │                   verify-exports), typechecked by tsconfig.scripts.json

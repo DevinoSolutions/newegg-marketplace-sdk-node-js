@@ -36,6 +36,8 @@ const client = createNeweggClient({
   apiKey: process.env.NEWEGG_API_KEY!,
   secretKey: process.env.NEWEGG_SECRET_KEY!,
   marketplace: "us",
+  // The marketplace these keys were issued for (Newegg ignores the URL prefix; ADR 0006).
+  credentialMarketplace: "us",
   strategy: {
     // updateMany "auto" switches to feeds above this many post-dedup items.
     // Default 8. This is an SDK policy, NOT a Newegg rule.

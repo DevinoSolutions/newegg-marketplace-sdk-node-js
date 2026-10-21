@@ -92,7 +92,7 @@ npm run pack:dry          # inspect the tarball file lists
 - **`check:secrets`** (`scripts/check-secrets.mjs`) fails the release if `.gitignore` does
   not exclude `.env`, if any value from a local `.env` appears in a tracked file, or if a
   credential-shaped value sits next to an `Authorization`/`SecretKey`/`NEWEGG_API_KEY`
-  marker (Newegg's documented dummy examples are allowlisted). Exit code 1 on any finding.
+  (or `NEWEGG_{US,B2B,CA}_API_KEY` / `_SECRET_KEY`) marker (Newegg's documented dummy examples are allowlisted). Exit code 1 on any finding.
 - **`verify:exports`** (`scripts/verify-exports.mjs`) imports each built package and checks
   that its expected named exports are present and that every `exports` target file — the
   root entry and the SDK's `./testing` subpath — exists on disk. Run it **after** `build`.
