@@ -92,8 +92,29 @@ describe("newegg_ads_campaigns_list", () => {
     }
   });
 
-  it("returns an unsupported_operation error on Newegg Business and Canada without sending", async () => {
-    for (const marketplace of ["b2b", "ca"]) {
+  it("lists campaigns on Newegg.ca through the can/ prefix", async () => {
+    const harness = await startHarness({
+      env: makeEnv({ NEWEGG_MARKETPLACE: "ca" }),
+      routes: [
+        {
+          method: "POST",
+          pathPattern: /^\/marketplace\/can\/sponsoredmgmt\/campaign\/search\?/,
+          reply: () => ({ status: 200, body: ok([]) }),
+        },
+      ],
+    });
+    try {
+      const res = await callTool(harness.mcp, "newegg_ads_campaigns_list", {});
+      expect(res.isError).toBe(false);
+      expect(res.json).toMatchObject({ marketplace: "ca", totalRows: 0, campaigns: [] });
+      expect(harness.calls[0]!.url.pathname).toBe("/marketplace/can/sponsoredmgmt/campaign/search");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("returns an unsupported_operation error on Newegg Business without sending", async () => {
+    for (const marketplace of ["b2b"]) {
       const harness = await startHarness({
         env: makeEnv({ NEWEGG_MARKETPLACE: marketplace }),
         routes: [],

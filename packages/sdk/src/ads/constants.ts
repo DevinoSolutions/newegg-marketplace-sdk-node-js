@@ -1,6 +1,6 @@
 /**
  * Wire constants of the Sponsored Ads reads (contracts §25). Paths are relative to the platform
- * prefix (`""` on Newegg.com, the only marketplace that offers ads). Every operation is a `POST`
+ * prefix (`""` on Newegg.com, `can/` on Newegg.ca; Business is unsupported). Every operation is a `POST`
  * with a JSON body; the read endpoints end in `search`, `getsuggest`, `performance`,
  * `individualsearch`, `categoriessearch` or `matchtypesearch`. The write endpoints (`create`,
  * `update`, `add`, `changestatus`, `matchtypeupdate`, `matchtypechangestatus`) are deliberately

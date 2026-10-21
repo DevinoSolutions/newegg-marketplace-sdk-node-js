@@ -66,7 +66,7 @@ export interface NeweggClient {
   readonly reference: ReferenceApi; // READ-only seller/category reference lookups (contracts §19)
   readonly sbn: SbnApi; // READ-only Shipped-by-Newegg inbound shipment lookups (contracts §21); Newegg.com / B2B only
   readonly shippingLabels: ShippingLabelsApi; // UPS shipping labels: estimate (single attempt, never retried), create / reprint (WRITES that spend money, contracts §23)
-  readonly ads: AdsApi; // READ-only Sponsored Ads campaign / group / keyword lists + performance reports (contracts §25); Newegg.com only
+  readonly ads: AdsApi; // READ-only Sponsored Ads campaign / group / keyword lists + performance reports (contracts §25); Newegg.com and Newegg.ca (Business throws UnsupportedMarketplaceOperationError)
   readonly catalog: CatalogApi; // read-only catalog resolution (Item Lookup Report, contracts §12)
   readonly reports: ReportsApi; // read-only settlement / daily inventory / daily price reports (contracts §17)
   readonly listings: ListingsApi; // WRITE: existing-item listing creation (ITEM_DATA&v2 feed, contracts §13)
@@ -2182,7 +2182,7 @@ export interface AdsKeywordSuggestionsResult extends AdsPage<AdsKeywordSuggestio
 }
 
 /**
- * Sponsored Ads reads (contracts §25). Newegg.com only: on Newegg Business and CAN every method
+ * Sponsored Ads reads (contracts §25). Newegg.com and Newegg.ca: on Newegg Business every method
  * throws {@link UnsupportedMarketplaceOperationError} before sending. Every method is a READ (each
  * endpoint is a `POST` search or synchronous report). Creating, changing and activating campaigns,
  * ad groups, products, keywords, negative keywords and targeting spends money and is intentionally
@@ -2906,7 +2906,7 @@ export interface ShippingLabelsApi {
     `suggestCategoryTargeting`/`suggestItemTargeting`, and the synchronous `getGroupPerformance`/
     `getProductPerformance`/`getKeywordPerformance` never mutate (contracts §25). Every Sponsored Ads
     operation is a `POST` with a JSON body on the wire, which does not make it a write. Newegg.com
-    only: the availability check lives in `platform/ads.ts` and `b2b` / `ca` throw
+    and Newegg.ca: the availability check lives in `platform/ads.ts` and `b2b` throws
     `UnsupportedMarketplaceOperationError` before any request. Inputs are validated before sending
     (positive integer ids, `YYYY-MM-DD` dates, required dates on the performance reports, page size
     ceilings of 100 on the campaign / group / product / group-performance lists). Every method returns an

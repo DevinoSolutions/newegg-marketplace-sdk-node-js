@@ -34,7 +34,8 @@ currency.
   `NeweggMarketplaceMismatchError` only when a non-empty page has a defined currency on every order and none
   is expected; empty, mixed and currency-less pages pass. The error holds no order numbers. US price lists are
   not guarded (per-destination CAD/CAN is legitimate there). API layers carry no per-marketplace `if`s.
-- The guard cannot cover inventory, RMA, seller status, report status or ads (no marketplace signal), which
+- The guard cannot cover inventory, RMA, seller status, report status or ads (no marketplace signal; ads on
+  `ca` became reachable on 2026-10-21, confirmed only as far as an empty campaign list), which
   is why binding at construction is the primary control and the currency guard only a backstop for clients
   built without `credentialMarketplace`.
 

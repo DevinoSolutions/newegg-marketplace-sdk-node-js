@@ -3,7 +3,6 @@ import {
   NeweggApiError,
   NeweggValidationError,
   UnsupportedMarketplaceOperationError,
-  type NeweggMarketplace,
 } from "../src/index.js";
 import type { MockRoute } from "../src/testing/index.js";
 import { makeClient } from "./helpers.js";
@@ -179,16 +178,29 @@ describe("ads.listCampaigns", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it.each(["b2b", "ca"] as const satisfies readonly NeweggMarketplace[])(
-    "is rejected before sending on %s",
-    async (marketplace) => {
-      const { client, calls } = makeClient(marketplace, route("/search", ok([])));
-      await expect(client.ads.listCampaigns()).rejects.toBeInstanceOf(
-        UnsupportedMarketplaceOperationError,
-      );
-      expect(calls).toHaveLength(0);
-    },
-  );
+  it("is rejected before sending on b2b", async () => {
+    const { client, calls } = makeClient("b2b", route("/search", ok([])));
+    await expect(client.ads.listCampaigns()).rejects.toBeInstanceOf(
+      UnsupportedMarketplaceOperationError,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  it("sends to the can/ prefix on ca and parses an empty page", async () => {
+    const { client, calls } = makeClient("ca", [
+      {
+        method: "POST",
+        pathPattern: /^\/marketplace\/can\/sponsoredmgmt\/campaign\/search\?/,
+        reply: () => ({ status: 200, body: ok([]) }),
+      },
+    ]);
+    const page = await client.ads.listCampaigns({ pageSize: 5 });
+    expect(page.marketplace).toBe("ca");
+    expect(page.rows).toEqual([]);
+    expect(page.totalRows).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url.pathname).toBe("/marketplace/can/sponsoredmgmt/campaign/search");
+  });
 
   it("turns a 200 without rows into a NeweggApiError carrying the bizCode", async () => {
     const { client } = makeClient(

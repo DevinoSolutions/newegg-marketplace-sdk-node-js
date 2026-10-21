@@ -154,7 +154,7 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
   `UnsupportedMarketplaceOperationError`. Label download URLs may embed credentials and are never
   returned (`labels` carry type, host and file name only). Creating or voiding an inbound shipment
   is not implemented.
-- **`client.ads`** - read-only Sponsored Ads (Newegg.com `us` only; every call is a `POST` but only
+- **`client.ads`** - read-only Sponsored Ads (Newegg.com `us` and Newegg.ca `ca`; every call is a `POST` but only
   reads): `listCampaigns`, `listGroups`, `listProducts`, `listKeywords`, `listNegativeKeywords`,
   `listMatchTypes`, `suggestKeywords`, `suggestCategoryTargeting`, `suggestItemTargeting`, and the
   synchronous `getGroupPerformance`, `getProductPerformance`, `getKeywordPerformance` (contracts §25).

@@ -54,7 +54,7 @@ export const Operation = {
   ShippingLabelEstimate: "shippingLabels.estimate",
   ShippingLabelCreate: "shippingLabels.create",
   ShippingLabelReprint: "shippingLabels.reprint",
-  // Sponsored Ads READS (contracts §25), Newegg.com only; every endpoint is a POST search/report
+  // Sponsored Ads READS (contracts §25), Newegg.com and Newegg.ca; every endpoint is a POST search/report
   // limited to 1,000 requests per hour. None mutate.
   AdsCampaigns: "ads.campaigns",
   AdsGroups: "ads.groups",
