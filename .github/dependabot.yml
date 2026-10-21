@@ -51,4 +51,3 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
-        update-types: [minor, patch]
