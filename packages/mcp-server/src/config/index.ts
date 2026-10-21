@@ -45,9 +45,18 @@ export interface McpLimits {
    * purchase is blocked at preview and again at apply. Default 100. `undefined` means NO cap and is
    * reachable only through the explicit `NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited` (or `off`) opt-out,
    * never by leaving the variable unset or empty. While a cap is set, a cost that cannot be
-   * determined (failed quote, unrated package, any reprint) is blocked too (fail closed).
+   * determined (failed quote, unrated package, any reprint) is blocked too (fail closed), unless
+   * `allowLabelReprint` lets reprints through.
    */
   readonly maxLabelAmount: number | undefined;
+  /**
+   * Lets a label reprint be previewed and applied while `maxLabelAmount` is a cap. A reprint has no
+   * quote and Newegg does not say whether it is billed (contracts §23.1), so it is blocked under a
+   * cap by default; this is the explicit opt-in (`NEWEGG_MCP_ALLOW_LABEL_REPRINT=true`, exact
+   * literal) for recovering a label after an indeterminate create without lifting the create cap.
+   * It still needs `NEWEGG_MCP_ALLOW_WRITES=true` (the reprint tools do not exist without it).
+   */
+  readonly allowLabelReprint: boolean;
   /** Uppercased warehouse codes; empty means "all warehouses allowed". */
   readonly allowedWarehouses: string[];
   /** Normalized marketplace codes; empty means "all marketplaces allowed". */
@@ -339,6 +348,11 @@ const envSchema = z.object({
     (n) => n > 0 && n <= 99_999.99,
     "a number greater than 0 and at most 99999.99",
   ),
+  // SECURITY gate, same exact-literal rule as NEWEGG_MCP_ALLOW_WRITES: only "true" opts in.
+  NEWEGG_MCP_ALLOW_LABEL_REPRINT: z
+    .string()
+    .optional()
+    .transform((raw) => raw === "true"),
   NEWEGG_MCP_ALLOWED_WAREHOUSES: csvEnv({ uppercase: true }),
   NEWEGG_MCP_HTTP_HOST: z
     .string()
@@ -398,6 +412,7 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     maxPriceChangePercent: parsed.NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT,
     maxRefundAmount: parsed.NEWEGG_MCP_MAX_REFUND_AMOUNT,
     maxLabelAmount: parsed.NEWEGG_MCP_MAX_LABEL_AMOUNT,
+    allowLabelReprint: parsed.NEWEGG_MCP_ALLOW_LABEL_REPRINT,
     allowedWarehouses: parsed.NEWEGG_MCP_ALLOWED_WAREHOUSES,
     allowedMarketplaces,
   };

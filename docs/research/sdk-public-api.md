@@ -2864,7 +2864,8 @@ export interface ShippingLabelsApi {
     cost ceiling; the MCP has `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100, marketplace currency): the
     create preview carries the estimate and is blocked above the cap, apply checks the stored quote against
     the current cap and re-quotes and refuses above it, any cost that cannot be determined (failed or
-    unrated quote, any reprint) is blocked, and only the explicit `unlimited` value disables the cap. Nothing was called live;
+    unrated quote, any reprint) is blocked, and only the explicit `unlimited` value disables the cap (a reprint alone can be
+    allowed with `NEWEGG_MCP_ALLOW_LABEL_REPRINT=true`). Nothing was called live;
     every shape is from archived page samples (contracts §23 **ASSUMPTION**s).
 19. **Sponsored Ads (reads)**: `ads.listCampaigns`/`listGroups`/`listProducts`/`listKeywords`/
     `listNegativeKeywords`/`listMatchTypes`, the suggestion reads `suggestKeywords`/

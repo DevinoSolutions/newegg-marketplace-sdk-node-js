@@ -10,9 +10,10 @@
  * `NEWEGG_MCP_MAX_LABEL_AMOUNT` is a cost ceiling that is ON by default (100, marketplace currency):
  * the create preview carries Newegg's quote and is blocked above the cap (re-checked at apply
  * against both the stored quote and a fresh one), and any cost that cannot be determined (a failed
- * quote, an unrated package, or a reprint, which has no quote) is blocked too. It is lifted only by
- * the explicit `NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited`, after which a human must read the preview
- * before applying.
+ * quote, an unrated package, or a reprint, which has no quote) is blocked too. The cap is lifted
+ * only by the explicit `NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited`, after which a human must read the
+ * preview before applying. A reprint alone can be let through a cap with the separate opt-in
+ * `NEWEGG_MCP_ALLOW_LABEL_REPRINT=true` (recovery after an indeterminate create).
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -132,13 +133,28 @@ function hashInput(
 }
 
 /** The cost of a label, or the reason it could not be determined. */
-type LabelCost = { total: number; currency: string } | { problem: string };
+type LabelCost =
+  | { total: number; currency: string }
+  | { problem: string }
+  /** Nothing to check against the cap (an operator-allowed reprint); carries a preview warning. */
+  | { unmetered: string };
 
 /** A reprint has no quote: Newegg's reprint request carries only the order number. */
 const REPRINT_UNQUOTABLE =
   "The cost of a reprint cannot be determined (Newegg has no quote for it and does not say whether " +
-  "it is billed), so it cannot be checked against NEWEGG_MCP_MAX_LABEL_AMOUNT. The operator must set " +
-  "NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited to reprint after a human review.";
+  "it is billed), so it cannot be checked against NEWEGG_MCP_MAX_LABEL_AMOUNT. To reprint after a " +
+  "human review the operator must set NEWEGG_MCP_ALLOW_LABEL_REPRINT=true (the create cap stays), " +
+  "or restart with NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited (which lifts the create cap too).";
+
+const REPRINT_UNMETERED =
+  "Reprint allowed by NEWEGG_MCP_ALLOW_LABEL_REPRINT=true: Newegg has no quote for a reprint and " +
+  "does not say whether it is billed, so NEWEGG_MCP_MAX_LABEL_AMOUNT is not applied to it.";
+
+/** Reprint "quote": blocked under a cap unless the operator opted in to label reprints. */
+const reprintCost = (ctx: ToolContext) => async (): Promise<LabelCost> =>
+  ctx.config.limits.allowLabelReprint
+    ? { unmetered: REPRINT_UNMETERED }
+    : { problem: REPRINT_UNQUOTABLE };
 
 /**
  * Quotes a label purchase through the SDK estimate. Never throws and fails closed: a failed quote,
@@ -256,12 +272,15 @@ async function runLabelPreview<K extends ShippingLabelKind>(
 
   const { maxLabelAmount } = ctx.config.limits;
   const blockers = [...preview.blockers];
+  const warnings = [...preview.warnings];
   let estimatedCost: number | undefined;
   // Only quote a plan nothing else blocks: the quote is another Newegg call.
   if (maxLabelAmount !== undefined && blockers.length === 0) {
     const cost = await quote(preview.normalized);
     if ("problem" in cost) {
       blockers.push(cost.problem);
+    } else if ("unmetered" in cost) {
+      warnings.push(cost.unmetered);
     } else {
       estimatedCost = cost.total;
       const exceeded = overCap(cost, maxLabelAmount);
@@ -301,7 +320,7 @@ async function runLabelPreview<K extends ShippingLabelKind>(
     orderNumber: preview.orderNumber,
     eligible,
     blockers,
-    warnings: preview.warnings,
+    warnings,
     request: { ...preview.normalized },
     estimatedCost,
     maxLabelAmount,
@@ -358,7 +377,12 @@ async function runLabelApply<K extends ShippingLabelKind>(
       );
     }
     const cost = await quote(record.input);
-    const problem = "problem" in cost ? cost.problem : overCap(cost, maxLabelAmount);
+    const problem =
+      "problem" in cost
+        ? cost.problem
+        : "unmetered" in cost
+          ? undefined
+          : overCap(cost, maxLabelAmount);
     if (problem !== undefined) {
       return errorResult(
         businessError(
@@ -432,7 +456,9 @@ export const shippingLabelApplyCreateTool: ToolDefinition<
     "returns tracking numbers and label links. Accepts only the previewId; single-use. If the " +
     "outcome is unknown (timeout, 5xx) the error says so and the write is NOT retried: check the " +
     "order with newegg_orders_get_status and use newegg_shipping_label_preview_reprint to fetch " +
-    `an existing label instead of buying another. ${COST_WARNING} Unless NEWEGG_MCP_MAX_LABEL_AMOUNT ` +
+    "an existing label instead of buying another (while a label cap is active that reprint is " +
+    "blocked unless the operator has set NEWEGG_MCP_ALLOW_LABEL_REPRINT=true, or restarted with " +
+    `NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited). ${COST_WARNING} Unless NEWEGG_MCP_MAX_LABEL_AMOUNT ` +
     "is unlimited, a fresh quote above the cap (or no readable quote) stops the purchase. Exists only when the " +
     "server is started with writes enabled.",
   annotations: {
@@ -484,7 +510,8 @@ export const shippingLabelPreviewReprintTool: ToolDefinition<
     "Plan a Newegg Shipping Label Reprint Request WITHOUT sending it. Reads the order and reports " +
     "BLOCKERS (unknown order, Newegg-fulfilled, order not shipped yet). Newegg does not say " +
     "whether a reprint is billed, so it is treated as billable and, because it has no quote, it is " +
-    "BLOCKED unless NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited. Only a clean plan gets a single-use " +
+    "BLOCKED unless the operator has set NEWEGG_MCP_ALLOW_LABEL_REPRINT=true (or " +
+    "NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited). Only a clean plan gets a single-use " +
     "previewId for newegg_shipping_label_apply_reprint. No Newegg mutation happens here.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: reprintInputSchema,
@@ -494,7 +521,7 @@ export const shippingLabelPreviewReprintTool: ToolDefinition<
       ctx,
       "shippingLabelReprint",
       () => ctx.client.shippingLabels.previewReprint(input.orderNumber),
-      async () => ({ problem: REPRINT_UNQUOTABLE }),
+      reprintCost(ctx),
     ),
 };
 
@@ -523,7 +550,7 @@ export const shippingLabelApplyReprintTool: ToolDefinition<
       ctx,
       "shippingLabelReprint",
       input.previewId,
-      async () => ({ problem: REPRINT_UNQUOTABLE }),
+      reprintCost(ctx),
       async (stored) => {
         const result = await ctx.client.shippingLabels.reprint(stored.orderNumber);
         const packages = result.packages.map(shapePackage);

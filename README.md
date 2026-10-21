@@ -263,7 +263,7 @@ have signed up for the service in the Seller Portal (error `SL027`). The MCP exp
 `NEWEGG_MCP_ALLOW_WRITES=true`. A spend ceiling, `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100 in the marketplace
 currency; `unlimited` disables it), is ON by default: the create preview carries the quote and is blocked
 above the cap, apply checks the stored quote against the current cap and re-quotes, and a cost that cannot
-be determined (including any reprint) is blocked. None of it has been called against a real account; shapes follow archived
+be determined (including any reprint) is blocked; the separate opt-in `NEWEGG_MCP_ALLOW_LABEL_REPRINT=true` lets a reprint through the cap (to recover a label after an indeterminate create) without lifting the create cap. None of it has been called against a real account; shapes follow archived
 documentation pages.
 
 ## Seller status and category reference (read-only)
@@ -508,6 +508,7 @@ key from another platform is the usual cause), see
 | `NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT` | `50`                     | Largest absolute % change one price update may make vs the current price; bigger is blocked at preview.                                                                     |
 | `NEWEGG_MCP_MAX_REFUND_AMOUNT`        | `500`                    | Largest courtesy refund (or refund-RMA total) one preview may plan, in the marketplace currency.                                                                            |
 | `NEWEGG_MCP_MAX_LABEL_AMOUNT`         | `100`                    | Cap on one UPS label purchase (marketplace currency). Over-cap, unquotable and reprint plans are blocked at preview, re-checked at apply. `unlimited` or `off` disables it. |
+| `NEWEGG_MCP_ALLOW_LABEL_REPRINT`      | unset (`false`)          | Exactly `true` lets a label reprint through the label cap (needs `NEWEGG_MCP_ALLOW_WRITES=true`).                                                                           |
 | `NEWEGG_MCP_MAX_ITEMS_PER_OPERATION`  | `500`                    | Hard cap on items per preview/apply.                                                                                                                                        |
 | `NEWEGG_MCP_PREVIEW_TTL_SECONDS`      | `600`                    | Lifetime of a stored preview before it expires.                                                                                                                             |
 | `NEWEGG_MCP_ALLOW_ZERO_QUANTITY`      | `true`                   | Whether quantity `0` (out-of-stock) writes are allowed.                                                                                                                     |
