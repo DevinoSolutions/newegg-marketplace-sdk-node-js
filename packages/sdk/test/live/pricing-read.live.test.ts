@@ -1,6 +1,13 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { NeweggError, type ItemIdentifier } from "../../src/index.js";
-import { discoverIdentifiers, isCa, liveEnabled, makeLiveClient, marketplace } from "./helpers.js";
+import {
+  discoverIdentifiers,
+  isCa,
+  liveEnabled,
+  makeLiveClient,
+  marketplace,
+  noItemReason,
+} from "./helpers.js";
 
 /**
  * READ-ONLY live price reads against the REAL Newegg API (Get Item Price, contracts §15 — a
@@ -24,7 +31,7 @@ describe.skipIf(!liveEnabled)("live (read-only): pricing reads", () => {
   it("get returns a normalized price snapshot for a discovered item", async (ctx) => {
     const id = identifiers[0];
     if (!id) {
-      ctx.skip(`no ${marketplace()} item discoverable (T-5611)`);
+      ctx.skip(noItemReason());
       return;
     }
     const client = makeLiveClient();
@@ -51,7 +58,7 @@ describe.skipIf(!liveEnabled)("live (read-only): pricing reads", () => {
 
   it("getMany prices several discovered items and reports none as failed", async (ctx) => {
     if (identifiers.length < 1) {
-      ctx.skip(`no ${marketplace()} item discoverable (T-5611)`);
+      ctx.skip(noItemReason());
       return;
     }
     const client = makeLiveClient();

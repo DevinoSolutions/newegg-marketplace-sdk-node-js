@@ -6,6 +6,7 @@ import {
   makeLiveClient,
   marketplace,
   NON_CA_BATCH_INVENTORY_401,
+  noItemReason,
   skipNonCaLimitation,
   testWarehouse,
 } from "./helpers.js";
@@ -26,8 +27,6 @@ const warehouses = (): string[] | undefined => {
   return wh ? [wh] : undefined;
 };
 
-const noItem = (): string => `no ${marketplace()} item discoverable (T-5611)`;
-
 describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
   let identifiers: ItemIdentifier[] = [];
 
@@ -38,7 +37,7 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
   it("getItem returns a real snapshot for a discovered item", async (ctx) => {
     const id = identifiers[0];
     if (!id) {
-      ctx.skip(noItem());
+      ctx.skip(noItemReason());
       return;
     }
     const client = makeLiveClient();
@@ -52,7 +51,7 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
   it("getMany returns a real batch snapshot for a single discovered item", async (ctx) => {
     const id = identifiers[0];
     if (!id) {
-      ctx.skip(noItem());
+      ctx.skip(noItemReason());
       return;
     }
     const client = makeLiveClient();
@@ -70,7 +69,7 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
 
   it("getMany reads MULTIPLE real items in one batch", async (ctx) => {
     if (identifiers.length < 2) {
-      ctx.skip(`fewer than 2 ${marketplace()} items discoverable for a multi-item batch`);
+      ctx.skip(`fewer than 2 ${marketplace()} items discoverable (${noItemReason()})`);
       return;
     }
     const client = makeLiveClient();
@@ -108,7 +107,7 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
   it("normalized totals match the raw Newegg payload (invariant, read-only)", async (ctx) => {
     const id = identifiers[0];
     if (!id) {
-      ctx.skip(noItem());
+      ctx.skip(noItemReason());
       return;
     }
     const client = makeLiveClient();
@@ -119,7 +118,8 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
     const raw = snapshot.raw as Record<string, unknown> | undefined;
     const rawQty = raw?.["AvailableQuantity"];
     if (rawQty === undefined) {
-      ctx.skip(); // US nested (InventoryAllocation) shape — the invariant there is per-warehouse
+      // US nested (InventoryAllocation) shape — the invariant there is per-warehouse
+      ctx.skip("US nested InventoryAllocation shape has no top-level AvailableQuantity to compare");
       return;
     }
     // The SDK must not invent or drop units: its total equals the quantity Newegg actually sent.

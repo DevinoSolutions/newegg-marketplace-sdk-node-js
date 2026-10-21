@@ -14,8 +14,8 @@ import {
  * suite runs straight from the project's `.env` once `NEWEGG_LIVE_TESTS=true` is set.
  *
  * SAFETY: nothing in the live suite performs a write. Only `verifyCredentials`,
- * `service.getStatus`, `inventory.getItem`, `inventory.getMany` (reads), and a read-only
- * order-info query (used purely to discover a real SKU) are ever issued.
+ * `service.getStatus`, `inventory.getItem`, `inventory.getMany`, `pricing.get`, `pricing.tryGet`
+ * (reads), and a read-only order-info query (used purely to discover a real SKU) are ever issued.
  */
 function loadDotEnv(): void {
   let dir = import.meta.dirname;
@@ -48,8 +48,18 @@ export const liveEnabled =
   Boolean(env.NEWEGG_API_KEY) &&
   Boolean(env.NEWEGG_SECRET_KEY);
 
+let warnedMarketplace = false;
+
 export function marketplace(): NeweggMarketplace {
   const value = env.NEWEGG_MARKETPLACE?.toLowerCase();
+  if (!warnedMarketplace && value !== "us" && value !== "b2b" && value !== "ca") {
+    warnedMarketplace = true;
+    console.warn(
+      `NEWEGG_MARKETPLACE is ${value === undefined || value === "" ? "unset" : "invalid"}; ` +
+        'the live suite falls back to the lenient "us" path. Set NEWEGG_MARKETPLACE=ca for the ' +
+        "strict reference pass.",
+    );
+  }
   return value === "b2b" || value === "ca" ? value : "us";
 }
 
@@ -119,22 +129,47 @@ export function testWarehouse(): string | undefined {
   return env.NEWEGG_LIVE_TEST_WAREHOUSE ? String(env.NEWEGG_LIVE_TEST_WAREHOUSE) : undefined;
 }
 
+/** Errors from the latest `discoverIdentifiers` run (non-CA only; CA rethrows), for skip reasons. */
+const discoveryErrors: string[] = [];
+
+const describeError = (error: unknown): string =>
+  error instanceof NeweggError
+    ? `HTTP ${error.httpStatus ?? "?"} ${error.neweggErrorCode ?? error.name}`
+    : error instanceof Error
+      ? error.name
+      : "unknown error";
+
+/**
+ * Skip reason for "no item discoverable" that also names any error discovery hit, so a 401/500/
+ * network failure is not mistaken for an empty marketplace.
+ */
+export function noItemReason(): string {
+  const base = `no ${marketplace()} item discoverable (T-5611)`;
+  return discoveryErrors.length > 0
+    ? `${base}; discovery errors: ${[...new Set(discoveryErrors)].join(", ")}`
+    : base;
+}
+
 /**
  * Best-effort READ-ONLY discovery of real item identifiers for inventory-read tests. Prefers an
  * explicit `NEWEGG_LIVE_TEST_SELLER_PART_NUMBER`; otherwise dogfoods the SDK — `orders.list`
  * reads recent orders (order-info is a read despite the PUT verb) and returns the distinct
  * SellerPartNumbers found on their line items. On US/B2B the candidates are filtered to items
- * that exist on that marketplace. TODO(T-5611): discover per-marketplace identifiers from the Item
- * Basic Info report instead of order lines. Returns `[]` on any failure so tests skip cleanly
- * instead of failing. Never writes. Going through `makeLiveClient()` means discovery honors
- * `NEWEGG_API_BASE_URL` (fixture-server mode) for free, unlike the old hardcoded-base raw fetch.
+ * that exist on that marketplace (`pricing.tryGet`; a clean not-found is `undefined`). TODO(T-5611):
+ * discover per-marketplace identifiers from the Item Basic Info report instead of order lines.
+ * On non-CA an unexpected error is recorded (console.error + `noItemReason()`) and the item is
+ * dropped so tests skip with the cause visible; on CA any unexpected error propagates and fails.
+ * Never writes. Going through `makeLiveClient()` means discovery honors `NEWEGG_API_BASE_URL`
+ * (fixture-server mode) for free, unlike the old hardcoded-base raw fetch.
  */
 export async function discoverIdentifiers(limit = 5): Promise<ItemIdentifier[]> {
   const explicit = env.NEWEGG_LIVE_TEST_SELLER_PART_NUMBER;
   if (explicit) return [{ type: "sellerPartNumber", value: explicit }];
 
+  discoveryErrors.length = 0;
+  const client = makeLiveClient();
+  let candidates: ItemIdentifier[];
   try {
-    const client = makeLiveClient();
     const page = await client.orders.list({
       dateFrom: "01/01/2020 00:00:00",
       dateTo: "12/31/2026 23:59:59",
@@ -144,22 +179,30 @@ export async function discoverIdentifiers(limit = 5): Promise<ItemIdentifier[]> 
       .flatMap((order) => order.items)
       .map((item) => item.sellerPartNumber)
       .filter((value): value is string => Boolean(value));
-    const distinct = [...new Set(skus)].slice(0, limit);
-    const candidates = distinct.map((value): ItemIdentifier => ({
+    candidates = [...new Set(skus)].slice(0, limit).map((value): ItemIdentifier => ({
       type: "sellerPartNumber",
       value,
     }));
-    if (isCa()) return candidates;
-    // Order-info answers with the same CA-store orders under the us/ and b2b/ prefixes, and a
-    // B2B inventory read of an item that does not exist there is an empty 200 shell, so keep only
-    // items a read-only price read finds on THIS marketplace (T-5611).
-    const existing: ItemIdentifier[] = [];
-    for (const identifier of candidates) {
-      if ((await client.pricing.tryGet({ identifier })) !== undefined) existing.push(identifier);
-    }
-    return existing;
-  } catch {
-    // best-effort: let the inventory-read tests skip if no identifier can be discovered
+  } catch (error) {
+    if (isCa()) throw error;
+    discoveryErrors.push(`orders.list ${describeError(error)}`);
+    console.error(`live discovery: orders.list failed on ${marketplace()}: ${describeError(error)}`);
     return [];
   }
+  if (isCa()) return candidates;
+  // Order-info answers with the same CA-store orders under the us/ and b2b/ prefixes, and a
+  // B2B inventory read of an item that does not exist there is an empty 200 shell, so keep only
+  // items a read-only price read finds on THIS marketplace (T-5611).
+  const existing: ItemIdentifier[] = [];
+  for (const identifier of candidates) {
+    try {
+      if ((await client.pricing.tryGet({ identifier })) !== undefined) existing.push(identifier);
+    } catch (error) {
+      discoveryErrors.push(`pricing.tryGet ${describeError(error)}`);
+      console.error(
+        `live discovery: pricing.tryGet failed on ${marketplace()}: ${describeError(error)}`,
+      );
+    }
+  }
+  return existing;
 }

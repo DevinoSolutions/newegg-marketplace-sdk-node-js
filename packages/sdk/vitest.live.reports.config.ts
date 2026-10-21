@@ -10,6 +10,7 @@ export default defineConfig({
   test: {
     name: "sdk-live-reports",
     environment: "node",
+    setupFiles: ["test/live/assertions.setup.ts"],
     include: ["test/live/**/*.slow.live.test.ts"],
     root: import.meta.dirname,
     fileParallelism: false,
