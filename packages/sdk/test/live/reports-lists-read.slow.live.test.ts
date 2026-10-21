@@ -95,39 +95,47 @@ describe.skipIf(!liveEnabled)("live (read-only): item / order / RMA list reports
     },
   );
 
-  it("order list: fetches a page of orders (shape only)", { timeout: TEST_TIMEOUT }, async (ctx) => {
-    const client = makeLiveClient();
-    const existing = env.NEWEGG_LIVE_REPORT_ORDER_LIST_ID;
-    try {
-      const options = { ...POLL, maxPages: 1 };
-      const collected = existing
-        ? await client.reports.orderList.waitForRequest(existing, options)
-        : await client.reports.orderList.waitForResult(
-            { status: await discoverOrderStatus(ctx), dateFrom: "2020-01-01", dateTo: dayOffset(0) },
-            options,
-          );
-      expect(collected.marketplace).toBe(marketplace());
-      expect(typeof collected.totalCount).toBe("number");
-      expect(collected.totalCount).toBeGreaterThanOrEqual(collected.rows.length);
-      for (const order of collected.rows) {
-        expect(order.orderNumber).toMatch(/^\d+$/);
-        expect([
-          "unshipped",
-          "partiallyShipped",
-          "shipped",
-          "invoiced",
-          "voided",
-          "paymentPending",
-        ]).toContain(order.status);
-        expect(Array.isArray(order.items)).toBe(true);
-        expect(Array.isArray(order.packages)).toBe(true);
-        if (order.amounts.total !== undefined) expect(typeof order.amounts.total).toBe("number");
+  it(
+    "order list: fetches a page of orders (shape only)",
+    { timeout: TEST_TIMEOUT },
+    async (ctx) => {
+      const client = makeLiveClient();
+      const existing = env.NEWEGG_LIVE_REPORT_ORDER_LIST_ID;
+      try {
+        const options = { ...POLL, maxPages: 1 };
+        const collected = existing
+          ? await client.reports.orderList.waitForRequest(existing, options)
+          : await client.reports.orderList.waitForResult(
+              {
+                status: await discoverOrderStatus(ctx),
+                dateFrom: "2020-01-01",
+                dateTo: dayOffset(0),
+              },
+              options,
+            );
+        expect(collected.marketplace).toBe(marketplace());
+        expect(typeof collected.totalCount).toBe("number");
+        expect(collected.totalCount).toBeGreaterThanOrEqual(collected.rows.length);
+        for (const order of collected.rows) {
+          expect(order.orderNumber).toMatch(/^\d+$/);
+          expect([
+            "unshipped",
+            "partiallyShipped",
+            "shipped",
+            "invoiced",
+            "voided",
+            "paymentPending",
+          ]).toContain(order.status);
+          expect(Array.isArray(order.items)).toBe(true);
+          expect(Array.isArray(order.packages)).toBe(true);
+          if (order.amounts.total !== undefined) expect(typeof order.amounts.total).toBe("number");
+        }
+      } catch (err) {
+        if (!(err instanceof ReportTimeoutError)) throw err;
+        expect(err.requestId).toMatch(/\S/);
       }
-    } catch (err) {
-      if (!(err instanceof ReportTimeoutError)) throw err;
-      expect(err.requestId).toMatch(/\S/);
-    }
-  });
+    },
+  );
 
   it("rma list: fetches a page of RMAs (shape only)", { timeout: TEST_TIMEOUT }, async () => {
     const client = makeLiveClient();

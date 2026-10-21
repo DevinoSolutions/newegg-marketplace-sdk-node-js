@@ -55,7 +55,12 @@ export const liveEnabled =
 
 export function marketplace(): NeweggMarketplace {
   const value = env.NEWEGG_MARKETPLACE?.toLowerCase();
-  if (env.NEWEGG_LIVE_MARKETPLACE_WARNED === undefined && value !== "us" && value !== "b2b" && value !== "ca") {
+  if (
+    env.NEWEGG_LIVE_MARKETPLACE_WARNED === undefined &&
+    value !== "us" &&
+    value !== "b2b" &&
+    value !== "ca"
+  ) {
     env.NEWEGG_LIVE_MARKETPLACE_WARNED = "1";
     console.warn(
       `NEWEGG_MARKETPLACE is ${value === undefined || value === "" ? "unset" : "invalid"}; ` +

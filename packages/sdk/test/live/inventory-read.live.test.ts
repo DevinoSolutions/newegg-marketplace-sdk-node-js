@@ -71,7 +71,9 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
 
   it("getMany reads MULTIPLE real items in one batch", async (ctx) => {
     if (identifiers.length < 2) {
-      ctx.skip(`fewer than 2 ${marketplace()} items discoverable (${identifiers.length} found; ${noItemReason()})`);
+      ctx.skip(
+        `fewer than 2 ${marketplace()} items discoverable (${identifiers.length} found; ${noItemReason()})`,
+      );
       return;
     }
     const client = makeLiveClient();
