@@ -3554,11 +3554,11 @@ reprint to fetch the label instead of buying another). The estimate goes through
 path (`HttpClient.requestOnce`): one request, no retry, errors mapped. There is no void / refund-a-label
 operation in the documented API.
 
-**Cost ceiling (MCP only, on by default).** `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100; a number above 0 and at
+**Cost ceiling (MCP only, on by default).** `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100; a plain decimal above 0 and at
 most 99,999.99, in the marketplace currency: USD on us/b2b, CAD on ca, and the number is compared as-is, with
 no currency conversion) mirrors `NEWEGG_MCP_MAX_REFUND_AMOUNT`. Leaving it unset or empty keeps the default;
 only the explicit value `unlimited` (or `off`, case-insensitive) disables it, and any other value is rejected
-at startup. With the cap disabled no estimate is requested by the previews. While a cap is active: the create preview
+at startup (parsing is strict: digits with an optional point and at most 2 decimals, no sign, exponent, `0x`/`0b`/`0o` prefix or leading zeros). With the cap disabled no estimate is requested by the previews. While a cap is active: the create preview
 requests one estimate, reports it as `estimatedCost` (with `maxLabelAmount`) and is blocked, with no
 `previewId`, when the total is above the cap; the quoted cost (cents) is part of the stored preview's hash;
 `apply_create` first refuses with `preview_stale` when the stored quote is above the CURRENT cap (a restart with a

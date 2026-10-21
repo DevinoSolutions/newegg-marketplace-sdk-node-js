@@ -193,12 +193,19 @@ function numberEnv(name: string, fallback: number, check: (n: number) => boolean
     });
 }
 
+/**
+ * Strict plain-decimal money: no sign, exponent, hex/binary/octal prefix, leading zeros, bare
+ * leading/trailing dot or inner whitespace (`Number()` accepts all of those), at most 5 integer
+ * digits and 2 decimals.
+ */
+const STRICT_MONEY = /^(?:0|[1-9]\d{0,4})(?:\.\d{1,2})?$/;
+
 /** The only spellings (case-insensitive) that switch a safety cap off. */
 const CAP_DISABLED_TOKENS: readonly string[] = ["unlimited", "off"];
 
 /**
- * Safety cap with a default: unset/blank yields `fallback` (never "no cap"), a number must satisfy
- * `check`, and the cap is disabled (`undefined`) only by an explicit `unlimited` / `off`.
+ * Safety cap with a default: unset/blank yields `fallback` (never "no cap"), a value must be a strict
+ * plain decimal ({@link STRICT_MONEY}) satisfying `check`, and the cap is disabled (`undefined`) only by an explicit `unlimited` / `off`.
  */
 function cappedNumberEnv(
   name: string,
@@ -213,8 +220,9 @@ function cappedNumberEnv(
       const trimmed = raw?.trim();
       if (trimmed === undefined || trimmed === "") return fallback;
       if (CAP_DISABLED_TOKENS.includes(trimmed.toLowerCase())) return undefined;
-      const parsed = Number(trimmed);
+      const parsed = STRICT_MONEY.test(trimmed) ? Number(trimmed) : Number.NaN;
       if (!Number.isFinite(parsed) || !check(parsed)) {
+        // The message names the variable only: a rejected safety value is never echoed back.
         ctx.addIssue({
           code: "custom",
           message: `${name} must be ${hint}, or "unlimited" to disable the cap.`,
@@ -346,7 +354,7 @@ const envSchema = z.object({
     "NEWEGG_MCP_MAX_LABEL_AMOUNT",
     100,
     (n) => n > 0 && n <= 99_999.99,
-    "a number greater than 0 and at most 99999.99",
+    "a plain decimal (digits, optional point, up to 2 decimals, e.g. 100 or 49.99) greater than 0 and at most 99999.99",
   ),
   // SECURITY gate, same exact-literal rule as NEWEGG_MCP_ALLOW_WRITES: only "true" opts in.
   NEWEGG_MCP_ALLOW_LABEL_REPRINT: z

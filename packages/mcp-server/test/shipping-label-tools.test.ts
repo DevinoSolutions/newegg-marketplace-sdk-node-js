@@ -1324,3 +1324,48 @@ describe("NEWEGG_MCP_ALLOW_LABEL_REPRINT", () => {
     }
   });
 });
+
+describe("NEWEGG_MCP_MAX_LABEL_AMOUNT strict parsing", () => {
+  const parse = (value: string) =>
+    loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: value })).limits.maxLabelAmount;
+
+  it.each([
+    "0x64",
+    "0b11",
+    "0o7",
+    "+100",
+    "1e2",
+    "00100",
+    ".5",
+    "5.",
+    "1 0",
+    "-5",
+    "100.123",
+    "1,5",
+  ])("rejects %j naming only the variable", (value) => {
+    let message = "";
+    try {
+      parse(value);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toMatch(/NEWEGG_MCP_MAX_LABEL_AMOUNT must be .*unlimited/);
+    expect(message).not.toContain(value);
+  });
+
+  it.each([
+    ["100", 100],
+    ["100.5", 100.5],
+    ["99999.99", 99999.99],
+    ["0.5", 0.5],
+    [" 25 ", 25],
+  ])("accepts %j", (value, expected) => {
+    expect(parse(value)).toBe(expected);
+  });
+
+  it("still enforces the range on well-formed values", () => {
+    expect(() => parse("0")).toThrow(/NEWEGG_MCP_MAX_LABEL_AMOUNT/);
+    expect(() => parse("0.00")).toThrow(/NEWEGG_MCP_MAX_LABEL_AMOUNT/);
+    expect(() => parse("100000")).toThrow(/NEWEGG_MCP_MAX_LABEL_AMOUNT/);
+  });
+});
