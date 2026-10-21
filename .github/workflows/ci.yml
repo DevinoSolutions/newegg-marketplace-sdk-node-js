@@ -191,16 +191,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: always()
-    needs:
-      [
-        static,
-        docs,
-        build,
-        typecheck,
-        test,
-        exports,
-        pack,
-      ]
+    needs: [static, docs, build, typecheck, test, exports, pack]
     steps:
       - name: Fail if any job did not succeed
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
