@@ -11,7 +11,11 @@ import { B2B_CA_FEED_REQUEST_TYPE } from "../feeds/constants.js";
  * (`newegg.ca`). They differ only in URL prefix; both use `version=304` on the single-item
  * read and the inventory-and-price endpoint (inventory-only subset) for direct writes.
  */
-export function createItemAdapter(marketplace: NeweggMarketplace, prefix: string): PlatformAdapter {
+export function createItemAdapter(
+  marketplace: NeweggMarketplace,
+  prefix: string,
+  expectedOrderCurrencies: readonly string[],
+): PlatformAdapter {
   const singleInventoryPath = `${prefix}contentmgmt/item/inventory`;
   const inventoryListPath = `${prefix}contentmgmt/item/inventorylist`;
   const priceReadPath = `${prefix}contentmgmt/item/price`;
@@ -22,6 +26,7 @@ export function createItemAdapter(marketplace: NeweggMarketplace, prefix: string
     prefix,
     requiresWarehouseForUpdate: false,
     feedRequestType: B2B_CA_FEED_REQUEST_TYPE,
+    expectedOrderCurrencies,
 
     getItemRequest(identifier: ItemIdentifier): RequestSpec {
       return {

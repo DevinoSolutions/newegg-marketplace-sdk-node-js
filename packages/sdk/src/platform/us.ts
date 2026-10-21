@@ -22,6 +22,7 @@ export const usAdapter: PlatformAdapter = {
   prefix: "",
   requiresWarehouseForUpdate: true,
   feedRequestType: US_FEED_REQUEST_TYPE,
+  expectedOrderCurrencies: ["USD"],
 
   getItemRequest(identifier: ItemIdentifier, warehouses: string[] | undefined): RequestSpec {
     const body: Record<string, unknown> = {
