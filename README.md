@@ -653,7 +653,10 @@ failures; feed submissions never blindly retry after an ambiguous send (they rai
   **read-only** (there is no live write test). It requires `NEWEGG_LIVE_TESTS=true` and valid
   platform credentials; inventory reads also need `NEWEGG_LIVE_TEST_SELLER_PART_NUMBER` (and
   `NEWEGG_LIVE_TEST_WAREHOUSE` on US) and skip cleanly without them. Run with
-  `NEWEGG_LIVE_TESTS=true npm run test:live`.
+  `NEWEGG_LIVE_TESTS=true npm run test:live` (fast reads) and
+  `NEWEGG_LIVE_TESTS=true npm run test:live:reports` (slow report and catalog-lookup polling, up to
+  several minutes per test, so run it in the background with the output sent to a file). On US/B2B
+  a few reads hit documented Newegg-side limitations and skip with a reason; CA is strict.
 - **The live suite is guarded READ-ONLY.** `npm run check:live-readonly` (its own CI job)
   scans `packages/sdk/test/live/` and fails if a mutating call is ever added there, so the
   opt-in live suite is structurally prevented from writing to a real account. It is an
@@ -682,6 +685,7 @@ Root scripts (npm workspaces):
 | `npm test`                                | Unit + integration tests (no credentials).                                                                                               |
 | `npm run test:coverage`                   | Tests with V8 coverage.                                                                                                                  |
 | `npm run test:live`                       | Opt-in live smoke suite (see [Testing](#testing)).                                                                                       |
+| `npm run test:live:reports`               | Opt-in slow live report / catalog-lookup polling tests (see [Testing](#testing)).                                                        |
 | `npm run docs:api`                        | Generate API docs with TypeDoc (`treatWarningsAsErrors`).                                                                                |
 | `npm run verify:exports`                  | Verify built packages expose their expected exports (needs a build); also fails if an `examples/*` workspace lacks a `typecheck` script. |
 | `npm run check:secrets`                   | Scan the **working tree** and fail if any credential/secret is present.                                                                  |
