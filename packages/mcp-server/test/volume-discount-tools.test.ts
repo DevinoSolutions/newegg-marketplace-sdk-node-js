@@ -84,6 +84,36 @@ describe("newegg_volume_discount_get", () => {
     }
   });
 
+  it("passes a non-integer upstream tier priority through output validation", async () => {
+    const harness = await startHarness({
+      routes: [
+        readRoute(200, {
+          IsSuccess: true,
+          ResponseBody: {
+            ItemVolumeDiscountInfo: {
+              SellerPartNumber: "FAKE-SKU-1",
+              NeweggItemNumber: ITEM,
+              DiscountSetting: [
+                { Priority: "1.5", Quantity: 5, SellingPrice: 95.5, EnableFreeShipping: 1 },
+              ],
+            },
+          },
+        }),
+      ],
+    });
+    try {
+      const res = await callTool(harness.mcp, "newegg_volume_discount_get", {
+        neweggItemNumber: ITEM,
+      });
+      expect(res.isError).toBe(false);
+      expect(res.json.tiers).toEqual([
+        { priority: 1.5, quantity: 5, sellingPrice: 95.5, freeShipping: true },
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("reports hasVolumeDiscount=false for an item without a discount (CT060)", async () => {
     const harness = await startHarness({
       routes: [readRoute(400, [{ Code: "CT060", Message: "No volume discount yet." }])],
