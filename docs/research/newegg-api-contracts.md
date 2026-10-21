@@ -154,7 +154,7 @@ seller part number that exists only in the CA store answers HTTP **200** with a 
 record (`Active` "0", `AvailableQuantity` 0, item number and SKU echoed), not CT026. The same record shape is
 returned for a real CA item that is deactivated or sold out, so the inventory response alone cannot tell
 "missing" from "zero stock". The Get Item Price read does tell them apart (400 CT026 for a missing item,
-§15.3); the live suite therefore confirms an item exists on the marketplace with a price read first.
+§15.2 list, §15.6 `tryGet`: PRICE_NOT_FOUND = CT026/CT010); the live suite therefore confirms an item exists on the marketplace with a price read first.
 The order-info endpoint returns the SAME orders (CA-store SKUs) under the `us/`, `b2b/` and `can/`
 prefixes, so SKUs discovered from order lines are not evidence an item exists on US or B2B.
 

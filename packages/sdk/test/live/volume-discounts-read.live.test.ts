@@ -6,6 +6,7 @@ import {
   makeLiveClient,
   marketplace,
   NON_CA_VOLUME_DISCOUNT_500,
+  noItemReason,
   skipNonCaLimitation,
 } from "./helpers.js";
 
@@ -28,11 +29,7 @@ describe.skipIf(!liveEnabled)("live (read-only): volume discount reads", () => {
   it("tryGet returns a well-formed tier list, or undefined when the item has no discount", async (ctx) => {
     const id = identifiers[0];
     if (!id || id.type === "upc") {
-      ctx.skip(
-        id
-          ? "UPC identifiers cannot be read here"
-          : `no ${marketplace()} item discoverable (T-5611)`,
-      );
+      ctx.skip(id ? "UPC identifiers cannot be read here" : noItemReason());
       return;
     }
     const client = makeLiveClient();
@@ -44,7 +41,11 @@ describe.skipIf(!liveEnabled)("live (read-only): volume discount reads", () => {
       skipNonCaLimitation(ctx, error, NON_CA_VOLUME_DISCOUNT_500);
       throw error;
     });
-    if (snapshot === undefined) return;
+    if (snapshot === undefined) {
+      // CT060: the item has no volume discount configured, a valid "no discount" outcome.
+      expect(snapshot).toBeUndefined();
+      return;
+    }
     expect(snapshot.marketplace).toBe(marketplace());
     expect(snapshot.tiers.length).toBeLessThanOrEqual(3);
     let previous = 0;

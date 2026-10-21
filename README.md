@@ -657,7 +657,11 @@ failures; feed submissions never blindly retry after an ambiguous send (they rai
   `NEWEGG_LIVE_TESTS=true npm run test:live` (fast reads) and
   `NEWEGG_LIVE_TESTS=true npm run test:live:reports` (slow report and catalog-lookup polling, up to
   several minutes per test, so run it in the background with the output sent to a file). On US/B2B
-  a few reads hit documented Newegg-side limitations and skip with a reason; CA is strict.
+  a few reads hit documented Newegg-side limitations and skip with a reason; CA is strict. The strict
+  reference pass needs `NEWEGG_MARKETPLACE=ca`: the live helpers default to `us` (and warn when the
+  variable is unset or not `us`/`b2b`/`ca`). Non-CA coverage for this account is near zero unless
+  `NEWEGG_LIVE_TEST_SELLER_PART_NUMBER` points at an item that exists on that marketplace, because
+  order-derived SKUs are CA-store SKUs; discovery errors are shown in the skip reasons.
 - **The live suite is guarded READ-ONLY.** `npm run check:live-readonly` (its own CI job)
   scans `packages/sdk/test/live/` and fails if a mutating call is ever added there, so the
   opt-in live suite is structurally prevented from writing to a real account. It is an
