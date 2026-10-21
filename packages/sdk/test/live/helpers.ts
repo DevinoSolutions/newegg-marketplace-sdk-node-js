@@ -49,19 +49,12 @@ export const liveEnabled =
   Boolean(env.NEWEGG_API_KEY) &&
   Boolean(env.NEWEGG_SECRET_KEY);
 
-// Vitest isolates modules per test file, so a module-level flag would warn once per file; a
-// process.env flag is shared by every file that runs in the same worker process (the guard bans
-// globalThis in the live suite).
+let warnedMarketplace = false;
 
 export function marketplace(): NeweggMarketplace {
   const value = env.NEWEGG_MARKETPLACE?.toLowerCase();
-  if (
-    env.NEWEGG_LIVE_MARKETPLACE_WARNED === undefined &&
-    value !== "us" &&
-    value !== "b2b" &&
-    value !== "ca"
-  ) {
-    env.NEWEGG_LIVE_MARKETPLACE_WARNED = "1";
+  if (!warnedMarketplace && value !== "us" && value !== "b2b" && value !== "ca") {
+    warnedMarketplace = true;
     console.warn(
       `NEWEGG_MARKETPLACE is ${value === undefined || value === "" ? "unset" : "invalid"}; ` +
         'the live suite falls back to the lenient "us" path. Set NEWEGG_MARKETPLACE=ca for the ' +

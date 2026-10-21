@@ -75,16 +75,20 @@ describe.skipIf(!liveEnabled)("live (read-only): pricing reads", () => {
 
   it("an unknown SKU answers the documented not-found code (read-only)", async (ctx) => {
     const client = makeLiveClient();
+    let snapshot;
     try {
-      const snapshot = await client.pricing.get({
+      snapshot = await client.pricing.get({
         identifier: { type: "sellerPartNumber", value: "NONEXISTENT-PROBE-SKU-XYZ" },
       });
-      // Only non-CA may resolve a snapshot here; CA must answer not-found.
-      expect(isCa()).toBe(false);
-      expect(snapshot.marketplace).toBe(marketplace());
     } catch (error) {
       // Contracts §15.2 errors list / §15.6 tryGet: not found is CT026 or CT010 (HTTP 400).
+      // ASSUMPTION: the exact CA code for an unknown SKU is doc-derived (§15.2 "not live-verified");
+      // both documented codes are accepted.
       expectUnknownSkuNotFound(ctx, error, ["CT026", "CT010"]);
+      return;
     }
+    // Only non-CA may resolve a snapshot here; CA must answer not-found.
+    expect(isCa()).toBe(false);
+    expect(snapshot.marketplace).toBe(marketplace());
   });
 });

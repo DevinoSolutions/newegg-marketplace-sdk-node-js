@@ -94,20 +94,22 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
 
   it("getItem for an unknown SKU answers the documented not-found code (real endpoint, read-only)", async (ctx) => {
     const client = makeLiveClient();
+    let snapshot;
     try {
-      const snapshot = await client.inventory.getItem({
+      snapshot = await client.inventory.getItem({
         identifier: { type: "sellerPartNumber", value: "NONEXISTENT-PROBE-SKU-XYZ" },
         warehouses: warehouses(),
       });
-      // B2B answers an empty 200 shell for a SKU it does not know (contracts §5, T-5611); CA must
-      // answer not-found.
-      expect(isCa()).toBe(false);
-      expect(snapshot.marketplace).toBe(marketplace());
-      expect(typeof snapshot.totalAvailableQuantity).toBe("number");
     } catch (error) {
       // Contracts §5 (identifier resolution, verified live 2026-07-18): SKU reads fail 400 CT026.
       expectUnknownSkuNotFound(ctx, error, ["CT026"]);
+      return;
     }
+    // B2B answers an empty 200 shell for a SKU it does not know (contracts §5, T-5611); CA must
+    // answer not-found.
+    expect(isCa()).toBe(false);
+    expect(snapshot.marketplace).toBe(marketplace());
+    expect(typeof snapshot.totalAvailableQuantity).toBe("number");
   });
 
   it("normalized totals match the raw Newegg payload (invariant, read-only)", async (ctx) => {
