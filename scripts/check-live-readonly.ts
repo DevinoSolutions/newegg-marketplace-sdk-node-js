@@ -256,7 +256,17 @@ for (const sample of MUST_PASS) {
       fail(`self-test: surface check fails open on: ${JSON.stringify(sample)}`);
     }
   }
-  const typesSource = readFileSync(join(root, "packages", "sdk", "src", "types.ts"), "utf8");
+  // types.ts is a barrel over types/*.ts; the guard judges every declaration, so read them all.
+  const typesDir = join(root, "packages", "sdk", "src", "types");
+  const typesSource = [
+    join(root, "packages", "sdk", "src", "types.ts"),
+    ...readdirSync(typesDir)
+      .filter((f) => f.endsWith(".ts"))
+      .sort()
+      .map((f) => join(typesDir, f)),
+  ]
+    .map((f) => readFileSync(f, "utf8"))
+    .join("\n");
   for (const problem of clientSurfaceProblems(typesSource)) fail(problem);
 }
 
