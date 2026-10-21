@@ -186,7 +186,9 @@ export async function discoverIdentifiers(limit = 5): Promise<ItemIdentifier[]> 
   } catch (error) {
     if (isCa()) throw error;
     discoveryErrors.push(`orders.list ${describeError(error)}`);
-    console.error(`live discovery: orders.list failed on ${marketplace()}: ${describeError(error)}`);
+    console.error(
+      `live discovery: orders.list failed on ${marketplace()}: ${describeError(error)}`,
+    );
     return [];
   }
   if (isCa()) return candidates;

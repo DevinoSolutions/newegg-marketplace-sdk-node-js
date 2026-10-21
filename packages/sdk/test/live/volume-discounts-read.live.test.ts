@@ -29,11 +29,7 @@ describe.skipIf(!liveEnabled)("live (read-only): volume discount reads", () => {
   it("tryGet returns a well-formed tier list, or undefined when the item has no discount", async (ctx) => {
     const id = identifiers[0];
     if (!id || id.type === "upc") {
-      ctx.skip(
-        id
-          ? "UPC identifiers cannot be read here"
-          : noItemReason(),
-      );
+      ctx.skip(id ? "UPC identifiers cannot be read here" : noItemReason());
       return;
     }
     const client = makeLiveClient();
