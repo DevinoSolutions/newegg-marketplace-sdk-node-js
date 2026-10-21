@@ -93,6 +93,45 @@ describe("newegg_orders_list", () => {
     }
   });
 
+  it("validates packages that carry nested ItemInfoList lines against the output schema", async () => {
+    // After listTools() caches the output schemas, the MCP client validates structuredContent
+    // against the tool's outputSchema (the same check a real MCP host performs); a schema missing
+    // `packages[].items` rejects the call with -32602.
+    const body = structuredClone(ORDER_INFO_BODY);
+    const order = body.ResponseBody.OrderInfoList[0]!;
+    order.PackageInfoList = [
+      {
+        TrackingNumber: "1Z999",
+        ShipCarrier: "UPS",
+        ItemInfoList: {
+          ItemInfo: [
+            { SellerPartNumber: "SKU-1", MfrPartNumber: "MPN-1", ShippedQty: 1 },
+            { SellerPartNumber: "SKU-2", ShippedQty: "2" },
+          ],
+        },
+      },
+    ] as unknown as typeof order.PackageInfoList;
+    const harness = await startHarness({ routes: [orderInfoRoute(body)] });
+    try {
+      await harness.mcp.listTools();
+      const list = await callTool(harness.mcp, "newegg_orders_list", {});
+      expect(list.isError).toBe(false);
+      const orders = list.json.orders as Array<{
+        packages: Array<{ items?: Array<{ sellerPartNumber?: string; shippedQty?: number }> }>;
+      }>;
+      expect(orders[0]!.packages[0]!.items).toEqual([
+        { sellerPartNumber: "SKU-1", mfrPartNumber: "MPN-1", shippedQty: 1 },
+        { sellerPartNumber: "SKU-2", shippedQty: 2 },
+      ]);
+
+      const get = await callTool(harness.mcp, "newegg_orders_get", { orderNumber: 511952652 });
+      expect(get.isError).toBe(false);
+      expect(get.json.found).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("converts an ISO dateFrom to a Pacific wall-clock criterion", async () => {
     const harness = await startHarness({ routes: [orderInfoRoute(ORDER_INFO_BODY)] });
     try {

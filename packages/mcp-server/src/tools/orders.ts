@@ -93,6 +93,12 @@ const orderItemSchema = z.object({
   buyerRequestedCancel: z.boolean().optional(),
 });
 
+const orderPackageItemSchema = z.object({
+  sellerPartNumber: z.string().optional(),
+  mfrPartNumber: z.string().optional(),
+  shippedQty: z.number().optional(),
+});
+
 const orderPackageSchema = z.object({
   shipCarrier: z.string().optional(),
   shipService: z.string().optional(),
@@ -101,6 +107,7 @@ const orderPackageSchema = z.object({
   sellerPartNumber: z.string().optional(),
   mfrPartNumber: z.string().optional(),
   shippedQty: z.number().optional(),
+  items: z.array(orderPackageItemSchema).optional(),
   memo: z.string().optional(),
 });
 
