@@ -85,6 +85,42 @@ export class NeweggConfigurationError extends NeweggError {
   }
 }
 
+export interface NeweggMarketplaceMismatchErrorInit extends NeweggErrorInit {
+  /** The marketplace the client targets (`marketplace`), i.e. what the caller asked for. */
+  expectedMarketplace: NeweggMarketplace;
+  /**
+   * The marketplace the credentials actually belong to: `credentialMarketplace`, or inferred
+   * from response data (a CAD order page implies `"ca"`). Absent when it cannot be told apart.
+   */
+  actualMarketplace?: NeweggMarketplace;
+}
+
+/**
+ * The credentials belong to a different marketplace than the one the client targets (config
+ * `credentialMarketplace` differs from `marketplace`), or a response proved it (an orders page
+ * whose currency cannot be the marketplace's). Newegg authenticates on seller id and key pair
+ * only, so a mismatch would silently operate on the other account's data. A
+ * {@link NeweggConfigurationError} (`code: "configuration"`); messages and `toJSON()` carry
+ * marketplace names only, never credential values.
+ */
+export class NeweggMarketplaceMismatchError extends NeweggConfigurationError {
+  readonly expectedMarketplace: NeweggMarketplace;
+  readonly actualMarketplace?: NeweggMarketplace;
+  constructor(message: string, init: NeweggMarketplaceMismatchErrorInit) {
+    super(message, init);
+    this.name = "NeweggMarketplaceMismatchError";
+    this.expectedMarketplace = init.expectedMarketplace;
+    this.actualMarketplace = init.actualMarketplace;
+  }
+  override toJSON(): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      expectedMarketplace: this.expectedMarketplace,
+      actualMarketplace: this.actualMarketplace,
+    };
+  }
+}
+
 export interface NeweggValidationIssue {
   path: string;
   message: string;
