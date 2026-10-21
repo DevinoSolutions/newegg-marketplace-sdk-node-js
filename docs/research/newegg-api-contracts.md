@@ -999,28 +999,28 @@ Ship/Cancel (`orderstatus/orders/{n}`) and Remove-Item (`killitem`) return the `
 Confirmation returns `CE*`. Both arrive as XML `<Errors><Error><Code>` or a JSON array
 `[{ "Code", "Message" }]` (§1) — route through `errors/parse-upstream.ts`. Key codes:
 
-| Code             | Meaning (write-relevant)                                      |
-| ---------------- | ------------------------------------------------------------- |
-| SO001 / SO009    | Seller ID / order number null or empty                        |
-| SO002            | Order number must be an integer 1–2147483647                  |
-| SO003            | No data, not this seller's, or voided on ca (§10.2)           |
-| SO004 / SO054    | Replacement SO with an RMA — cannot be voided                 |
-| SO005 / SO056    | Cannot remove item — Shipped-by-Newegg order                  |
-| SO006            | Only unshipped orders can be voided (current status `{0}`)    |
-| SO008            | Order already voided                                          |
-| SO011            | Only unshipped orders can be shipped (current status `{0}`)   |
-| SO012            | Only shipped-by-seller orders are supported                   |
-| SO014 / SO037    | `Action` must be `1` (cancel) or `2` (ship)                   |
-| SO016            | Order not yet downloaded to the portal — retry after ~2 hours |
-| SO017            | Cancel reason must be `24` / `72` / `73` / `74`               |
-| SO020            | A package is missing shipping information                     |
-| SO025 / SO027    | Some / all items already shipped                              |
-| SO030            | Malformed shipment segment                                    |
-| SO040            | Body order# / Seller ID ≠ the URL values                      |
-| SO050 / SO055    | Invalid / repeated `SellerPartNumber` (remove-item)           |
-| SO051            | Item already cancelled in Newegg's system                     |
-| SO056 (ship ctx) | Premier order — must ship via Newegg Shipping Label Service   |
-| CE001            | (confirmation) Seller ID null or empty                        |
+| Code             | Meaning (write-relevant)                                                     |
+| ---------------- | ---------------------------------------------------------------------------- |
+| SO001 / SO009    | Seller ID / order number null or empty                                       |
+| SO002            | Order number must be an integer 1–2147483647                                 |
+| SO003            | No data, not this seller's, or a voided order on ca (one observation, §10.2) |
+| SO004 / SO054    | Replacement SO with an RMA — cannot be voided                                |
+| SO005 / SO056    | Cannot remove item — Shipped-by-Newegg order                                 |
+| SO006            | Only unshipped orders can be voided (current status `{0}`)                   |
+| SO008            | Order already voided                                                         |
+| SO011            | Only unshipped orders can be shipped (current status `{0}`)                  |
+| SO012            | Only shipped-by-seller orders are supported                                  |
+| SO014 / SO037    | `Action` must be `1` (cancel) or `2` (ship)                                  |
+| SO016            | Order not yet downloaded to the portal — retry after ~2 hours                |
+| SO017            | Cancel reason must be `24` / `72` / `73` / `74`                              |
+| SO020            | A package is missing shipping information                                    |
+| SO025 / SO027    | Some / all items already shipped                                             |
+| SO030            | Malformed shipment segment                                                   |
+| SO040            | Body order# / Seller ID ≠ the URL values                                     |
+| SO050 / SO055    | Invalid / repeated `SellerPartNumber` (remove-item)                          |
+| SO051            | Item already cancelled in Newegg's system                                    |
+| SO056 (ship ctx) | Premier order — must ship via Newegg Shipping Label Service                  |
+| CE001            | (confirmation) Seller ID null or empty                                       |
 
 `SO056` text differs by endpoint (Premier-order-ship in §11.1; SBN-remove in §11.4) — Newegg reuses
 the number, so surface the message, not just the code.

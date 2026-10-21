@@ -95,7 +95,7 @@ export interface ListOrdersInput {
   pageSize?: number;
 }
 
-/** Ship-to address of an order. Every field is empty (`""`) for voided orders (observed live on ca, 2026-10-21). */
+/** Ship-to address of an order. Every field is empty (`""`) for voided orders (observed for a voided order on ca, one order, 2026-10-21). */
 export interface ShipToAddress {
   firstName?: string;
   lastName?: string;
@@ -119,7 +119,7 @@ export interface OrderCustomer {
 /** Money breakdown; each value is a decimal in the order's {@link Order.currencyCode}. */
 export interface OrderAmounts {
   itemAmount?: number;
-  /** 0 for voided orders (observed live on ca, 2026-10-21). */
+  /** 0 for voided orders (observed for a voided order on ca, one order, 2026-10-21). */
   shippingAmount?: number;
   discountAmount?: number;
   refundAmount?: number;
@@ -191,7 +191,7 @@ export interface Order {
   fulfillment?: OrderFulfillment;
   currencyCode?: string;
   customer?: OrderCustomer;
-  /** Shipping service name. Empty (`""`) for voided orders (observed live on ca, 2026-10-21). */
+  /** Shipping service name. Empty (`""`) for voided orders (observed for a voided order on ca, one order, 2026-10-21). */
   shipService?: string;
   signatureRequired?: boolean;
   onTimeShipDueDate?: { raw: string; iso?: string };
@@ -429,8 +429,8 @@ export interface OrdersApi {
   tryGet(orderNumber: string | number, options?: RequestOptions): Promise<Order | undefined>;
   /**
    * Lightweight status-only lookup (Get Order Status endpoint). Throws when the order is
-   * unknown or not this seller's (`SO003`). May also fail with `SO003` for a voided order (observed
-   * live on ca, 2026-10-21); use {@link OrdersApi.get} to read a voided order.
+   * unknown or not this seller's (`SO003`). May also fail with `SO003` for a voided order (observed for a
+   * voided order on ca, one order, 2026-10-21); use {@link OrdersApi.get} to read a voided order.
    */
   getStatus(orderNumber: string | number, options?: RequestOptions): Promise<OrderStatusSnapshot>;
   /** Like {@link OrdersApi.getStatus} but resolves to `undefined` on `SO003` (not found). */

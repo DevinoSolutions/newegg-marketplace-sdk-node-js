@@ -515,7 +515,7 @@ export interface ListOrdersInput {
 }
 
 export interface ShipToAddress {
-  // every field is "" for voided orders (observed live on ca, 2026-10-21)
+  // every field is "" for voided orders (observed for a voided order on ca, one order, 2026-10-21)
   firstName?: string;
   lastName?: string;
   company?: string;
@@ -535,7 +535,7 @@ export interface OrderCustomer {
 export interface OrderAmounts {
   // each a decimal in Order.currencyCode
   itemAmount?: number;
-  shippingAmount?: number; // 0 for voided orders (observed live on ca, 2026-10-21)
+  shippingAmount?: number; // 0 for voided orders (observed for a voided order on ca, one order, 2026-10-21)
   discountAmount?: number;
   refundAmount?: number;
   salesTax?: number;
@@ -583,7 +583,7 @@ export interface Order {
   fulfillment?: OrderFulfillment;
   currencyCode?: string; // the key owner's account currency: CAD on ca; USD on us/b2b is an ASSUMPTION (contracts §10)
   customer?: OrderCustomer;
-  shipService?: string; // "" (empty) for voided orders (observed live on ca, 2026-10-21)
+  shipService?: string; // "" (empty) for voided orders (observed for a voided order on ca, one order, 2026-10-21)
   signatureRequired?: boolean;
   onTimeShipDueDate?: { raw: string; iso?: string };
   deliverDueDate?: { raw: string; iso?: string };
@@ -699,7 +699,7 @@ export interface OrdersApi {
   list(input?: ListOrdersInput, options?: RequestOptions): Promise<OrdersPage>; // Get Order Information
   get(orderNumber: string | number, options?: RequestOptions): Promise<Order>; // throws if not found
   tryGet(orderNumber: string | number, options?: RequestOptions): Promise<Order | undefined>;
-  getStatus(orderNumber: string | number, options?: RequestOptions): Promise<OrderStatusSnapshot>; // throws SO003; may also fail with SO003 for a voided order (observed live on ca, 2026-10-21)
+  getStatus(orderNumber: string | number, options?: RequestOptions): Promise<OrderStatusSnapshot>; // throws SO003; may also fail with SO003 for a voided order (observed for a voided order on ca, one order, 2026-10-21)
   tryGetStatus(
     orderNumber: string | number,
     options?: RequestOptions,
