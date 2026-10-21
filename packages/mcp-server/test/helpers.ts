@@ -89,6 +89,11 @@ export async function startHarness(opts: HarnessOptions = {}): Promise<Harness> 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const mcp = new Client({ name: "test-client", version: "0.0.0" });
   await Promise.all([mcp.connect(clientTransport), instance.server.connect(serverTransport)]);
+  // The MCP Client only validates structuredContent against output schemas it has cached from
+  // listTools(), exactly like a real host. Prime the cache so EVERY test enforces each tool's
+  // registered outputSchema (without this, schema/serializer drift only fails in tests that
+  // happen to list tools first).
+  await mcp.listTools();
   return {
     mcp,
     calls: mock.calls,
