@@ -112,6 +112,8 @@ describe("orders additional info strict validation (T-5948)", () => {
       ["dateTo", { dateTo: "tomorrow" }],
       ["countryCode", { countryCode: "" }],
       ["countryCode", { countryCode: "   " }],
+      ["countryCode", { countryCode: " BRA" }],
+      ["dateFrom", { dateFrom: "2026-02-31 00:00:00" }],
     ];
     for (const [path, input] of bad) {
       const t = makeClient("us", route());

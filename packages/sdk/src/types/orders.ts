@@ -62,18 +62,19 @@ export interface ListOrdersInput {
   premierOrder?: PremierOrderFilter;
   /**
    * Lower bound on order date. A `Date` is rendered as Pacific Time; a string is sent verbatim, so it
-   * must be a Pacific wall clock as `MM/DD/YYYY HH:mm:ss` or `YYYY-MM-DD HH:mm:ss` (anything else,
-   * including a date-only value or an invalid `Date`, throws {@link NeweggValidationError} before any
-   * request).
+   * must be a Pacific wall clock as `MM/DD/YYYY HH:mm:ss` or `YYYY-MM-DD HH:mm:ss` (both forms verified
+   * live on ca, 2026-10-21; it must name a real calendar date). Anything else, including a date-only
+   * value, an ISO string with `Z` or an invalid `Date`, throws {@link NeweggValidationError} before any
+   * request.
    */
   dateFrom?: Date | string;
   /** Upper bound on order date; same accepted forms as {@link ListOrdersInput.dateFrom}. */
   dateTo?: Date | string;
   /**
    * ISO 3-digit ship-to country code (`CountryCode`). Newegg.com (`us`) only: throws
-   * {@link UnsupportedMarketplaceOperationError} on `ca`/`b2b` (Newegg answers 400 CE003). An empty or
-   * whitespace-only value is malformed input on EVERY marketplace and throws
-   * {@link NeweggValidationError} first (it is never silently dropped).
+   * {@link UnsupportedMarketplaceOperationError} on `ca`/`b2b` (Newegg answers 400 CE003). An empty,
+   * whitespace-only or whitespace-padded value is malformed input on EVERY marketplace and throws
+   * {@link NeweggValidationError} first (it is never silently dropped or trimmed).
    */
   countryCode?: string;
   /**

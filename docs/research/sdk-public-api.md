@@ -505,9 +505,9 @@ export interface ListOrdersInput {
   type?: OrderTypeFilter; // default "all" on the wire; "nws" is us-only (throws UnsupportedMarketplaceOperationError on ca/b2b)
   includeDownloaded?: boolean; // false => exclude already-downloaded (OrderDownloaded=1)
   premierOrder?: PremierOrderFilter; // us-only: throws UnsupportedMarketplaceOperationError on ca/b2b, nothing sent
-  dateFrom?: Date | string; // Date => rendered Pacific; string sent verbatim, so it must be `MM/DD/YYYY HH:mm:ss` or `YYYY-MM-DD HH:mm:ss` (Pacific) or NeweggValidationError
+  dateFrom?: Date | string; // Date => rendered Pacific; string sent verbatim, so it must be a real Pacific `MM/DD/YYYY HH:mm:ss` or `YYYY-MM-DD HH:mm:ss` (both forms verified live on ca 2026-10-21) or NeweggValidationError
   dateTo?: Date | string; // same rule as dateFrom
-  countryCode?: string; // ISO 3-digit ship-to; us-only: throws UnsupportedMarketplaceOperationError on ca/b2b, nothing sent; empty/whitespace => NeweggValidationError on every marketplace (checked first)
+  countryCode?: string; // ISO 3-digit ship-to; us-only: throws UnsupportedMarketplaceOperationError on ca/b2b, nothing sent; empty or whitespace-padded => NeweggValidationError on every marketplace (checked first, never trimmed)
   lastUpdatedAfter?: Date | string; // LastUpdatedAfter, all marketplaces; Date => Pacific, string verbatim (ASSUMPTION: filters on last update)
   isInternal?: boolean; // IsInternal sent as 1/0, all marketplaces; semantics UNDOCUMENTED/UNVERIFIED (non-boolean => NeweggValidationError)
   page?: number; // PageIndex, default 1
@@ -2795,7 +2795,8 @@ export interface ShippingLabelsApi {
     before any request (all issues are reported together). `listAdditionalInfo` applies the same `status` (no
     `paymentPending`, which that endpoint reads as "All"), `dateFrom` / `dateTo` and `countryCode` checks.
     The MCP `newegg_orders_list` passes a zone-less date string through to the SDK unchanged (Pacific wall clock); only a
-    string with `Z` or a numeric offset becomes a `Date`, so the machine's time zone never shifts the window.
+    string with `Z` or a numeric offset becomes a `Date`, so the machine's time zone never shifts the window. In MCP only, a
+    bare `YYYY-MM-DD` expands to `00:00:00` (`dateFrom`, `lastUpdatedAfter`) or `23:59:59` (`dateTo`); the SDK itself stays strict.
 11. **Order writes (non-idempotent)**: `orders.ship` (Action 2) / `cancel` (Action 1) /
     `confirmDownload` / `removeItems` (KillItem) mutate and follow ADR 0004 — a provably-unsent
     transport error retries, but an ambiguous failure (timeout/reset after dispatch, or 408/5xx)

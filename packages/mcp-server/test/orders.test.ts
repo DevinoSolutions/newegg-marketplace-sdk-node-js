@@ -170,7 +170,10 @@ describe("newegg_orders_list", () => {
         await withZone(zone, () => {
           expect(toDateInput("2026-03-10 08:00:00")).toBe("2026-03-10 08:00:00");
           expect(toDateInput("03/10/2026 08:00:00")).toBe("03/10/2026 08:00:00");
-          expect(toDateInput("2026-03-10")).toBe("2026-03-10");
+          expect(toDateInput("2026-03-10")).toBe("2026-03-10 00:00:00");
+          expect(toDateInput("2026-03-10", "start")).toBe("2026-03-10 00:00:00");
+          expect(toDateInput("2026-03-10", "end")).toBe("2026-03-10 23:59:59");
+          expect(toDateInput("2026-03-10 08:00:00", "end")).toBe("2026-03-10 08:00:00");
           expect(toDateInput("2026-03-10T08:00:00")).toBe("2026-03-10T08:00:00");
           expect(toDateInput("garbage")).toBe("garbage");
           expect(toDateInput(undefined)).toBeUndefined();
@@ -207,11 +210,47 @@ describe("newegg_orders_list", () => {
       }
     });
 
-    it("rejects date-only, T-separated zone-less and garbage dates before any request", async () => {
+    it("expands a bare date to the Pacific day edge under a non-Pacific TZ", async () => {
+      for (const zone of ["Asia/Tokyo", "Pacific/Auckland"]) {
+        await withZone(zone, async () => {
+          const harness = await startHarness({ routes: [orderInfoRoute(ORDER_INFO_BODY)] });
+          try {
+            const result = await callTool(harness.mcp, "newegg_orders_list", {
+              dateFrom: "2026-03-10",
+              dateTo: "2026-03-11",
+              lastUpdatedAfter: "2026-03-09",
+            });
+            expect(result.isError, zone).toBe(false);
+            expect(criteriaOf(harness.calls)).toEqual({
+              OrderDateFrom: "2026-03-10 00:00:00",
+              OrderDateTo: "2026-03-11 23:59:59",
+              LastUpdatedAfter: "2026-03-09 00:00:00",
+            });
+          } finally {
+            await harness.close();
+          }
+        });
+      }
+    });
+
+    it("rejects an impossible bare date before any request", async () => {
+      const harness = await startHarness({ routes: [orderInfoRoute(ORDER_INFO_BODY)] });
+      try {
+        const result = await callTool(harness.mcp, "newegg_orders_list", {
+          dateFrom: "2026-02-31",
+        });
+        expect(result.isError).toBe(true);
+        expect(harness.calls).toHaveLength(0);
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it("rejects T-separated zone-less and garbage dates before any request", async () => {
       const harness = await startHarness({ routes: [orderInfoRoute(ORDER_INFO_BODY)] });
       try {
         for (const field of ["dateFrom", "dateTo", "lastUpdatedAfter"]) {
-          for (const value of ["2026-03-10", "2026-03-10T08:00:00", "garbage"]) {
+          for (const value of ["2026-03-10T08:00:00", "garbage"]) {
             const result = await callTool(harness.mcp, "newegg_orders_list", { [field]: value });
             expect(result.isError, `${field}=${value}`).toBe(true);
           }
@@ -225,7 +264,12 @@ describe("newegg_orders_list", () => {
     it("rejects an unknown status and a blank countryCode before any request", async () => {
       const harness = await startHarness({ routes: [orderInfoRoute(ORDER_INFO_BODY)] });
       try {
-        for (const args of [{ status: "bogus" }, { countryCode: "" }, { countryCode: "  " }]) {
+        for (const args of [
+          { status: "bogus" },
+          { countryCode: "" },
+          { countryCode: "  " },
+          { countryCode: " USA" },
+        ]) {
           const result = await callTool(harness.mcp, "newegg_orders_list", args);
           expect(result.isError, JSON.stringify(args)).toBe(true);
         }

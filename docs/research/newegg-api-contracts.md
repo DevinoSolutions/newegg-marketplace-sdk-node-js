@@ -557,8 +557,8 @@ Types mirror the official sample (paging/enum values sent as strings, all accept
   Premier. `VoidSoon` (optional) 24 | 48 — orders auto-voiding within N hours.
 - `OrderDateFrom`/`OrderDateTo`: Pacific-Time strings (§2). The SDK sends a string verbatim, so it accepts only the two
   `LastUpdatedAfter` forms below (`MM/DD/YYYY HH:mm:ss`, `YYYY-MM-DD HH:mm:ss`) and rejects anything else with
-  `NeweggValidationError` (**ASSUMPTION**: Newegg takes these two forms for the order-date criteria too; only
-  `LastUpdatedAfter` was probed, and the doc sample above uses the second form).
+  `NeweggValidationError`. A string must also name a real calendar date (`2026-02-31` is rejected). **Verified live
+  2026-10-21 on ca (read-only): both forms return the same 16 orders; a 2030 window returns 0.**
 
 **Criteria per platform (observed live, read-only, 2026-10-21, T-5912).** Newegg validates `RequestCriteria`
 strictly: an element the platform does not know answers HTTP **400 `CE003`** ("The element 'RequestCriteria' has
@@ -3683,8 +3683,11 @@ when looking one up). The field table
 documents a flat `OrderNumber` but both samples use the `OrderNumberList` wrapper; the SDK sends the
 wrapper (same as §10.1). Differences from §10.1: `Status` 0 Unshipped, 1 Partially Shipped, 2 Shipped,
 3 Invoiced, 4 Voided, **5 All** (blank returns Unshipped); `Type` 0 All, 1 SBN, 2 SBS, **3 NISP**
-(§10.1's codes 3/4 are multi-channel/NWS); the SDK rejects `status` values outside the first five (`paymentPending`, `unknown`), unrecognized `dateFrom`/`dateTo` strings and a blank `countryCode` with `NeweggValidationError`; `VoidSoon` (24/48 h) and `IssueUser` are documented but not
+(§10.1's codes 3/4 are multi-channel/NWS); `VoidSoon` (24/48 h) and `IssueUser` are documented but not
 exposed.
+
+The SDK rejects `status` values outside the first five (`paymentPending`, `unknown`), unrecognized `dateFrom`/`dateTo`
+strings and a blank or whitespace-padded `countryCode` with `NeweggValidationError`.
 
 Response: `ResponseBody > { PageInfo { TotalCount, TotalPageCount, PageSize, PageIndex }, AddOrderInfoList >
 AddOrderInfo }` (single object or array). Record: `OrderNumber`, `RecipientIDType` (Brazil CPF / CNPJ /

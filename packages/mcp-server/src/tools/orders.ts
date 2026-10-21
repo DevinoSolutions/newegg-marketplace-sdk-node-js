@@ -185,18 +185,25 @@ const orderNumberSchema = z
 const ZONED_INSTANT =
   /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
 
+const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 /**
  * An instant with an explicit `Z` / offset becomes a `Date` so the SDK renders it as Pacific. A
- * zone-less string is a Pacific wall clock (`YYYY-MM-DD HH:mm:ss` or `MM/DD/YYYY HH:mm:ss`) and goes
- * to the SDK untouched: parsing it with `new Date()` would read it in the MACHINE's zone and shift the
- * window on any non-Pacific host. The SDK validates the string and fails before any request.
+ * bare `YYYY-MM-DD` is a Pacific calendar day: it expands to `00:00:00` (`edge` "start", the default)
+ * or `23:59:59` (`edge` "end", for an upper bound). Any other zone-less string is a Pacific wall clock
+ * and goes to the SDK untouched: parsing it with `new Date()` would read it in the MACHINE's zone and
+ * shift the window on any non-Pacific host. The SDK validates the result and fails before any request.
  */
-export function toDateInput(value: string | undefined): Date | string | undefined {
+export function toDateInput(
+  value: string | undefined,
+  edge: "start" | "end" = "start",
+): Date | string | undefined {
   if (value === undefined) return undefined;
   if (ZONED_INSTANT.test(value)) {
     const date = new Date(value);
     if (!Number.isNaN(date.getTime())) return date;
   }
+  if (BARE_DATE.test(value)) return `${value} ${edge === "end" ? "23:59:59" : "00:00:00"}`;
   return value;
 }
 
@@ -238,27 +245,29 @@ const listInputSchema = z
       .min(1)
       .optional()
       .describe(
-        "Lower bound on order date. Either an ISO 8601 instant with Z or an offset (e.g. 2024-01-01T00:00:00Z, converted to Pacific) or a zone-less Pacific wall-clock string as YYYY-MM-DD HH:mm:ss or MM/DD/YYYY HH:mm:ss. Anything else, including a date-only value, is rejected before any request.",
+        "Lower bound on order date. Accepted forms: an ISO 8601 instant with Z or an offset (e.g. 2024-01-01T00:00:00Z, converted to Pacific); a bare date YYYY-MM-DD (Pacific, start of that day, 00:00:00); or a zone-less Pacific wall clock as YYYY-MM-DD HH:mm:ss or MM/DD/YYYY HH:mm:ss. Anything else is rejected before any request.",
       ),
     dateTo: z
       .string()
       .min(1)
       .optional()
-      .describe("Upper bound on order date (same formats as dateFrom)."),
+      .describe(
+        "Upper bound on order date. Same forms as dateFrom, except that a bare date YYYY-MM-DD means the END of that Pacific day (23:59:59).",
+      ),
     countryCode: z
       .string()
       .min(1)
       .max(3)
       .optional()
       .describe(
-        "ISO 3-letter ship-to country code (e.g. USA); a blank value is rejected. Newegg.com (us) only: on ca/b2b the call fails before anything is sent (Newegg rejects it with CE003), so do not send it for Newegg.ca or Business.",
+        "ISO 3-letter ship-to country code (e.g. USA); a blank value, or one with leading or trailing whitespace, is rejected. Newegg.com (us) only: on ca/b2b the call fails before anything is sent (Newegg rejects it with CE003), so do not send it for Newegg.ca or Business.",
       ),
     lastUpdatedAfter: z
       .string()
       .min(1)
       .optional()
       .describe(
-        "Only orders last updated after this instant (same formats as dateFrom: ISO 8601 with Z or offset, or a zone-less Pacific YYYY-MM-DD HH:mm:ss / MM/DD/YYYY HH:mm:ss). Valid on every marketplace.",
+        "Only orders last updated after this instant (same forms as dateFrom: ISO 8601 with Z or offset, a bare YYYY-MM-DD meaning 00:00:00 Pacific, or a zone-less Pacific YYYY-MM-DD HH:mm:ss / MM/DD/YYYY HH:mm:ss). Valid on every marketplace.",
       ),
     isInternal: z
       .boolean()
@@ -302,7 +311,7 @@ async function listHandler(
   if (input.premierOrder !== undefined) listInput.premierOrder = input.premierOrder;
   const dateFrom = toDateInput(input.dateFrom);
   if (dateFrom !== undefined) listInput.dateFrom = dateFrom;
-  const dateTo = toDateInput(input.dateTo);
+  const dateTo = toDateInput(input.dateTo, "end");
   if (dateTo !== undefined) listInput.dateTo = dateTo;
   if (input.countryCode !== undefined) listInput.countryCode = input.countryCode;
   const lastUpdatedAfter = toDateInput(input.lastUpdatedAfter);

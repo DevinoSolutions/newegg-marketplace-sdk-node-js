@@ -268,6 +268,11 @@ describe("order criteria per marketplace (T-5912)", () => {
         "2026-01-02T03:04:05Z",
         "2026-01-02 03:04",
         "13/02/2026 03:04:05",
+        "2026-02-31 03:04:05",
+        "02/30/2026 03:04:05",
+        "2025-02-29 00:00:00",
+        "2026-04-31 00:00:00",
+        "2026-01-02 24:00:00",
         "tomorrow",
         "",
         " 2026-01-02 03:04:05",
@@ -280,6 +285,23 @@ describe("order criteria per marketplace (T-5912)", () => {
           expect(error, `${field}=${String(value)}`).toBeInstanceOf(NeweggValidationError);
           expect((error as NeweggValidationError).issues[0]?.path).toBe(field);
         }
+      }
+    });
+
+    it("accepts real calendar edges such as a leap day and a month end", async () => {
+      const { client, calls } = clientFor("ca");
+      await client.orders.list({ dateFrom: "2024-02-29 00:00:00", dateTo: "12/31/2026 23:59:59" });
+      expect(criteriaOf(calls)).toEqual({
+        OrderDateFrom: "2024-02-29 00:00:00",
+        OrderDateTo: "12/31/2026 23:59:59",
+      });
+    });
+
+    it("also rejects an impossible calendar date in lastUpdatedAfter", async () => {
+      for (const value of ["2026-02-31 03:04:05", "02/31/2026 03:04:05"]) {
+        const error = await rejection("ca", { lastUpdatedAfter: value });
+        expect(error, value).toBeInstanceOf(NeweggValidationError);
+        expect((error as NeweggValidationError).issues[0]?.path).toBe("lastUpdatedAfter");
       }
     });
 
@@ -319,7 +341,7 @@ describe("order criteria per marketplace (T-5912)", () => {
 
     it("rejects a blank or non-string countryCode on every marketplace (validation wins over unsupported)", async () => {
       for (const marketplace of ["us", "b2b", "ca"] as const) {
-        for (const countryCode of ["", "  ", "\t", 840, null]) {
+        for (const countryCode of ["", "  ", "\t", " USA", "USA ", "USA\n", 840, null]) {
           const error = await rejection(marketplace, { countryCode });
           expect(error, `${marketplace} countryCode=${String(countryCode)}`).toBeInstanceOf(
             NeweggValidationError,
