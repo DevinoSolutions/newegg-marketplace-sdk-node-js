@@ -375,38 +375,39 @@ export function createSdkTypeProbe(typeExpressions: readonly string[]): SdkTypeP
  * The probe reads the SDK's built `.d.ts` (dist), so a dist older than src (e.g. a OneDrive
  * rollback, or a forgotten rebuild) would silently compare against stale types. Returns a
  * human-readable problem, or undefined when dist is current (always undefined on CI).
+ *
+ * Each src file is compared with ITS OWN dist counterpart (`src/a/b.ts` -> `dist/a/b.d.ts`).
+ * dist files with no src counterpart are orphans of a deleted or renamed source (the SDK build
+ * never cleans dist) and are ignored, so an orphan's old mtime cannot fail the guard forever.
  */
-export function sdkDistStaleness(): string | undefined {
+export function sdkDistStaleness(
+  sdkRoot: string = path.resolve(PACKAGE_ROOT, "..", "sdk"),
+  onCi: boolean = process.env.CI === "true",
+): string | undefined {
   // CI downloads the dist artifact (tar preserves the build job's older mtimes) AFTER checking
   // out the same commit, so mtimes say nothing there; the artifact is built from this commit.
-  if (process.env.CI === "true") return undefined;
-  const sdkRoot = path.resolve(PACKAGE_ROOT, "..", "sdk");
-  const newest = (dir: string, ext: string): number => {
-    let latest = 0;
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+  if (onCi) return undefined;
+  const srcDir = path.join(sdkRoot, "src");
+  const distDir = path.join(sdkRoot, "dist");
+  if (!fs.existsSync(path.join(distDir, "index.d.ts"))) {
+    return "packages/sdk/dist is missing; run `npm run build` first.";
+  }
+  const hint = "run `npm run build` (or `rm -rf packages/sdk/dist && npm run build`)";
+  const sourceFiles = (dir: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) latest = Math.max(latest, newest(full, ext));
-      else if (entry.name.endsWith(ext)) latest = Math.max(latest, fs.statSync(full).mtimeMs);
+      if (entry.isDirectory()) return sourceFiles(full);
+      return entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts") ? [full] : [];
+    });
+  for (const source of sourceFiles(srcDir)) {
+    const relative = path.relative(srcDir, source).replaceAll("\\", "/").replace(/\.ts$/, ".d.ts");
+    const built = path.join(distDir, relative);
+    if (!fs.existsSync(built)) {
+      return `packages/sdk/dist has no ${relative} for a source file; ${hint} before trusting this guard.`;
     }
-    return latest;
-  };
-  const distIndex = path.join(sdkRoot, "dist", "index.d.ts");
-  if (!fs.existsSync(distIndex)) return "packages/sdk/dist is missing; run `npm run build` first.";
-  const srcNewest = newest(path.join(sdkRoot, "src"), ".ts");
-  // Compare against the OLDEST relevant dist declaration so a partially rolled-back dist is caught.
-  const distOldest = (() => {
-    let oldest = Infinity;
-    const visit = (dir: string): void => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) visit(full);
-        else if (entry.name.endsWith(".d.ts")) oldest = Math.min(oldest, fs.statSync(full).mtimeMs);
-      }
-    };
-    visit(path.join(sdkRoot, "dist"));
-    return oldest;
-  })();
-  return distOldest < srcNewest
-    ? "packages/sdk/dist is older than packages/sdk/src; run `npm run build` before trusting this guard."
-    : undefined;
+    if (fs.statSync(built).mtimeMs < fs.statSync(source).mtimeMs) {
+      return `packages/sdk/dist/${relative} is older than its source; ${hint} before trusting this guard.`;
+    }
+  }
+  return undefined;
 }

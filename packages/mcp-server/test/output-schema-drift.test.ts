@@ -521,7 +521,45 @@ describe("MCP output schemas cover the SDK types the handlers return", () => {
   // Omit entries that suppressed a key, as `tool|sdk|path|omit`, aggregated over both modes
   // (a write tool's entries are only reachable with writes on).
   const usedOmits = new Set<string>();
+  const failuresByMode = new Map<string, string[]>();
   let probe: SdkTypeProbe;
+
+  /** Compares every mapped SDK type with the schemas advertised in one mode. */
+  function evaluate(label: string): string[] {
+    const tools = new Map((listings.get(label) ?? []).map((tool) => [tool.name, tool]));
+    const failures: string[] = [];
+    for (const mapping of TABLE) {
+      const tool = tools.get(mapping.tool);
+      if (tool === undefined) continue; // a write tool, absent with writes off
+      const omitted = new Set([...Object.keys(GLOBAL_OMIT), ...Object.keys(mapping.omit ?? {})]);
+      const used = new Set<string>();
+      const findings = probe.check(
+        mapping.sdk,
+        tool.outputSchema as JsonSchemaNode,
+        mapping.schemaPath ?? "",
+        omitted,
+        used,
+      );
+      for (const omit of used) usedOmits.add(omitId(mapping, omit));
+      for (const finding of findings) {
+        const where = mapping.schemaPath === undefined ? "" : `${mapping.schemaPath} -> `;
+        if (finding.unresolved) {
+          failures.push(
+            `${mapping.tool}: unresolved SDK type at "${where}${finding.path}" (\`${mapping.sdk}\`): ` +
+              `the type is \`any\` or failed to import, so nothing beneath it was compared. ` +
+              `Fix the SDK type or the mapping's type expression.`,
+          );
+          continue;
+        }
+        failures.push(
+          `${mapping.tool}: SDK key "${where}${finding.path}" (${finding.sdkOwner}) is not in the ` +
+            `output schema. Add it to the schema and serializer, or list it in the mapping's ` +
+            `omit with a reason.`,
+        );
+      }
+    }
+    return failures;
+  }
 
   beforeAll(async () => {
     for (const mode of MODES) {
@@ -535,6 +573,9 @@ describe("MCP output schemas cover the SDK types the handlers return", () => {
       }
     }
     probe = createSdkTypeProbe(TABLE.map((mapping) => mapping.sdk));
+    // Evaluated once here (not inside the tests) so `usedOmits` is complete for every test,
+    // whatever order or `-t` filter the tests run under.
+    for (const mode of MODES) failuresByMode.set(mode.label, evaluate(mode.label));
   }, 120_000);
 
   afterAll(() => {
@@ -579,44 +620,10 @@ describe("MCP output schemas cover the SDK types the handlers return", () => {
     });
 
     it(`no SDK key is missing from an output schema (${mode.label})`, () => {
-      const tools = new Map((listings.get(mode.label) ?? []).map((tool) => [tool.name, tool]));
-      const failures: string[] = [];
-      for (const mapping of TABLE) {
-        const tool = tools.get(mapping.tool);
-        if (tool === undefined) continue; // a write tool, absent with writes off
-        const omitted = new Set([...Object.keys(GLOBAL_OMIT), ...Object.keys(mapping.omit ?? {})]);
-        const used = new Set<string>();
-        const findings = probe.check(
-          mapping.sdk,
-          tool.outputSchema as JsonSchemaNode,
-          mapping.schemaPath ?? "",
-          omitted,
-          used,
-        );
-        for (const omit of used) usedOmits.add(omitId(mapping, omit));
-        for (const finding of findings) {
-          const where = mapping.schemaPath === undefined ? "" : `${mapping.schemaPath} -> `;
-          if (finding.unresolved) {
-            failures.push(
-              `${mapping.tool}: unresolved SDK type at "${where}${finding.path}" (\`${mapping.sdk}\`): ` +
-                `the type is \`any\` or failed to import, so nothing beneath it was compared. ` +
-                `Fix the SDK type or the mapping's type expression.`,
-            );
-            continue;
-          }
-          failures.push(
-            `${mapping.tool}: SDK key "${where}${finding.path}" (${finding.sdkOwner}) is not in the ` +
-              `output schema. Add it to the schema and serializer, or list it in the mapping's ` +
-              `omit with a reason.`,
-          );
-        }
-      }
-      expect(failures).toEqual([]);
+      expect(failuresByMode.get(mode.label)).toEqual([]);
     });
   }
 
-  // Declared after the per-mode tests: vitest runs a file's tests in order, so both modes have
-  // contributed to `usedOmits` by now.
   it("every omit entry still suppresses a real SDK key (no stale entries)", () => {
     const stale = [
       ...Object.keys(GLOBAL_OMIT).map((omit) => `global|${omit}`),
