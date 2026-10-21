@@ -269,6 +269,22 @@ export function buildOrderInfoRequest(input: ListOrdersInput): {
   if (!Number.isInteger(pageIndex) || pageIndex < 1) {
     issues.push({ path: "page", message: "must be an integer >= 1" });
   }
+  if (input.isInternal !== undefined && typeof input.isInternal !== "boolean") {
+    issues.push({ path: "isInternal", message: "must be a boolean" });
+  }
+  if (input.lastUpdatedAfter !== undefined) {
+    const value: unknown = input.lastUpdatedAfter;
+    const valid =
+      value instanceof Date
+        ? !Number.isNaN(value.getTime())
+        : typeof value === "string" && value.trim() !== "";
+    if (!valid) {
+      issues.push({
+        path: "lastUpdatedAfter",
+        message: "must be a valid Date or a non-empty string",
+      });
+    }
+  }
   if (issues.length > 0) {
     throw new NeweggValidationError("Invalid list-orders input.", issues);
   }
@@ -291,6 +307,10 @@ export function buildOrderInfoRequest(input: ListOrdersInput): {
   if (input.dateFrom !== undefined) criteria.OrderDateFrom = renderOrderDate(input.dateFrom);
   if (input.dateTo !== undefined) criteria.OrderDateTo = renderOrderDate(input.dateTo);
   if (input.countryCode) criteria.CountryCode = input.countryCode;
+  if (input.lastUpdatedAfter !== undefined) {
+    criteria.LastUpdatedAfter = renderOrderDate(input.lastUpdatedAfter);
+  }
+  if (input.isInternal !== undefined) criteria.IsInternal = input.isInternal ? 1 : 0;
 
   const body = {
     OperationType: "GetOrderInfoRequest",

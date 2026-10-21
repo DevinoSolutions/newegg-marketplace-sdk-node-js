@@ -44,18 +44,39 @@ export interface ListOrdersInput {
   sellerOrderNumbers?: string[];
   /** Filter by a single order status (`Status`). */
   status?: OrderStatus;
-  /** Filter by fulfillment/channel type (`Type`). Default `"all"` on the wire. */
+  /**
+   * Filter by fulfillment/channel type (`Type`). Default `"all"` on the wire. `"nws"` is Newegg.com
+   * (`us`) only and throws {@link UnsupportedMarketplaceOperationError} on `ca`/`b2b`.
+   */
   type?: OrderTypeFilter;
   /** `false` excludes already-downloaded orders (`OrderDownloaded=1`). Default includes all. */
   includeDownloaded?: boolean;
-  /** Premier-order filter (`PremierOrder`). */
+  /**
+   * Premier-order filter (`PremierOrder`). Newegg.com (`us`) only: on `ca`/`b2b` Newegg answers
+   * 400 CE003, so the SDK throws {@link UnsupportedMarketplaceOperationError} before any request.
+   */
   premierOrder?: PremierOrderFilter;
   /** Lower bound on order date. `Date` is rendered as Pacific Time; a string is sent verbatim. */
   dateFrom?: Date | string;
   /** Upper bound on order date (see {@link ListOrdersInput.dateFrom}). */
   dateTo?: Date | string;
-  /** ISO 3-digit country code (`CountryCode`). */
+  /**
+   * ISO 3-digit ship-to country code (`CountryCode`). Newegg.com (`us`) only: throws
+   * {@link UnsupportedMarketplaceOperationError} on `ca`/`b2b` (Newegg answers 400 CE003).
+   */
   countryCode?: string;
+  /**
+   * Orders last updated after this instant (`LastUpdatedAfter`). A `Date` is rendered as Pacific Time; a
+   * string is sent verbatim (`MM/DD/YYYY HH:mm:ss` or `YYYY-MM-DD HH:mm:ss`, Pacific). Valid on every
+   * marketplace (wire format verified live 2026-10-21; the exact "updated" semantics are an ASSUMPTION).
+   */
+  lastUpdatedAfter?: Date | string;
+  /**
+   * `IsInternal`, sent as `1` / `0`. Valid on every marketplace, but its meaning is UNDOCUMENTED and
+   * UNVERIFIED: both values returned every order on the CA account (2026-10-21). Do not rely on it to
+   * include or exclude anything.
+   */
+  isInternal?: boolean;
   /** 1-based page (`PageIndex`, default 1). */
   page?: number;
   /** Page size (`PageSize`, max 100, default 100). */

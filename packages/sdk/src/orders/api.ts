@@ -28,6 +28,10 @@ import { rateLimitKey } from "../rate-limit/index.js";
 import { delay, isAbortError } from "../util.js";
 import { assertOrdersMatchMarketplace } from "../platform/order-currency.js";
 import {
+  assertOrderCriteriaSupported,
+  getOrderCriteriaPlatform,
+} from "../platform/order-criteria.js";
+import {
   assertOrderAdditionalInfoSupported,
   getOrderAdditionalInfoPlatform,
 } from "../platform/order-additional-info.js";
@@ -78,6 +82,8 @@ export class OrdersApiImpl implements OrdersApi {
   async list(input: ListOrdersInput = {}, options: RequestOptions = {}): Promise<OrdersPage> {
     const { marketplace, sellerId } = this.#config;
     const correlationId = options.correlationId ?? randomUUID();
+    // Refuse criteria this marketplace's Newegg API rejects (CE003) before anything is sent.
+    assertOrderCriteriaSupported(getOrderCriteriaPlatform(marketplace), input);
     const { body, pageIndex, pageSize } = buildOrderInfoRequest(input);
     const spec: RequestSpec = {
       method: "PUT",
