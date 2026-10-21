@@ -23,6 +23,16 @@ function tsFilesUnder(dir: string): string[] {
  * check classifies (interface declaration merging would otherwise hide a new method from the guard).
  */
 export function clientTypeProblems(root: string): string[] {
+  return clientTypeScan(root).problems;
+}
+
+/**
+ * As clientTypeProblems, plus the number of type files read so a silent skip is visible. Only
+ * packages/sdk/src is scanned: augmentation from outside it (mcp-server, sdk/test) is out of scope by
+ * design, since the live call-site allowlists still judge every use in the live suite. tsconfig
+ * includes only .ts files under src, so .tsx / .js files cannot augment the SDK's types.
+ */
+export function clientTypeScan(root: string): { problems: string[]; typeFiles: number } {
   const srcDir = join(root, "packages", "sdk", "src");
   const barrel = join(srcDir, "types.ts");
   const scanned = [barrel, ...tsFilesUnder(join(srcDir, "types"))];
@@ -31,9 +41,9 @@ export function clientTypeProblems(root: string): string[] {
   const names = classifiedInterfaceNames(typesSource);
   const scannedSet = new Set(scanned);
   for (const file of tsFilesUnder(srcDir)) {
-    if (scannedSet.has(file)) continue;
     const rel = relative(root, file).replaceAll("\\", "/");
-    problems.push(...strayClientDeclarations(readFileSync(file, "utf8"), rel, names));
+    const isTypesFile = scannedSet.has(file);
+    problems.push(...strayClientDeclarations(readFileSync(file, "utf8"), rel, names, isTypesFile));
   }
-  return problems;
+  return { problems, typeFiles: scanned.length };
 }

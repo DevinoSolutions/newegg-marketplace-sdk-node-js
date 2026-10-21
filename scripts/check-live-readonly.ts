@@ -10,7 +10,7 @@
 // allowlist, namespace allowlist). A self-test proves each known bypass is still flagged.
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { clientTypeProblems } from "./live-readonly/client-types.js";
+import { clientTypeScan } from "./live-readonly/client-types.js";
 import { PARSE_FAILURE_REASON, astViolations, clientSurfaceProblems } from "./live-readonly-ast.js";
 import {
   MUST_FLAG,
@@ -24,6 +24,7 @@ const root = resolve(import.meta.dirname, "..");
 const liveDir = join(root, "packages", "sdk", "test", "live");
 
 let failures = 0;
+let typeFiles = 0;
 const fail = (msg: string): void => {
   failures += 1;
   console.error(`FAIL ${msg}`);
@@ -258,7 +259,9 @@ for (const sample of MUST_PASS) {
     }
   }
   // types.ts is a barrel over types/**/*.ts; the guard judges every declaration, so read them all.
-  for (const problem of clientTypeProblems(root)) fail(problem);
+  const scan = clientTypeScan(root);
+  typeFiles = scan.typeFiles;
+  for (const problem of scan.problems) fail(problem);
 }
 
 let files: string[] = [];
@@ -304,4 +307,6 @@ if (failures > 0) {
   console.error(`\n${failures} read-only guard check(s) failed`);
   process.exit(1);
 }
-console.log(`Live suite read-only guard passed (${files.length} file(s) scanned)`);
+console.log(
+  `Live suite read-only guard passed (${files.length} live file(s), ${typeFiles} client type file(s) scanned)`,
+);

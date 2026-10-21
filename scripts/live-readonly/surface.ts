@@ -221,34 +221,67 @@ export function classifiedInterfaceNames(typesSource: string): Set<string> {
 }
 
 /**
- * Interface declarations of a classified name (and any NeweggClient type alias / class / enum) in a
- * source file that is NOT part of the scanned types set. Interface declarations merge across files and
- * modules, so one of these could add an unclassified method to the client without the guard seeing
- * it; the walk covers nested `declare module` / `declare global` / namespace blocks.
+ * Declarations that could merge into a classified interface without the surface check reading
+ * them. Interface declarations merge across files and modules (including through
+ * `declare module "./x.js" { interface ... }` augmentation), so each of these could add an
+ * unclassified method to the client:
+ * - in a file outside the scanned types set (`scanned` false): any interface declaration of a
+ *   classified name, wherever it sits;
+ * - in a scanned file (`scanned` true): only declarations nested in a `declare module` /
+ *   `declare global` / namespace block, since top-level ones are counted by the surface check;
+ * - in any file: a class or enum of a classified name nested in such a block, or declared in the
+ *   same module as an interface of that name, and any NeweggClient type alias / class / enum. A
+ *   top-level class of the same name in a different module (an implementation class) does not
+ *   merge with the interface and is allowed;
+ * - in any file: an interface that `extends NeweggClient` (defense in depth).
  */
 export function strayClientDeclarations(
   source: string,
   fileName: string,
   names: ReadonlySet<string>,
+  scanned = false,
 ): string[] {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.ESNext, true);
   const problems: string[] = [];
-  const walk = (node: ts.Node): void => {
-    if (
-      (ts.isInterfaceDeclaration(node) ||
-        ((ts.isTypeAliasDeclaration(node) ||
-          ts.isClassDeclaration(node) ||
-          ts.isEnumDeclaration(node)) &&
-          node.name?.text === "NeweggClient")) &&
-      node.name !== undefined &&
-      names.has(node.name.text)
-    ) {
-      problems.push(
-        `${fileName} declares ${node.name.text} outside packages/sdk/src/types.ts and packages/sdk/src/types/: its members cannot be classified (declaration merging)`,
-      );
-    }
-    ts.forEachChild(node, walk);
+  const topLevelInterfaces = new Set(
+    file.statements.filter(ts.isInterfaceDeclaration).map((d) => d.name.text),
+  );
+  const flag = (what: string): void => {
+    problems.push(
+      `${fileName} ${what}: its members cannot be classified (declaration merging or augmentation)`,
+    );
   };
-  walk(file);
+  const walk = (node: ts.Node, inModule: boolean): void => {
+    if (ts.isInterfaceDeclaration(node)) {
+      const name = node.name.text;
+      if (names.has(name) && (inModule || !scanned)) {
+        flag(
+          `declares ${name} outside the top level of packages/sdk/src/types.ts and packages/sdk/src/types/`,
+        );
+      }
+      const extendsClient = node.heritageClauses?.some((clause) =>
+        clause.types.some(
+          (t) => ts.isIdentifier(t.expression) && t.expression.text === "NeweggClient",
+        ),
+      );
+      if (extendsClient === true) flag(`declares ${name}, which extends NeweggClient`);
+    } else if (
+      (ts.isTypeAliasDeclaration(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isEnumDeclaration(node)) &&
+      node.name !== undefined
+    ) {
+      const name = node.name.text;
+      if (
+        name === "NeweggClient" ||
+        (names.has(name) && (inModule || topLevelInterfaces.has(name)))
+      ) {
+        flag(`declares ${name} as a class, enum or type alias alongside or inside the interface`);
+      }
+    }
+    const nested = ts.isModuleDeclaration(node);
+    ts.forEachChild(node, (child) => walk(child, inModule || nested));
+  };
+  walk(file, false);
   return problems;
 }
