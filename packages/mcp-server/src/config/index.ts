@@ -54,7 +54,8 @@ export interface McpLimits {
    * quote and Newegg does not say whether it is billed (contracts §23.1), so it is blocked under a
    * cap by default; this is the explicit opt-in (`NEWEGG_MCP_ALLOW_LABEL_REPRINT=true`, exact
    * literal) for recovering a label after an indeterminate create without lifting the create cap.
-   * It still needs `NEWEGG_MCP_ALLOW_WRITES=true` (the reprint tools do not exist without it).
+   * It still needs `NEWEGG_MCP_ALLOW_WRITES=true` (the reprint tools do not exist without it), so
+   * the raw flag is not the effective permission: the resources report `allowWrites && flag`.
    */
   readonly allowLabelReprint: boolean;
   /** Uppercased warehouse codes; empty means "all warehouses allowed". */
@@ -176,15 +177,32 @@ function intEnv(name: string, fallback: number, check: (n: number) => boolean, h
     });
 }
 
-/** Optional finite number with a default; the parsed value must satisfy `check`. */
-function numberEnv(name: string, fallback: number, check: (n: number) => boolean, hint: string) {
+/**
+ * Strict plain-decimal money: no sign, exponent, hex/binary/octal prefix, leading zeros, bare
+ * leading/trailing dot or inner whitespace (`Number()` accepts all of those), at most 5 integer
+ * digits and 2 decimals.
+ */
+const STRICT_MONEY = /^(?:0|[1-9]\d{0,4})(?:\.\d{1,2})?$/;
+
+/**
+ * Optional safety limit with a default, parsed as a strict plain decimal ({@link STRICT_MONEY}) that
+ * must satisfy `check` (`Number()` alone would accept `0x1F4`, `1e3`, `+5`, `Infinity`). Unlike
+ * {@link cappedNumberEnv} there is no way to switch it off. The message names the variable only: a
+ * rejected safety value is never echoed back.
+ */
+function strictNumberEnv(
+  name: string,
+  fallback: number,
+  check: (n: number) => boolean,
+  hint: string,
+) {
   return z
     .string()
     .optional()
     .transform((raw, ctx) => {
       const trimmed = raw?.trim();
       if (trimmed === undefined || trimmed === "") return fallback;
-      const parsed = Number(trimmed);
+      const parsed = STRICT_MONEY.test(trimmed) ? Number(trimmed) : Number.NaN;
       if (!Number.isFinite(parsed) || !check(parsed)) {
         ctx.addIssue({ code: "custom", message: `${name} must be ${hint}.` });
         return z.NEVER;
@@ -192,13 +210,6 @@ function numberEnv(name: string, fallback: number, check: (n: number) => boolean
       return parsed;
     });
 }
-
-/**
- * Strict plain-decimal money: no sign, exponent, hex/binary/octal prefix, leading zeros, bare
- * leading/trailing dot or inner whitespace (`Number()` accepts all of those), at most 5 integer
- * digits and 2 decimals.
- */
-const STRICT_MONEY = /^(?:0|[1-9]\d{0,4})(?:\.\d{1,2})?$/;
 
 /** The only spellings (case-insensitive) that switch a safety cap off. */
 const CAP_DISABLED_TOKENS: readonly string[] = ["unlimited", "off"];
@@ -338,17 +349,17 @@ const envSchema = z.object({
     "a positive integer",
   ),
   NEWEGG_MCP_ALLOW_ZERO_QUANTITY: boolEnv("NEWEGG_MCP_ALLOW_ZERO_QUANTITY", true),
-  NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT: numberEnv(
+  NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT: strictNumberEnv(
     "NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT",
     50,
     (n) => n > 0 && n <= 10_000,
-    "a number greater than 0 and at most 10000",
+    "a plain decimal (digits, optional point, up to 2 decimals, e.g. 50 or 12.5) greater than 0 and at most 10000",
   ),
-  NEWEGG_MCP_MAX_REFUND_AMOUNT: numberEnv(
+  NEWEGG_MCP_MAX_REFUND_AMOUNT: strictNumberEnv(
     "NEWEGG_MCP_MAX_REFUND_AMOUNT",
     500,
     (n) => n > 0 && n <= 99_999.99,
-    "a number greater than 0 and at most 99999.99",
+    "a plain decimal (digits, optional point, up to 2 decimals, e.g. 500 or 49.99) greater than 0 and at most 99999.99",
   ),
   NEWEGG_MCP_MAX_LABEL_AMOUNT: cappedNumberEnv(
     "NEWEGG_MCP_MAX_LABEL_AMOUNT",
