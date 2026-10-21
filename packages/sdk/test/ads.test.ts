@@ -190,7 +190,7 @@ describe("ads.listCampaigns", () => {
     const { client, calls } = makeClient("ca", [
       {
         method: "POST",
-        pathPattern: new RegExp(`^/marketplace/can/sponsoredmgmt/campaign/search\?`),
+        pathPattern: /^\/marketplace\/can\/sponsoredmgmt\/campaign\/search\?/,
         reply: () => ({ status: 200, body: ok([]) }),
       },
     ]);
@@ -199,6 +199,7 @@ describe("ads.listCampaigns", () => {
     expect(page.rows).toEqual([]);
     expect(page.totalRows).toBe(0);
     expect(calls).toHaveLength(1);
+    expect(calls[0]?.url.pathname).toBe("/marketplace/can/sponsoredmgmt/campaign/search");
   });
 
   it("turns a 200 without rows into a NeweggApiError carrying the bizCode", async () => {

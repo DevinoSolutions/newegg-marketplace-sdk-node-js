@@ -3897,7 +3897,10 @@ returned HTTP 200 with `bizCode` `025` ("search campaigns success") and the usua
 `{ header, rows, totalRows }` shape, with 0 rows and `totalRows` 0. The unprefixed URL gave an identical
 result, so both prefixes are accepted. The CA Seller Portal Sponsored Ads page loads ("All Campaigns" with a
 BETA badge, Available Credit CAD 0.00, No Data). The account has **zero campaigns**, so CA row shapes, group
-lists and reports are unobserved (**ASSUMPTION**: same as US). Newegg Business was not probed and stays
+lists and reports are unobserved (**ASSUMPTION**: same as US). Caveat (T-5911 finding, see the
+intro): the gateway ignores the URL prefix and serves the key's own account, so "both prefixes return 200"
+shows only that the endpoint answers for the CA key; it does not prove which storefront the empty list
+belongs to. CA ads support is confirmed only as far as an empty campaign list. Newegg Business was not probed and stays
 unsupported. The live suite (`test/live/ads-read.live.test.ts`) lists campaigns (small page) on `us` and
 `ca` and, when a campaign exists, reads its groups and a 30-day group performance report (three reads at
 most, shapes only); on `b2b` it asserts the SDK rejects before sending.

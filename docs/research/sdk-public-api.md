@@ -2900,7 +2900,7 @@ export interface ShippingLabelsApi {
     `suggestCategoryTargeting`/`suggestItemTargeting`, and the synchronous `getGroupPerformance`/
     `getProductPerformance`/`getKeywordPerformance` never mutate (contracts §25). Every Sponsored Ads
     operation is a `POST` with a JSON body on the wire, which does not make it a write. Newegg.com
-    only: the availability check lives in `platform/ads.ts` and `b2b` / `ca` throw
+    and Newegg.ca: the availability check lives in `platform/ads.ts` and `b2b` throws
     `UnsupportedMarketplaceOperationError` before any request. Inputs are validated before sending
     (positive integer ids, `YYYY-MM-DD` dates, required dates on the performance reports, page size
     ceilings of 100 on the campaign / group / product / group-performance lists). Every method returns an
