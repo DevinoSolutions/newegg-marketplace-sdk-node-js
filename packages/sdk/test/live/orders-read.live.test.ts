@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import type { OrdersPage } from "../../src/index.js";
+import { UnsupportedMarketplaceOperationError, type OrdersPage } from "../../src/index.js";
 import { liveEnabled, makeLiveClient, marketplace } from "./helpers.js";
 
 /**
@@ -67,6 +67,37 @@ describe.skipIf(!liveEnabled)("live (read-only): order reads", () => {
     expect(snapshot.marketplace).toBe(marketplace());
     expect(typeof snapshot.status).toBe("string");
     expect(snapshot.status.length).toBeGreaterThan(0);
+  });
+
+  it("lastUpdatedAfter filters server-side: far future gives 0 orders, an old date gives them all (read-only)", async () => {
+    const client = makeLiveClient();
+    // Two reads of the same endpoint with a Pacific wall-clock string (verified wire format, T-5912).
+    const future = await client.orders.list({
+      lastUpdatedAfter: "2099-01-01 00:00:00",
+      pageSize: 1,
+    });
+    expect(future.totalCount).toBe(0);
+    const unfiltered = await client.orders.list({ pageSize: 1 });
+    const old = await client.orders.list({ lastUpdatedAfter: "2000-01-01 00:00:00", pageSize: 1 });
+    expect(old.totalCount).toBe(unfiltered.totalCount);
+    // IsInternal is accepted on every marketplace (semantics unverified, so only acceptance is asserted).
+    const flagged = await client.orders.list({ isInternal: false, pageSize: 1 });
+    expect(typeof flagged.totalCount).toBe("number");
+  });
+
+  it("us-only criteria are refused before any request on ca (read-only, no network)", async (ctx) => {
+    if (marketplace() !== "ca") {
+      ctx.skip();
+      return;
+    }
+    const client = makeLiveClient();
+    let thrown: unknown;
+    try {
+      await client.orders.list({ countryCode: "USA" });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(UnsupportedMarketplaceOperationError);
   });
 
   it("additional info is a read that answers for a discovered order (us only)", async (ctx) => {

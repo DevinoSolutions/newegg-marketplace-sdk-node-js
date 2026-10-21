@@ -557,6 +557,35 @@ Types mirror the official sample (paging/enum values sent as strings, all accept
   Premier. `VoidSoon` (optional) 24 | 48 — orders auto-voiding within N hours.
 - `OrderDateFrom`/`OrderDateTo`: Pacific-Time strings (§2).
 
+**Criteria per platform (observed live, read-only, 2026-10-21, T-5912).** Newegg validates `RequestCriteria`
+strictly: an element the platform does not know answers HTTP **400 `CE003`** ("The element 'RequestCriteria' has
+invalid child element '<name>'", listing the valid ones). Probed with the CA key pair on all three prefixes
+(the key owner's account answers every prefix, §2, so what differs here is the request SCHEMA each prefix
+validates against, which is the part the prefix does select):
+
+| Criterion                                                                                                 | `us` (no prefix) | `b2b`     | `ca`      | SDK field                                                                                |
+| --------------------------------------------------------------------------------------------------------- | ---------------- | --------- | --------- | ---------------------------------------------------------------------------------------- |
+| `OrderNumberList`, `SellerOrderNumberList`, `Status`, `OrderDateFrom`/`To`, `OrderDownloaded`, `VoidSoon` | accepted         | accepted  | accepted  | `orderNumbers`, `sellerOrderNumbers`, `status`, `dateFrom`/`dateTo`, `includeDownloaded` |
+| `Type` 0-3                                                                                                | accepted         | accepted  | accepted  | `type`                                                                                   |
+| `Type` 4 (NWS)                                                                                            | accepted         | **CE003** | **CE003** | `type: "nws"` (us only)                                                                  |
+| `CountryCode` (ISO3, e.g. `USA`)                                                                          | accepted         | **CE003** | **CE003** | `countryCode` (us only)                                                                  |
+| `PremierOrder`                                                                                            | accepted         | **CE003** | **CE003** | `premierOrder` (us only)                                                                 |
+| `LastUpdatedAfter`                                                                                        | accepted         | accepted  | accepted  | `lastUpdatedAfter`                                                                       |
+| `IsInternal`                                                                                              | accepted         | accepted  | accepted  | `isInternal`                                                                             |
+
+- The CA error lists the valid elements as `OrderNumberList, Status, LastUpdatedAfter, VoidSoon, OrderDownloaded,
+SellerOrderNumberList, IsInternal, Type`.
+- `LastUpdatedAfter` accepts `MM/DD/YYYY HH:mm:ss` and `YYYY-MM-DD HH:mm:ss` (Pacific, §2). Verified on CA: a date in
+  2030 returned 0 orders and a date in 2020 returned all of them. **ASSUMPTION**: it filters on the order's
+  last-update time (not the order date); only the wire format and the far-past/far-future behaviour were observed.
+- `IsInternal` is an integer (`"true"` is rejected); `0` and `1` both returned every order on the CA account.
+  **ASSUMPTION / UNVERIFIED**: its meaning is undocumented. The SDK sends `1`/`0` and the docs say not to rely on it.
+- `Type` 4 on `b2b`/`ca` was probed with the CA key pair; whether Newegg.com / Business keys change this is
+  unproven (§2).
+- The SDK does not send a criterion the platform rejects: `orders.list` throws
+  `UnsupportedMarketplaceOperationError` before any request for `countryCode`, `premierOrder` or `type: "nws"` on
+  `ca`/`b2b` (`platform/order-criteria.ts`, ADR 0002); a filter is never silently dropped.
+
 Response — envelope + `ResponseBody.PageInfo` + `ResponseBody.OrderInfoList`; each order nests
 `ItemInfoList` and `PackageInfoList`. XML wraps lists as `<OrderInfoList><OrderInfo>…`; JSON
 uses bare arrays. Like §8, the JSON body may or may not carry the outer `NeweggAPIResponse`
