@@ -3282,6 +3282,10 @@ was last updated in 2018 and only CA is verified. **ASSUMPTION**: Newegg-side li
 treat a 500 as "no discount". `tryGet` deliberately maps only `CT060` to `undefined`; the live suite skips
 (non-CA only) on this 500 and stays strict on CA.
 
+**Observed live (CA, 2026-10-21, T-5776) — unknown SKU:** a read of a seller part number that does not exist
+answers HTTP 400 `CT002` ("Invalid SellerPartNumber") on CA, the same as US/B2B; `CT060` is reserved for a real
+item without a discount. The live suite pins CA unknown-SKU reads to `CT002`.
+
 **Propagation lag:** after a feed finished successfully the read kept returning `CT060` for about 13 minutes
 (feed submitted 04:33 Pacific; 400 `CT060` at +2 and +8 minutes; 200 with the tiers at +13 minutes). Do not read
 a discount back immediately after `update` and conclude it failed; poll the feed result instead (§7.5, §7.6).
