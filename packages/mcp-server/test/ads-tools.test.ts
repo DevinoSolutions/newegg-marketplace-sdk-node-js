@@ -92,8 +92,8 @@ describe("newegg_ads_campaigns_list", () => {
     }
   });
 
-  it("returns an unsupported_operation error on Newegg Business and Canada without sending", async () => {
-    for (const marketplace of ["b2b", "ca"]) {
+  it("returns an unsupported_operation error on Newegg Business without sending", async () => {
+    for (const marketplace of ["b2b"]) {
       const harness = await startHarness({
         env: makeEnv({ NEWEGG_MARKETPLACE: marketplace }),
         routes: [],

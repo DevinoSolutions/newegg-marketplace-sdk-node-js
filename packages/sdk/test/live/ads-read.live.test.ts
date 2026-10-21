@@ -6,14 +6,15 @@ import { liveEnabled, makeLiveClient, marketplace } from "./helpers.js";
  * READ-ONLY live reads of the Sponsored Ads endpoints against the REAL Newegg API (contracts §25:
  * Campaign List, Group List and Group Performance Report; all send a request body but only
  * read). Every create / add / update / change-status operation is never called. Shapes are
- * asserted, never account-specific values. Sponsored Ads is Newegg.com only, so on Business and
- * CAN the SDK must fail before any request is sent. At most three requests in total.
+ * asserted, never account-specific values. Sponsored Ads is supported on Newegg.com and Newegg.ca
+ * (CA probed 2026-10-21: zero campaigns, so rows may be empty); on Business the SDK must fail
+ * before any request is sent. At most three requests in total.
  */
 describe.skipIf(!liveEnabled)("live (read-only): Sponsored Ads reads", () => {
   const client = makeLiveClient();
-  const supported = marketplace() === "us";
+  const supported = marketplace() === "us" || marketplace() === "ca";
 
-  it("is rejected before sending outside Newegg.com", async (ctx) => {
+  it("is rejected before sending on Business", async (ctx) => {
     if (supported) {
       ctx.skip();
       return;
@@ -29,7 +30,7 @@ describe.skipIf(!liveEnabled)("live (read-only): Sponsored Ads reads", () => {
       return;
     }
     const page = await client.ads.listCampaigns({ pageSize: 5 });
-    expect(page.marketplace).toBe("us");
+    expect(page.marketplace).toBe(marketplace());
     expect(page.page).toBe(1);
     expect(page.pageSize).toBe(5);
     expect(Array.isArray(page.rows)).toBe(true);
@@ -39,7 +40,11 @@ describe.skipIf(!liveEnabled)("live (read-only): Sponsored Ads reads", () => {
     }
 
     const first = page.rows[0];
-    if (first === undefined) return; // no campaigns on this account: nothing further to read
+    if (first === undefined) {
+      // no campaigns on this account (the CA account has none): nothing further to read
+      expect(page.totalRows).toBe(0);
+      return;
+    }
     const groups = await client.ads.listGroups({
       campaignNumber: first.campaignNumber,
       pageSize: 5,

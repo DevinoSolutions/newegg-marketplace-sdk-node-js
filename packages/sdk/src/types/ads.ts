@@ -347,7 +347,7 @@ export interface AdsKeywordSuggestionsResult extends AdsPage<AdsKeywordSuggestio
 }
 
 /**
- * Sponsored Ads reads (contracts §25). Newegg.com only: on Newegg Business and CAN every method
+ * Sponsored Ads reads (contracts §25). Newegg.com and Newegg.ca: on Newegg Business every method
  * throws {@link UnsupportedMarketplaceOperationError} before sending. Every method is a READ (each
  * endpoint is a `POST` search or synchronous report). Creating, changing and activating campaigns,
  * ad groups, products, keywords, negative keywords and targeting spends money and is intentionally

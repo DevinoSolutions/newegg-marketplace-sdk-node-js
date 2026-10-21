@@ -3713,10 +3713,11 @@ Extracted 2026-10-20 from the official Sponsored Ads Management pages, all under
 **20260207173846** (`https://web.archive.org/web/20260207173846/<page URL>`); the pages read "Last updated" June 29, 2022
 (22 pages) or October 3, 2022 (5 pages). The wire domain is `sponsoredmgmt/campaign/`. **Every page lists the Newegg.com URL only**
 (`https://api.newegg.com/marketplace/sponsoredmgmt/campaign/...?sellerid={sellerid}`); Newegg Business and
-Canada are not listed, so the SDK fails on `b2b` and `ca` with `UnsupportedMarketplaceOperationError` before
-sending (`platform/ads.ts`, ADR 0002). **Nothing here was called live**: the credentials available to this
-repo are for Canada, which the pages do not cover, so every shape below is the pages' samples
-(**ASSUMPTION** until a US call confirms it). Every example uses fictional identifiers.
+Canada are not listed. **Live result 2026-10-21 (Canada, read-only):** Campaign List answers on the CA key, so
+the SDK now supports `us` and `ca` and still fails on `b2b` with `UnsupportedMarketplaceOperationError` before
+sending (`platform/ads.ts`, ADR 0002); see §25.7. The CA account has zero campaigns, so every row shape
+below is the pages' samples (**ASSUMPTION** until a non-empty call confirms it; CA row shapes are
+**ASSUMPTION**: same as US). Every example uses fictional identifiers.
 
 This family differs from the rest of the API:
 
@@ -3890,8 +3891,13 @@ MCP (read-only, always registered, never write-gated): `newegg_ads_campaigns_lis
 
 ### 25.7 Live verification
 
-Not performed against Newegg.com (no US credentials). On the Canada credentials the live suite
-(`test/live/ads-read.live.test.ts`) asserts that the SDK rejects every ads read with
-`UnsupportedMarketplaceOperationError` before sending a request; the Newegg.com branch of that file lists
-campaigns, then one campaign's groups and a 30-day group performance report (three reads, shapes only) and
-skips itself on `b2b` / `ca`.
+Not performed against Newegg.com (no US credentials). **Newegg.ca, probed 2026-10-21 (read-only):**
+`POST sponsoredmgmt/campaign/search` (Campaign List, a READ per §25.1) with the CA key on the `can/` prefix
+returned HTTP 200 with `bizCode` `025` ("search campaigns success") and the usual
+`{ header, rows, totalRows }` shape, with 0 rows and `totalRows` 0. The unprefixed URL gave an identical
+result, so both prefixes are accepted. The CA Seller Portal Sponsored Ads page loads ("All Campaigns" with a
+BETA badge, Available Credit CAD 0.00, No Data). The account has **zero campaigns**, so CA row shapes, group
+lists and reports are unobserved (**ASSUMPTION**: same as US). Newegg Business was not probed and stays
+unsupported. The live suite (`test/live/ads-read.live.test.ts`) lists campaigns (small page) on `us` and
+`ca` and, when a campaign exists, reads its groups and a 30-day group performance report (three reads at
+most, shapes only); on `b2b` it asserts the SDK rejects before sending.

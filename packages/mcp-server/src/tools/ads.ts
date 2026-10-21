@@ -4,8 +4,8 @@
  * consume only the SDK's public `AdsApi` (contracts §25) and register unconditionally (never
  * write-gated): every one is a READ, although Newegg uses `POST` for all of them. Creating or
  * changing campaigns, groups, products, keywords and targeting spends money and is not exposed.
- * Newegg.com only; on Business and Canada each tool returns the SDK's `unsupported_operation`
- * error.
+ * Newegg.com and Newegg.ca (Business not supported); on Business each tool returns the SDK's
+ * `unsupported_operation` error.
  *
  * Fields are mapped explicitly (SDK `raw` payloads are never requested).
  */
@@ -266,7 +266,7 @@ export const adsCampaignsListTool: ToolDefinition<
   description:
     "Campaign List: the seller's Newegg Sponsored Ads campaigns (number, name, type, status, " +
     "budget, daily budget, group count), filterable by name or number, status, type, sponsor type " +
-    "and date range. Newegg.com only. Newegg allows 1,000 requests/hour. Read-only; it never " +
+    "and date range. Newegg.com and Newegg.ca (Business not supported). Newegg allows 1,000 requests/hour. Read-only; it never " +
     "creates, changes or pauses a campaign.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: campaignsListInputSchema,
@@ -320,7 +320,7 @@ export const adsCampaignGetTool: ToolDefinition<
   title: "Get a Sponsored Ads campaign",
   description:
     "Looks up one Sponsored Ads campaign by number (a Campaign List search by campaign number). " +
-    "Returns found=false when the account has no such campaign. Newegg.com only. Read-only.",
+    "Returns found=false when the account has no such campaign. Newegg.com and Newegg.ca (Business not supported). Read-only.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: campaignGetInputSchema,
   outputSchema: campaignGetOutputSchema,
@@ -437,7 +437,7 @@ export const adsGroupsListTool: ToolDefinition<
   description:
     "Group List: the ad groups of one Sponsored Ads campaign (number, name, default bid, keyword " +
     "and product counts, item numbers, status), filterable by name or number and status. " +
-    "Newegg.com only. Newegg allows 1,000 requests/hour. Read-only.",
+    "Newegg.com and Newegg.ca (Business not supported). Newegg allows 1,000 requests/hour. Read-only.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: groupsListInputSchema,
   outputSchema: groupsListOutputSchema,
@@ -542,7 +542,7 @@ export const adsKeywordsListTool: ToolDefinition<
   title: "List Sponsored Ads keywords",
   description:
     "Keywords List: the keywords of a Sponsored Ads campaign or ad group with match type (0 exact, " +
-    "1 broad, 6 phrase), bid, suggested bids, competition and status. Newegg.com only. Newegg " +
+    "1 broad, 6 phrase), bid, suggested bids, competition and status. Newegg.com and Newegg.ca (Business not supported). Newegg " +
     "allows 1,000 requests/hour. Read-only.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: keywordsListInputSchema,
@@ -723,7 +723,7 @@ export const adsPerformanceReportTool: ToolDefinition<
     "Group, Product or Keywords Performance Report: spend, sales, ACoS, impressions, clicks, CTR, " +
     "orders, conversion rate and CPC over a date range (YYYY-MM-DD). The group report covers a " +
     "campaign (or all); the product and keyword reports cover one ad group. Synchronous " +
-    "(no report job). Newegg.com only. Newegg allows 1,000 requests/hour. Read-only.",
+    "(no report job). Newegg.com and Newegg.ca (Business not supported). Newegg allows 1,000 requests/hour. Read-only.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: performanceInputSchema,
   outputSchema: performanceOutputSchema,

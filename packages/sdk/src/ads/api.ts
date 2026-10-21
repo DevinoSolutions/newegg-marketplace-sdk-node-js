@@ -82,7 +82,7 @@ import {
  * lists, match-type bids, keyword and targeting suggestions, and the synchronous group, product and
  * keyword performance reports. Every operation is a READ although all are `POST` with a body.
  * Create / update / add / change-status operations spend money and are deliberately not implemented
- * (§25.1). Newegg.com only; Business and CAN fail before sending (ADR 0002).
+ * (§25.1). Newegg.com and Newegg.ca; Business fails before sending (ADR 0002).
  */
 export class AdsApiImpl implements AdsApi {
   readonly #http: NeweggHttpClient;

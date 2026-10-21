@@ -104,7 +104,7 @@ export interface NeweggClient {
   readonly shippingLabels: ShippingLabelsApi;
   /**
    * Read-only Sponsored Ads lookups and performance reports (campaigns, ad groups, products,
-   * keywords, negative keywords, targeting suggestions; contracts §25). Newegg.com only. Never
+   * keywords, negative keywords, targeting suggestions; contracts §25). Newegg.com and Newegg.ca. Never
    * mutates; creating or changing ads (which spends money) is intentionally not implemented.
    */
   readonly ads: AdsApi;
