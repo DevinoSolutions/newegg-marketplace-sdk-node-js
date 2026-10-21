@@ -10,6 +10,7 @@
 // allowlist, namespace allowlist). A self-test proves each known bypass is still flagged.
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { clientTypeProblems } from "./live-readonly/client-types.js";
 import { PARSE_FAILURE_REASON, astViolations, clientSurfaceProblems } from "./live-readonly-ast.js";
 import {
   MUST_FLAG,
@@ -256,18 +257,8 @@ for (const sample of MUST_PASS) {
       fail(`self-test: surface check fails open on: ${JSON.stringify(sample)}`);
     }
   }
-  // types.ts is a barrel over types/*.ts; the guard judges every declaration, so read them all.
-  const typesDir = join(root, "packages", "sdk", "src", "types");
-  const typesSource = [
-    join(root, "packages", "sdk", "src", "types.ts"),
-    ...readdirSync(typesDir)
-      .filter((f) => f.endsWith(".ts"))
-      .sort()
-      .map((f) => join(typesDir, f)),
-  ]
-    .map((f) => readFileSync(f, "utf8"))
-    .join("\n");
-  for (const problem of clientSurfaceProblems(typesSource)) fail(problem);
+  // types.ts is a barrel over types/**/*.ts; the guard judges every declaration, so read them all.
+  for (const problem of clientTypeProblems(root)) fail(problem);
 }
 
 let files: string[] = [];
