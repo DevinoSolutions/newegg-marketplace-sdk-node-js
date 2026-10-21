@@ -747,6 +747,13 @@ Response — a **flat object** (no envelope; XML root `QueryOrderStatusInfo`):
   the order does not belong to this seller). Both XML `<Errors>` and JSON-array shapes (§1).
   The SDK's "try" variant maps `SO003` to a not-found (`undefined`) result, mirroring the
   inventory `CT026` handling (§5); every other error throws.
+- **Voided orders (observed live on ca 2026-10-21, ONE order; the general rule is an ASSUMPTION).** For an order
+  with `OrderStatus` 4 ("Voided"), Get Order Information (§10.1) returns the `ShipService` key present but `""`,
+  every `ShipTo*` field `""`, and `ShippingAmount` 0 (a non-voided Invoiced order on the same account carried
+  e.g. `"Expedited Shipping (3-5 business days)"`), unlike the populated Voided sample in §10.1. The Seller Portal
+  still shows that order's shipping service (as Canceled). Get Order Status answered `400 SO003` for the same voided
+  order, so `getStatus` can fail for a voided order and `tryGetStatus` then resolves `undefined`; read a voided
+  order's status through `orders.list` / `orders.get` instead. The SDK parser passes the empty strings through unchanged.
 
 ## 11. Order Management (writes)
 
@@ -996,7 +1003,7 @@ Confirmation returns `CE*`. Both arrive as XML `<Errors><Error><Code>` or a JSON
 | ---------------- | ------------------------------------------------------------- |
 | SO001 / SO009    | Seller ID / order number null or empty                        |
 | SO002            | Order number must be an integer 1–2147483647                  |
-| SO003            | No data found, or the order is not this seller's              |
+| SO003            | No data, not this seller's, or voided on ca (§10.2)           |
 | SO004 / SO054    | Replacement SO with an RMA — cannot be voided                 |
 | SO005 / SO056    | Cannot remove item — Shipped-by-Newegg order                  |
 | SO006            | Only unshipped orders can be voided (current status `{0}`)    |
