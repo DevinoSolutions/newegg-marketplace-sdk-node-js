@@ -85,9 +85,11 @@ export function parseEnv(text: string): EnvEntry[] {
 // What counts as a secret
 //
 //   * Key name looks secret (KEY, SECRET, TOKEN, PASSWORD, CREDENTIAL, BEARER, CLIENT_ID,
-//     SELLER_ID, PRIVATE, SIGNATURE, COOKIE, SESSION): the value is checked from 4 characters up,
-//     but a value of 4-7 characters must contain BOTH a letter and a digit (so a short English
-//     word can never match).
+//     SELLER_ID, PRIVATE, SIGNATURE, COOKIE, SESSION) and does not end in _HEADER/_FIELD/_NAME/
+//     _TYPE/_PREFIX (those hold names of things, e.g. X_API_KEY_HEADER=Authorization, and are
+//     judged like any other key): the value is checked from 4 characters up, but a value of 4-15
+//     characters must contain a digit, and one of 4-7 characters a letter AND a digit; an
+//     all-letter value under 16 characters is a word (header/field/enum name), never a secret.
 //   * Any other key: the value must be token-shaped — 16+ characters, no whitespace, at least one
 //     letter and one digit. A comma-separated value is judged per part.
 //   * Never a secret, whatever the key: empty, boolean-ish (true/false/yes/no/on/off/null/none),
@@ -99,7 +101,9 @@ export function parseEnv(text: string): EnvEntry[] {
 // ---------------------------------------------------------------------------------------------
 const SECRET_NAME =
   /KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|BEARER|CLIENT_ID|SELLER_ID|PRIVATE|SIGNATURE|COOKIE|SESSION/i;
+const NAME_OF_THING = /_(?:HEADER|FIELD|NAME|TYPE|PREFIX)$/i;
 const MIN_NAMED = 4;
+const MIN_NAMED_WORDLESS = 16;
 const MIN_UNNAMED = 16;
 
 const PLACEHOLDER = [
@@ -130,7 +134,8 @@ function isCheckable(named: boolean, value: string): boolean {
   if (isPlainUrl(value)) return false;
   if (named) {
     if (value.length < MIN_NAMED) return false;
-    return value.length >= 8 || (hasLetter(value) && hasDigit(value));
+    if (value.length >= MIN_NAMED_WORDLESS) return true;
+    return hasDigit(value) && (value.length >= 8 || hasLetter(value));
   }
   if (value.length < MIN_UNNAMED || /\s/.test(value)) return false;
   if (HOSTNAME.test(value) || PATHLIKE.test(value)) return false;
@@ -142,7 +147,7 @@ export function selectNeedles(entries: readonly EnvEntry[]): Needle[] {
   const needles: Needle[] = [];
   const seen = new Set<string>();
   for (const { key, value, line } of entries) {
-    const named = SECRET_NAME.test(key);
+    const named = SECRET_NAME.test(key) && !NAME_OF_THING.test(key);
     const candidates = named ? [value] : value.split(",");
     for (const piece of candidates.flatMap((c) => (c.includes("\n") ? c.split("\n") : [c]))) {
       const v = piece.trim();
@@ -163,5 +168,13 @@ export function decodeEnvFile(buf: Buffer): string {
       .swap16()
       .toString("utf16le");
   if (buf[0] === 0xff && buf[1] === 0xfe) return buf.toString("utf16le");
-  return buf.includes(0) ? buf.toString("utf16le") : buf.toString("utf8");
+  // No BOM: NUL at an even offset first means UTF-16BE (ASCII high byte), otherwise UTF-16LE.
+  if (buf.includes(0)) {
+    return buf[0] === 0 && buf[1] !== 0
+      ? Buffer.from(buf.subarray(0, buf.length - (buf.length % 2)))
+          .swap16()
+          .toString("utf16le")
+      : buf.toString("utf16le");
+  }
+  return buf.toString("utf8");
 }

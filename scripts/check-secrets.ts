@@ -8,7 +8,13 @@
 //
 // Output never contains a secret value: findings name the file, line and .env KEY only.
 // CHECK_SECRETS_ENV_FILE overrides where .env is read from (the scanned tree is still this repo);
-// CI has no .env, in which case checks 1 and 3 still run and check 2 is skipped.
+// if it is set but the file is missing the check FAILS (no silent fail-open). Only the default
+// <repo>/.env may be absent (CI): checks 1 and 3 still run and check 2 is skipped.
+//
+// Accepted gaps (a value is NOT found when it is): split across lines or MIME-wrapped base64;
+// hex-encoded or \uXXXX-escaped; inside a compressed archive (zip/gz/deflate); or a value under
+// 12 characters in base64 (too short to search without false positives). Defence in depth for
+// those is GitHub push protection, not this script.
 //
 // IMPORTANT: the scan list is the WORKING TREE (`git ls-files -co --exclude-standard`,
 // i.e. tracked + untracked-but-not-ignored files). Do NOT narrow this back to plain
@@ -33,14 +39,18 @@ const gitignore = existsSync(join(root, ".gitignore"))
 if (!/^\.env$/m.test(gitignore)) fail(".gitignore does not exclude .env");
 
 // Tracked + untracked-unignored — the set of files that could ever reach a commit.
-const scanned = execFileSync("git", ["ls-files", "-co", "--exclude-standard"], {
+const scanned = execFileSync("git", ["ls-files", "-z", "-co", "--exclude-standard"], {
   cwd: root,
   encoding: "utf8",
+  maxBuffer: 64 * 1024 * 1024,
 })
-  .split(/\r?\n/)
+  .split("\0") // -z: exact names; the default output C-quotes non-ASCII paths
   .filter((f) => f && !f.startsWith("package-lock"));
 
-const envFile = process.env["CHECK_SECRETS_ENV_FILE"] ?? join(root, ".env");
+const envOverride = process.env["CHECK_SECRETS_ENV_FILE"];
+const envFile = envOverride ?? join(root, ".env");
+if (envOverride !== undefined && !existsSync(envFile))
+  fail("CHECK_SECRETS_ENV_FILE is set but the file does not exist");
 const needles = existsSync(envFile)
   ? selectNeedles(parseEnv(decodeEnvFile(readFileSync(envFile))))
   : [];

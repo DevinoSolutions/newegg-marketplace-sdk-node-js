@@ -6,9 +6,10 @@
 //   * UTF-8 text,
 //   * UTF-16/UTF-32 text: the file with NUL bytes removed (covers LE/BE, any alignment, BOM) and,
 //     for values of 8+ characters, the exact UTF-16LE/BE byte sequence (non-Latin-1 values),
-//   * base64 / base64url of the value (12+ characters only, so the encoded needle is 13+ chars).
+//   * base64 / base64url of the value (12+ characters only, so the encoded needle is 13+ chars),
+//   * URL-encoded (encodeURIComponent, upper- and lower-case hex) when that differs from the value.
 // Findings carry the file, line, .env KEY NAME and encoding — never the value.
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Needle } from "./env.js";
 
@@ -19,7 +20,7 @@ export interface Finding {
   kind: "env-value" | "api-key-pattern" | "secret-key-pattern" | "unreadable";
   /** .env key whose value matched (kind "env-value"). */
   key?: string;
-  encoding?: "utf-8" | "utf-16/32" | "base64";
+  encoding?: "utf-8" | "utf-16/32" | "base64" | "url";
   /** First 2 characters of an unknown-provenance key-looking value (generic patterns only). */
   maskedPrefix?: string;
 }
@@ -35,6 +36,8 @@ const DOC_DUMMIES: ReadonlySet<string> = new Set([
 const MIN_UNBOUNDED = 12;
 const MIN_BASE64 = 12;
 const MIN_RAW_UTF16 = 8;
+const RETRY_CODES: ReadonlySet<string> = new Set(["EBUSY", "EPERM", "EACCES", "UNKNOWN"]);
+const RETRY_DELAYS_MS = [50, 200] as const;
 const ALNUM = /[A-Za-z0-9]/;
 
 const lineAt = (text: string, index: number): number => {
@@ -73,6 +76,24 @@ function base64Needles(value: string): string[] {
   return out;
 }
 
+/** A needle with its derived encodings computed once (not per file). */
+interface PreparedNeedle extends Needle {
+  b64: string[];
+  url: string[];
+}
+
+function prepare(needle: Needle): PreparedNeedle {
+  const { value } = needle;
+  const encoded = encodeURIComponent(value);
+  const url =
+    encoded === value
+      ? []
+      : [encoded, encoded.replace(/%[0-9A-F]{2}/g, (m) => m.toLowerCase())].filter(
+          (v, i, all) => all.indexOf(v) === i,
+        );
+  return { ...needle, b64: value.length >= MIN_BASE64 ? base64Needles(value) : [], url };
+}
+
 function rawUtf16Hit(buf: Buffer, value: string): boolean {
   const le = Buffer.from(value, "utf16le");
   return buf.includes(le) || buf.includes(Buffer.from(le).swap16());
@@ -80,7 +101,7 @@ function rawUtf16Hit(buf: Buffer, value: string): boolean {
 
 /** First hit of one needle in one file, or undefined. */
 function findNeedle(
-  needle: Needle,
+  needle: PreparedNeedle,
   buf: Buffer,
   text: string,
   stripped: string | undefined,
@@ -93,13 +114,15 @@ function findNeedle(
     if (at !== -1) return { line: lineAt(stripped, at), encoding: "utf-16/32" };
     if (value.length >= MIN_RAW_UTF16 && rawUtf16Hit(buf, value)) return { encoding: "utf-16/32" };
   }
-  if (value.length >= MIN_BASE64) {
-    for (const b64 of base64Needles(value)) {
-      for (const view of [text, stripped]) {
-        at = view?.indexOf(b64) ?? -1;
-        if (at !== -1 && view !== undefined) return { line: lineAt(view, at), encoding: "base64" };
-      }
+  for (const b64 of needle.b64) {
+    for (const view of [text, stripped]) {
+      at = view?.indexOf(b64) ?? -1;
+      if (at !== -1 && view !== undefined) return { line: lineAt(view, at), encoding: "base64" };
     }
+  }
+  for (const encoded of needle.url) {
+    at = indexOfValue(text, encoded);
+    if (at !== -1) return { line: lineAt(text, at), encoding: "url" };
   }
   return undefined;
 }
@@ -134,7 +157,7 @@ function patternFindings(file: string, view: string): Finding[] {
 }
 
 /** Scans one file's bytes: every needle (once each) plus the generic credential patterns. */
-function scanBuffer(file: string, buf: Buffer, needles: readonly Needle[]): Finding[] {
+function scanBuffer(file: string, buf: Buffer, needles: readonly PreparedNeedle[]): Finding[] {
   const text = buf.toString("utf8");
   const stripped = buf.includes(0) ? buf.toString("latin1").replace(/\0/g, "") : undefined;
   const findings: Finding[] = [];
@@ -157,26 +180,48 @@ export function formatFinding(f: Finding): string {
   return `${where} contains ${label} value: ${f.maskedPrefix ?? ""}…`;
 }
 
-/** Scans `files` (paths relative to `root`); a file that cannot be read is a finding, not a skip. */
+const sleepSync = (ms: number): void => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+
+/** Reads a file, retrying briefly on transient lock errors (OneDrive / antivirus). */
+function readWithRetry(path: string): Buffer {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return readFileSync(path);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      const delay = RETRY_DELAYS_MS[attempt];
+      if (!RETRY_CODES.has(code) || delay === undefined) throw error;
+      sleepSync(delay);
+    }
+  }
+}
+
+/**
+ * Scans `files` (paths relative to `root`, exact names — callers must pass `git ls-files -z`
+ * output, not the C-quoted form). A file that cannot be read is a finding, not a skip. Only
+ * ENOENT is ignored: a tracked-but-deleted file or dangling symlink has no content that could
+ * reach a commit.
+ */
 export function scanFiles(
   root: string,
   files: readonly string[],
   needles: readonly Needle[],
 ): Finding[] {
+  const prepared = needles.map(prepare);
   const findings: Finding[] = [];
   for (const file of files) {
-    const path = join(root, file);
-    if (!existsSync(path)) continue;
     let bytes: Buffer;
     try {
-      bytes = readFileSync(path);
+      bytes = readWithRetry(join(root, file));
     } catch (error) {
-      // Directories (submodule entries) are not files; anything else must not be skipped silently.
       const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EISDIR") findings.push({ file, kind: "unreadable", key: code });
+      if (code === "ENOENT" || code === "EISDIR") continue; // gone / submodule directory
+      findings.push({ file, kind: "unreadable", key: code });
       continue;
     }
-    findings.push(...scanBuffer(file, bytes, needles));
+    findings.push(...scanBuffer(file, bytes, prepared));
   }
   return findings;
 }

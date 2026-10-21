@@ -1,5 +1,6 @@
 // Unit tests for scripts/check-secrets.ts (secrets/env.ts + secrets/scan.ts). Everything runs in a
 // temp dir with a FAKE .env and fake files; the repo's real .env is never read.
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -237,5 +238,77 @@ describe("check-secrets: what is NOT a secret", () => {
     expect(
       report(env, { "README.md": "Set NEWEGG_API_KEY=YOUR_API_KEY and NEWEGG_MARKETPLACE=us\n" }),
     ).toEqual([]);
+  });
+});
+
+describe("check-secrets: review fixes", () => {
+  it("scans non-ASCII filenames (git ls-files -z gives exact names)", () => {
+    const name = "r\u00e9sum\u00e9-\u65e5\u672c.txt";
+    writeFileSync(join(dir, name), `token ${FAKE}`);
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+    const listed = execFileSync("git", ["ls-files", "-z", "-o"], { cwd: dir, encoding: "utf8" })
+      .split("\0")
+      .filter(Boolean);
+    expect(listed).toEqual([name]);
+    const out = scanFiles(dir, listed, needlesFor(`FOO_TOKEN=${FAKE}`)).map(formatFinding);
+    expect(out).toEqual([`${name}:1 contains the value of .env key FOO_TOKEN (utf-8)`]);
+  });
+
+  it("ignores a tracked-but-deleted file but reports other read errors", () => {
+    expect(scanFiles(dir, ["gone.txt"], needlesFor(`FOO_TOKEN=${FAKE}`))).toEqual([]);
+  });
+
+  it("fails when CHECK_SECRETS_ENV_FILE points at a missing file", () => {
+    const res = spawnSync(process.execPath, ["--import", "tsx", "scripts/check-secrets.ts"], {
+      cwd: join(import.meta.dirname, "..", ".."),
+      env: { ...process.env, CHECK_SECRETS_ENV_FILE: join(dir, "does-not-exist.env") },
+      encoding: "utf8",
+    });
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("CHECK_SECRETS_ENV_FILE is set but the file does not exist");
+  });
+
+  it("flags URL-encoded values (upper- and lower-case hex)", () => {
+    const secret = "ab/cd+ef=gh:ij12345";
+    const encoded = encodeURIComponent(secret);
+    expect(encoded).not.toBe(secret);
+    for (const form of [encoded, encoded.replace(/%[0-9A-F]{2}/g, (m) => m.toLowerCase())]) {
+      expect(
+        report(`FOO_TOKEN=${secret}`, { "u.txt": `https://x.example/?t=${form}&a=1` }),
+      ).toEqual(["u.txt:1 contains the value of .env key FOO_TOKEN (url)"]);
+    }
+  });
+
+  it("does not treat names of things under secret-looking keys as secrets", () => {
+    const env = [
+      "X_API_KEY_HEADER=Authorization",
+      "CLIENT_ID_FIELD=sellerId",
+      "SECRET_NAME=mySecretName1",
+      "TOKEN_TYPE=bearertype",
+      "SESSION_COOKIE_PREFIX=session",
+      "WORDY_KEY=Authorization",
+      "MID_TOKEN=justwords",
+    ].join("\n");
+    expect(needlesFor(env)).toEqual([]);
+  });
+
+  it("still checks seller-id-style and mixed values under secret-looking keys", () => {
+    const env = [
+      "NEWEGG_SELLER_ID=Q7ZK",
+      "NEWEGG_SELLER_ID_B=A1B2C3",
+      "MID_TOKEN=abcdefgh1234",
+      "LONG_KEY=onlylettersbutverylongvalue",
+    ].join("\n");
+    expect(needlesFor(env).map((n) => n.key)).toEqual([
+      "NEWEGG_SELLER_ID",
+      "NEWEGG_SELLER_ID_B",
+      "MID_TOKEN",
+      "LONG_KEY",
+    ]);
+  });
+
+  it("decodes a UTF-16BE .env without a BOM", () => {
+    const be = Buffer.from(utf16le(`FOO_TOKEN=${FAKE}\r\n`, false)).swap16();
+    expect(needlesFor(be).map((n) => n.value)).toEqual([FAKE]);
   });
 });
