@@ -247,6 +247,31 @@ export function parseOrderStatus(json: unknown): ParsedOrderStatus {
   };
 }
 
+const ORDER_TYPE_FILTERS: Record<string, true> = {
+  all: true,
+  sbn: true,
+  sbs: true,
+  multiChannel: true,
+  nws: true,
+};
+const PREMIER_ORDER_FILTERS: Record<string, true> = {
+  all: true,
+  premierOnly: true,
+  noPremier: true,
+};
+
+/** True when `value` is exactly one of the own keys of `known` (rejects "toString", numbers, etc.). */
+function isKnownKey(known: Record<string, true>, value: unknown): boolean {
+  return typeof value === "string" && Object.hasOwn(known, value);
+}
+
+/**
+ * The two wire formats Newegg accepted for `LastUpdatedAfter` in the 2026-10-21 probe (contracts
+ * §10.1), both Pacific wall clock with seconds: `MM/DD/YYYY HH:mm:ss` and `YYYY-MM-DD HH:mm:ss`.
+ */
+const LAST_UPDATED_AFTER_FORMAT =
+  /^(?:(?:0[1-9]|1[0-2])\/(?:0[1-9]|[12]\d|3[01])\/\d{4}|\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])) (?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
+
 /**
  * Builds the Get Order Information request body from normalized criteria. Validates paging
  * (throws {@link NeweggValidationError} rather than silently clamping) and emits only the
@@ -269,6 +294,37 @@ export function buildOrderInfoRequest(input: ListOrdersInput): {
   if (!Number.isInteger(pageIndex) || pageIndex < 1) {
     issues.push({ path: "page", message: "must be an integer >= 1" });
   }
+  // A defined value that is not a known filter must fail, never be dropped (that would send an
+  // unfiltered request that looks filtered). Callers that bypass TypeScript can pass anything.
+  if (input.type !== undefined && !isKnownKey(ORDER_TYPE_FILTERS, input.type)) {
+    issues.push({
+      path: "type",
+      message: `must be one of ${Object.keys(ORDER_TYPE_FILTERS).join(", ")}`,
+    });
+  }
+  if (input.premierOrder !== undefined && !isKnownKey(PREMIER_ORDER_FILTERS, input.premierOrder)) {
+    issues.push({
+      path: "premierOrder",
+      message: `must be one of ${Object.keys(PREMIER_ORDER_FILTERS).join(", ")}`,
+    });
+  }
+  if (input.isInternal !== undefined && typeof input.isInternal !== "boolean") {
+    issues.push({ path: "isInternal", message: "must be a boolean" });
+  }
+  if (input.lastUpdatedAfter !== undefined) {
+    const value: unknown = input.lastUpdatedAfter;
+    const valid =
+      value instanceof Date
+        ? !Number.isNaN(value.getTime())
+        : typeof value === "string" && LAST_UPDATED_AFTER_FORMAT.test(value);
+    if (!valid) {
+      issues.push({
+        path: "lastUpdatedAfter",
+        message:
+          'must be a valid Date or a Pacific string "MM/DD/YYYY HH:mm:ss" or "YYYY-MM-DD HH:mm:ss"',
+      });
+    }
+  }
   if (issues.length > 0) {
     throw new NeweggValidationError("Invalid list-orders input.", issues);
   }
@@ -284,13 +340,19 @@ export function buildOrderInfoRequest(input: ListOrdersInput): {
     const code = orderStatusToCode(input.status);
     if (code !== undefined) criteria.Status = code;
   }
-  if (input.type) criteria.Type = orderTypeFilterToCode(input.type);
+  if (input.type !== undefined) criteria.Type = orderTypeFilterToCode(input.type);
   // false = exclude already-downloaded (OrderDownloaded=1); default includes all.
   if (input.includeDownloaded === false) criteria.OrderDownloaded = 1;
-  if (input.premierOrder) criteria.PremierOrder = premierOrderFilterToCode(input.premierOrder);
+  if (input.premierOrder !== undefined) {
+    criteria.PremierOrder = premierOrderFilterToCode(input.premierOrder);
+  }
   if (input.dateFrom !== undefined) criteria.OrderDateFrom = renderOrderDate(input.dateFrom);
   if (input.dateTo !== undefined) criteria.OrderDateTo = renderOrderDate(input.dateTo);
   if (input.countryCode) criteria.CountryCode = input.countryCode;
+  if (input.lastUpdatedAfter !== undefined) {
+    criteria.LastUpdatedAfter = renderOrderDate(input.lastUpdatedAfter);
+  }
+  if (input.isInternal !== undefined) criteria.IsInternal = input.isInternal ? 1 : 0;
 
   const body = {
     OperationType: "GetOrderInfoRequest",

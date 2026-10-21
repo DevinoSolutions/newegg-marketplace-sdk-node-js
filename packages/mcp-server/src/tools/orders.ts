@@ -206,12 +206,19 @@ const listInputSchema = z
     type: z
       .enum(["all", "sbn", "sbs", "multiChannel", "nws"])
       .optional()
-      .describe("Filter by fulfillment/channel type."),
+      .describe(
+        'Filter by fulfillment/channel type. "nws" is Newegg.com (us) only: on ca/b2b the call fails with an unsupported_operation error before anything is sent.',
+      ),
     includeDownloaded: z
       .boolean()
       .optional()
       .describe("false excludes orders already marked downloaded. Defaults to including all."),
-    premierOrder: z.enum(["all", "premierOnly", "noPremier"]).optional(),
+    premierOrder: z
+      .enum(["all", "premierOnly", "noPremier"])
+      .optional()
+      .describe(
+        "Premier-order filter. Newegg.com (us) only: on ca/b2b the call fails with an unsupported_operation error before anything is sent.",
+      ),
     dateFrom: z
       .string()
       .min(1)
@@ -220,7 +227,27 @@ const listInputSchema = z
         "Lower bound on order date, ISO 8601 (e.g. 2024-01-01T00:00:00Z), Pacific-converted.",
       ),
     dateTo: z.string().min(1).optional().describe("Upper bound on order date (see dateFrom)."),
-    countryCode: z.string().min(1).max(3).optional().describe("ISO 3-digit country code."),
+    countryCode: z
+      .string()
+      .min(1)
+      .max(3)
+      .optional()
+      .describe(
+        "ISO 3-letter ship-to country code (e.g. USA). Newegg.com (us) only: on ca/b2b the call fails with an unsupported_operation error before anything is sent (Newegg rejects it with CE003), so do not send it for Newegg.ca or Business.",
+      ),
+    lastUpdatedAfter: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Only orders last updated after this instant, ISO 8601 (e.g. 2024-01-01T00:00:00Z), Pacific-converted. Valid on every marketplace.",
+      ),
+    isInternal: z
+      .boolean()
+      .optional()
+      .describe(
+        "Newegg IsInternal flag (sent as 1/0). Valid on every marketplace, but its meaning is undocumented and unverified (both values returned every order on the CA account); do not rely on it to include or exclude orders.",
+      ),
     page: z.number().int().min(1).optional().describe("1-based page index (default 1)."),
     pageSize: z
       .number()
@@ -260,6 +287,9 @@ async function listHandler(
   const dateTo = toDateInput(input.dateTo);
   if (dateTo !== undefined) listInput.dateTo = dateTo;
   if (input.countryCode !== undefined) listInput.countryCode = input.countryCode;
+  const lastUpdatedAfter = toDateInput(input.lastUpdatedAfter);
+  if (lastUpdatedAfter !== undefined) listInput.lastUpdatedAfter = lastUpdatedAfter;
+  if (input.isInternal !== undefined) listInput.isInternal = input.isInternal;
   if (input.page !== undefined) listInput.page = input.page;
   if (input.pageSize !== undefined) listInput.pageSize = input.pageSize;
 
@@ -284,9 +314,10 @@ export const ordersListTool: ToolDefinition<typeof listInputSchema, typeof listO
   name: TOOL_NAMES.ordersList,
   title: "List Newegg orders",
   description:
-    "Search Newegg Marketplace orders by criteria (status, type, date range, order/seller order " +
-    "numbers, country, premier) with pagination. Returns a page of fully-detailed orders " +
-    "including line items and shipment packages. Read-only: this never changes any order.",
+    "Search Newegg Marketplace orders by criteria (status, type, date range, last-updated, " +
+    "order/seller order numbers, country, premier) with pagination. The country, premier and " +
+    "type=nws filters are Newegg.com (us) only and fail with unsupported_operation on ca/b2b. " +
+    "Returns a page of fully-detailed orders including line items and shipment packages. Read-only: this never changes any order.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: listInputSchema,
   outputSchema: listOutputSchema,

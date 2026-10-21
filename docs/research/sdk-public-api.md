@@ -502,12 +502,14 @@ export interface ListOrdersInput {
   orderNumbers?: Array<string | number>; // direct lookup; Newegg ignores other criteria when set
   sellerOrderNumbers?: string[];
   status?: OrderStatus;
-  type?: OrderTypeFilter; // default "all" on the wire
+  type?: OrderTypeFilter; // default "all" on the wire; "nws" is us-only (throws UnsupportedMarketplaceOperationError on ca/b2b)
   includeDownloaded?: boolean; // false => exclude already-downloaded (OrderDownloaded=1)
-  premierOrder?: PremierOrderFilter;
+  premierOrder?: PremierOrderFilter; // us-only: throws UnsupportedMarketplaceOperationError on ca/b2b, nothing sent
   dateFrom?: Date | string; // Date => rendered Pacific; string sent verbatim
   dateTo?: Date | string;
-  countryCode?: string; // ISO 3-digit
+  countryCode?: string; // ISO 3-digit ship-to; us-only: throws UnsupportedMarketplaceOperationError on ca/b2b, nothing sent
+  lastUpdatedAfter?: Date | string; // LastUpdatedAfter, all marketplaces; Date => Pacific, string verbatim (ASSUMPTION: filters on last update)
+  isInternal?: boolean; // IsInternal sent as 1/0, all marketplaces; semantics UNDOCUMENTED/UNVERIFIED (non-boolean => NeweggValidationError)
   page?: number; // PageIndex, default 1
   pageSize?: number; // PageSize, max 100, default 100
 }
@@ -2784,7 +2786,11 @@ export interface ShippingLabelsApi {
     Order Status (version 304, 500 req/hr). Enum wire codes normalize to string unions,
     unrecognized → `"unknown"` (never throws). `get` throws `NeweggApiError` when no order
     matches (`tryGet` → `undefined`); `getStatus` throws on `SO003` (`tryGetStatus` → `undefined`).
-    `pageSize` outside 1–100 or `page` < 1 throws `NeweggValidationError` (never silently clamped).
+    `pageSize` outside 1–100 or `page` < 1 throws `NeweggValidationError` (never silently clamped). `list` criteria
+    Newegg rejects per platform (`countryCode`, `premierOrder`, `type: "nws"`: Newegg.com only, 400 CE003 on b2b/ca; contracts §10.1)
+    throw `UnsupportedMarketplaceOperationError` BEFORE any request, never dropped silently; an invalid `isInternal`, an unknown
+    `type` / `premierOrder` (never silently dropped), or a `lastUpdatedAfter` string that is not `MM/DD/YYYY HH:mm:ss` or
+    `YYYY-MM-DD HH:mm:ss` throws `NeweggValidationError` before any request.
 11. **Order writes (non-idempotent)**: `orders.ship` (Action 2) / `cancel` (Action 1) /
     `confirmDownload` / `removeItems` (KillItem) mutate and follow ADR 0004 — a provably-unsent
     transport error retries, but an ambiguous failure (timeout/reset after dispatch, or 408/5xx)
