@@ -42,14 +42,45 @@ loadDotEnv();
 
 const env = process.env;
 
-/** Read-only live suite runs only when explicitly enabled AND credentials are present. */
-export const liveEnabled =
+let warnedMarketplace = false;
+
+/**
+ * The marketplace the live key pair was issued for (T-5911). Newegg authenticates on the key pair
+ * alone and ignores the URL prefix, so the only account the .env keys can reach is the one they
+ * were issued under. The owner's keys are the Newegg.ca ones, hence the `ca` default; override
+ * with `NEWEGG_LIVE_CREDENTIALS_MARKETPLACE` (or the MCP's `NEWEGG_CREDENTIALS_MARKETPLACE`)
+ * once real Newegg.com / Business keys exist.
+ */
+export function credentialMarketplace(): string {
+  const raw = env.NEWEGG_LIVE_CREDENTIALS_MARKETPLACE ?? env.NEWEGG_CREDENTIALS_MARKETPLACE ?? "ca";
+  const value = raw.trim().toLowerCase();
+  return value === "can" ? "ca" : value;
+}
+
+const liveRequested =
   env.NEWEGG_LIVE_TESTS === "true" &&
   Boolean(env.NEWEGG_SELLER_ID) &&
   Boolean(env.NEWEGG_API_KEY) &&
   Boolean(env.NEWEGG_SECRET_KEY);
 
-let warnedMarketplace = false;
+/**
+ * True when live is requested but the selected marketplace is not the one the keys belong to.
+ * Calling a us/b2b client with CA keys would read the CA account under a us/b2b label, so those
+ * runs are skipped as a whole instead (T-5911; contracts section 2).
+ */
+const credentialsForOtherMarketplace = liveRequested && credentialMarketplace() !== marketplace();
+
+/** Read-only live suite runs only when enabled, credentials are present AND they fit the marketplace. */
+export const liveEnabled = liveRequested && !credentialsForOtherMarketplace;
+
+if (credentialsForOtherMarketplace) {
+  console.warn(
+    `live suite skipped: no ${marketplace()} credentials (T-5911). The keys in the environment were ` +
+      `issued for the "${credentialMarketplace()}" marketplace and Newegg would serve that account under ` +
+      `any prefix. Set NEWEGG_MARKETPLACE=${credentialMarketplace()}, or provide real ${marketplace()} ` +
+      `keys with NEWEGG_LIVE_CREDENTIALS_MARKETPLACE=${marketplace()}.`,
+  );
+}
 
 export function marketplace(): NeweggMarketplace {
   const value = env.NEWEGG_MARKETPLACE?.toLowerCase();
@@ -96,29 +127,34 @@ export function skipNonCaLimitation(
 }
 
 /**
- * Batch inventory read on US/B2B answers 401 InvalidToken ("Illegal secret key") on the
- * `international/inventorylist` route only, while the same credentials read single inventory,
- * price and order-info fine (observed live 2026-10-21, T-5611; contracts section 5.3).
+ * Batch inventory read on us/b2b answered 401 InvalidToken ("Illegal secret key") on the
+ * catalog-bound `international/inventorylist` route only, with the CA key pair under a us/b2b
+ * prefix (observed live 2026-10-21, T-5611; contracts section 5.3). T-5911 root cause: that was a
+ * key from another marketplace, not a Newegg bug, and CA keys can no longer reach us/b2b through
+ * this suite. The limitation is kept for the day real Newegg.com / Business keys are tried here.
  */
 export const NON_CA_BATCH_INVENTORY_401: NonCaLimitation = {
   reason:
-    "batch inventory read answers 401 InvalidToken (Newegg-side; per-marketplace key is an ASSUMPTION; T-5611)",
+    "batch inventory read answers 401 InvalidToken on this marketplace (catalog-bound route; key/marketplace pairing unproven; T-5611/T-5911)",
   matches: (error) => error.httpStatus === 401 && error.neweggErrorCode === "InvalidToken",
 };
 
 /**
- * Get Volume Discount answers HTTP 500 InternalError for a real SKU on US/B2B (unknown SKU: clean
- * 400 CT002; CA: 400 CT060). Observed live 2026-10-21, T-5611; contracts section 22.1.
+ * Get Volume Discount answered HTTP 500 InternalError for a real SKU on us/b2b with the CA key pair
+ * (unknown SKU: clean 400 CT002; CA: 400 CT060). Observed live 2026-10-21, T-5611; contracts
+ * section 22.1. Most likely the same key/catalog pairing as above (T-5911); kept for real us/b2b keys.
  */
 export const NON_CA_VOLUME_DISCOUNT_500: NonCaLimitation = {
-  reason: "Get Volume Discount answers HTTP 500 InternalError for a real SKU (Newegg-side; T-5611)",
+  reason:
+    "Get Volume Discount answers HTTP 500 InternalError for a real SKU on this marketplace (catalog-bound route; T-5611/T-5911)",
   matches: (error) => error.httpStatus === 500 && error.neweggErrorCode === "InternalError",
 };
 
 /**
  * Asserts that `error` is the documented not-found answer for an unknown SKU. On CA it must be a
  * `NeweggError` carrying one of `codes` (cited per endpoint by the caller), so a 401/5xx cannot
- * pass. On US/B2B an unexpected error skips with its HTTP status and code in the reason instead of
+ * pass. On us/b2b (which this suite only reaches with real Newegg.com / Business keys; CA keys skip
+ * the suite, T-5911) an unexpected error skips with its HTTP status and code in the reason instead of
  * passing, so an auth failure is reported and never mistaken for "not found".
  */
 export function expectUnknownSkuNotFound(
@@ -141,11 +177,28 @@ export function expectUnknownSkuNotFound(
 }
 
 export function makeLiveClient(): NeweggClient {
+  if (credentialsForOtherMarketplace) {
+    // The whole suite is skipped (liveEnabled is false) but `describe` bodies still run while
+    // vitest collects tests, and some build a client there. Hand back an inert one: placeholder
+    // keys and a fetch that refuses, so nothing can reach Newegg under the wrong marketplace.
+    return createNeweggClient({
+      sellerId: "SKIPPED",
+      apiKey: "skipped",
+      secretKey: "skipped",
+      marketplace: marketplace(),
+      credentialMarketplace: marketplace(),
+      fetch: () => {
+        throw new Error("live suite skipped: no credentials for this marketplace (T-5911)");
+      },
+    });
+  }
   return createNeweggClient({
     sellerId: String(env.NEWEGG_SELLER_ID),
     apiKey: String(env.NEWEGG_API_KEY),
     secretKey: String(env.NEWEGG_SECRET_KEY),
     marketplace: marketplace(),
+    // Bind the keys to the marketplace they were issued for; a mismatch throws before any request.
+    credentialMarketplace: credentialMarketplace() as NeweggMarketplace,
     ...(env.NEWEGG_API_BASE_URL ? { baseUrl: env.NEWEGG_API_BASE_URL } : {}),
   });
 }
@@ -170,7 +223,7 @@ const describeError = (error: unknown): string =>
  * network failure is not mistaken for an empty marketplace.
  */
 export function noItemReason(): string {
-  const base = `no ${marketplace()} item discoverable (T-5611)`;
+  const base = `no ${marketplace()} item discoverable (T-5611/T-5911)`;
   return discoveryErrors.length > 0
     ? `${base}; discovery errors: ${[...new Set(discoveryErrors)].join(", ")}`
     : base;
@@ -218,9 +271,9 @@ export async function discoverIdentifiers(limit = 5): Promise<ItemIdentifier[]> 
     return [];
   }
   if (isCa()) return candidates;
-  // Order-info answers with the same CA-store orders under the us/ and b2b/ prefixes, and a
-  // B2B inventory read of an item that does not exist there is an empty 200 shell, so keep only
-  // items a read-only price read finds on THIS marketplace (T-5611).
+  // Orders come from the key owner's account, and a B2B inventory read of an item that does not
+  // exist there is an empty 200 shell, so keep only items a read-only price read finds on THIS
+  // marketplace (T-5611; with bound credentials this branch needs real us/b2b keys, T-5911).
   const existing: ItemIdentifier[] = [];
   for (const identifier of candidates) {
     try {

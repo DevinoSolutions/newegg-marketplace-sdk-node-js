@@ -13,6 +13,7 @@
  *
  * Run:
  *   NEWEGG_SELLER_ID=... NEWEGG_API_KEY=... NEWEGG_SECRET_KEY=... NEWEGG_MARKETPLACE=us \
+ *   NEWEGG_CREDENTIALS_MARKETPLACE=us \
  *     npm run start -w example-sdk-pricing-preview
  *
  * Optional: EXAMPLE_SELLER_PART_NUMBER (default YOUR-SKU), EXAMPLE_NEW_PRICE (default 19.99).
@@ -39,15 +40,19 @@ async function main(): Promise<void> {
   const apiKey = process.env.NEWEGG_API_KEY;
   const secretKey = process.env.NEWEGG_SECRET_KEY;
   const marketplaceRaw = process.env.NEWEGG_MARKETPLACE;
+  // The marketplace the keys were issued for. Newegg ignores the URL prefix, so unlabeled keys would
+  // silently serve another marketplace's account (ADR 0006).
+  const credentialMarketplaceRaw = process.env.NEWEGG_CREDENTIALS_MARKETPLACE;
 
   // Report the NAMES of missing variables only — never their values.
-  if (!sellerId || !apiKey || !secretKey || !marketplaceRaw) {
+  if (!sellerId || !apiKey || !secretKey || !marketplaceRaw || !credentialMarketplaceRaw) {
     const missing = (
       [
         ["NEWEGG_SELLER_ID", sellerId],
         ["NEWEGG_API_KEY", apiKey],
         ["NEWEGG_SECRET_KEY", secretKey],
         ["NEWEGG_MARKETPLACE", marketplaceRaw],
+        ["NEWEGG_CREDENTIALS_MARKETPLACE", credentialMarketplaceRaw],
       ] as const
     )
       .filter(([, value]) => !value)
@@ -58,7 +63,13 @@ async function main(): Promise<void> {
   }
 
   const marketplace = parseMarketplace(marketplaceRaw);
-  const client = createNeweggClient({ sellerId, apiKey, secretKey, marketplace });
+  const client = createNeweggClient({
+    sellerId,
+    apiKey,
+    secretKey,
+    marketplace,
+    credentialMarketplace: parseMarketplace(credentialMarketplaceRaw),
+  });
 
   const sellerPartNumber = process.env.EXAMPLE_SELLER_PART_NUMBER ?? "YOUR-SKU";
   const newPrice = Number.parseFloat(process.env.EXAMPLE_NEW_PRICE ?? "19.99");

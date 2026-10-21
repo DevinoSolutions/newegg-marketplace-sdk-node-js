@@ -34,6 +34,9 @@ const client = createNeweggClient({
   apiKey: process.env.NEWEGG_API_KEY!,
   secretKey: process.env.NEWEGG_SECRET_KEY!,
   marketplace: "us",
+  // Strongly recommended: the marketplace these keys were issued for. Newegg ignores the URL prefix,
+  // so without it Newegg.ca keys would silently serve the CA account under a "us" client (ADR 0006).
+  credentialMarketplace: "us",
 });
 
 // Fail-fast credential preflight (read-only). Throws immediately if the credentials are wrong
@@ -59,8 +62,12 @@ console.log(result.items, result.feedJobs);
 ```
 
 `createNeweggClient` validates its configuration synchronously and throws
-`NeweggConfigurationError` if anything is wrong. Credentials are **platform-specific** — a US
-key is not valid on B2B or CA.
+`NeweggConfigurationError` if anything is wrong. Credentials belong to a **seller account, not to a
+URL prefix**: Newegg authenticates on `sellerId` + keys only and ignores `/b2b/` and `/can/`, so keys
+issued for one marketplace silently serve that account under any other. Pass `credentialMarketplace` (the
+marketplace the keys were issued for) and a mismatch throws `NeweggMarketplaceMismatchError` before any
+request; omitting it keeps the old, unsafe behaviour. Order reads also throw it when a whole page is in the
+wrong marketplace's currency (CAD on `ca`; USD on `us`/`b2b` is an assumption). See ADR 0006.
 
 ## Reading inventory
 

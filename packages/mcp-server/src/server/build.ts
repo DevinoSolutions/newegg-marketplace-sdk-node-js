@@ -138,6 +138,7 @@ function createClientFromConfig(config: McpServerConfig, logger: Logger): Newegg
     apiKey: config.credentials.apiKey,
     secretKey: config.credentials.secretKey,
     marketplace: config.marketplace,
+    credentialMarketplace: config.credentialMarketplace,
     logger: adaptLogger(logger),
   };
   if (config.baseUrl !== undefined) {

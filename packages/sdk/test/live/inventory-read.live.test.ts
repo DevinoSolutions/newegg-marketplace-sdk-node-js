@@ -19,9 +19,10 @@ import {
  * the real-data reads skip cleanly if none is found. Every call here is a read — `getItem` /
  * `getMany`. There is deliberately NO write test in the live suite.
  *
- * On US/B2B the discovered identifiers are limited to items that exist on that marketplace (a B2B
- * inventory read of a missing item is an empty 200 shell that would pass vacuously), and the batch
- * reads skip on the documented 401 InvalidToken (contracts section 5.3). CA stays strict.
+ * On us/b2b (only reachable with real Newegg.com / Business keys; CA keys skip the suite, T-5911) the
+ * discovered identifiers are limited to items that exist on that marketplace (an inventory read of a
+ * missing item can be an empty 200 shell that would pass vacuously), and the batch reads skip on a
+ * 401 InvalidToken (contracts section 5.3). CA stays strict.
  */
 const warehouses = (): string[] | undefined => {
   if (marketplace() !== "us") return undefined; // warehouses are US-only
@@ -105,9 +106,9 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
       expectUnknownSkuNotFound(ctx, error, ["CT026"]);
       return;
     }
-    // B2B answers an empty 200 shell for a SKU it does not know (contracts §5, T-5611); CA must
-    // answer not-found.
-    expect(isCa()).toBe(false);
+    // Only a non-CA marketplace may resolve a snapshot (an empty 200 shell was seen with a foreign key,
+    // contracts §5.2, T-5611/T-5911); CA must answer not-found.
+    expect(isCa(), "CA must answer CT026 for an unknown SKU, not resolve a snapshot").toBe(false);
     expect(snapshot.marketplace).toBe(marketplace());
     expect(typeof snapshot.totalAvailableQuantity).toBe("number");
   });

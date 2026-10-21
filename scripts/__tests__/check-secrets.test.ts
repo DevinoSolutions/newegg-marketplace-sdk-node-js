@@ -119,6 +119,30 @@ describe("check-secrets: matching", () => {
     expect(report("", { "e.txt": utf16le(`apiKey: ${hex}`) })).toHaveLength(1);
   });
 
+  it("recognizes the per-marketplace NEWEGG_<MP>_* credential names (T-5911)", () => {
+    const hex = "ab".repeat(16);
+    const uuid = "0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d";
+    for (const mp of ["US", "B2B", "CA"]) {
+      expect(
+        report("", {
+          "f.txt": `NEWEGG_${mp}_API_KEY=${hex}
+`,
+        }),
+      ).toEqual(["f.txt:1 contains an API-key-looking value: ab…"]);
+      expect(
+        report("", {
+          "g.txt": `NEWEGG_${mp}_SECRET_KEY=${uuid}
+`,
+        }),
+      ).toEqual(["g.txt:1 contains a secret-key-looking value: 0a…"]);
+    }
+    // The per-marketplace seller ids and keys are secret-named, so .env values are needles too.
+    const env = `NEWEGG_CA_SELLER_ID=${FAKE_SHORT}
+NEWEGG_US_SECRET_KEY=${FAKE}
+`;
+    expect(report(env, { "h.txt": `${FAKE_SHORT} ${FAKE}` })).toHaveLength(2);
+  });
+
   it("never puts a secret value in a report line", () => {
     const values = [FAKE, FAKE_SHORT, "ab".repeat(16)];
     const lines = report(`FOO_TOKEN=${FAKE}\nNEWEGG_SELLER_ID=${FAKE_SHORT}`, {

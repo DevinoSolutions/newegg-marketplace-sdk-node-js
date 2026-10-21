@@ -16,7 +16,7 @@ const ORDER_INFO_BODY = {
         CustomerName: "Test Buyer",
         CustomerEmailAddress: "cusa.x@marketplace.newegg.com",
         ShipToStateCode: "CA",
-        CurrencyCode: "USD",
+        CurrencyCode: "CAD",
         OrderTotalAmount: 19.99,
         FulfillmentOption: 0,
         SalesChannel: 0,
@@ -75,7 +75,7 @@ describe("newegg_orders_list", () => {
       expect(orders).toHaveLength(1);
       expect(orders[0]!.orderNumber).toBe("511952652");
       expect(orders[0]!.status).toBe("shipped");
-      expect(orders[0]!.currencyCode).toBe("USD");
+      expect(orders[0]!.currencyCode).toBe("CAD");
       expect(orders[0]!.customer?.shipTo?.stateCode).toBe("CA");
       expect(orders[0]!.items[0]!.sellerPartNumber).toBe("SKU-1");
       expect(orders[0]!.items[0]!.status).toBe("shipped");

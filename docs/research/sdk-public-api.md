@@ -27,6 +27,14 @@ export interface NeweggClientConfig {
   apiKey: string;
   secretKey: string;
   marketplace: NeweggMarketplace;
+  /**
+   * The marketplace the key pair was issued under. Newegg authenticates on sellerId + keys only and ignores
+   * the URL prefix, so keys from another marketplace's seller account silently serve THAT account
+   * (contracts §2). When set and different from `marketplace`, createNeweggClient throws
+   * NeweggMarketplaceMismatchError before any request. Absent = no check (unsafe if they can disagree);
+   * the MCP server always sets it. ADR 0006.
+   */
+  credentialMarketplace?: NeweggMarketplace;
   /** Trusted-config-only override (tests, proxies). Never exposed via MCP. */
   baseUrl?: string;
   timeoutMs?: number; // default 30_000
@@ -570,7 +578,7 @@ export interface Order {
   isAutoVoid?: boolean;
   salesChannel?: OrderSalesChannel;
   fulfillment?: OrderFulfillment;
-  currencyCode?: string;
+  currencyCode?: string; // the key owner's account currency: CAD on ca; USD on us/b2b is an ASSUMPTION (contracts §10)
   customer?: OrderCustomer;
   shipService?: string;
   signatureRequired?: boolean;
@@ -2520,6 +2528,14 @@ export class NeweggError extends Error {
   readonly details?: unknown; // sanitized, JSON-safe
 }
 export class NeweggConfigurationError extends NeweggError {}
+// Thrown by createNeweggClient when credentialMarketplace differs from marketplace (expectedMarketplace =
+// the client's marketplace, actualMarketplace = the credentials'), and by the orders currency guard when a
+// whole page of orders is in the wrong marketplace's currency (actualMarketplace inferred, or undefined).
+// code === "configuration"; messages and toJSON carry marketplace names only, never credential values.
+export class NeweggMarketplaceMismatchError extends NeweggConfigurationError {
+  readonly expectedMarketplace: NeweggMarketplace;
+  readonly actualMarketplace?: NeweggMarketplace;
+}
 export class NeweggValidationError extends NeweggError {
   readonly issues: Array<{ path: string; message: string; inputIndex?: number }>;
 }
@@ -2755,7 +2771,13 @@ export interface ShippingLabelsApi {
 7. **Secrets**: `Authorization`/`SecretKey` header values, apiKey, secretKey never appear in
    errors, logs, `raw` payloads, or serialized output. `raw` is sanitized (headers stripped).
 8. **No network / credentials at import time.** Config validated in `createNeweggClient`
-   (throws `NeweggConfigurationError`).
+   (throws `NeweggConfigurationError`). **Credential binding (ADR 0006, contracts §2):** with
+   `credentialMarketplace` set, a value other than `us`/`b2b`/`ca` is a `NeweggConfigurationError` and a value
+   different from `marketplace` is a `NeweggMarketplaceMismatchError`, both before any request. Callers that
+   omit the field keep the old, UNSAFE behaviour (a key pair from one seller account is served under any
+   prefix). Defense in depth: `orders.list` (and `get`/`tryGet`) throws `NeweggMarketplaceMismatchError` when a
+   non-empty page has a defined `currencyCode` on every order and none is the marketplace's (ca: CAD; us/b2b:
+   USD, ASSUMPTION); empty, mixed and currency-less pages pass.
 9. **ESM**, Node ≥ 22, relative imports carry `.js` extensions, no `any` in src.
 10. **Orders (reads)**: `orders.list`/`get`/`tryGet`/`getStatus`/`tryGetStatus`/`listAdditionalInfo`/`getAdditionalInfo`/`tryGetAdditionalInfo` never mutate (additional info is a POST read, Newegg.com only, 10,000 req/hr, contracts §24).
     `list` and `get` share Get Order Information (version 315, 1000 req/hr); `getStatus` uses Get

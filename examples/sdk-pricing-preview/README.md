@@ -11,7 +11,7 @@ Preview-only: read an item's price and risk-check a selling-price change without
 
 ## Environment
 
-Required: `NEWEGG_SELLER_ID`, `NEWEGG_API_KEY`, `NEWEGG_SECRET_KEY`, `NEWEGG_MARKETPLACE`.
+Required: `NEWEGG_SELLER_ID`, `NEWEGG_API_KEY`, `NEWEGG_SECRET_KEY`, `NEWEGG_MARKETPLACE`, `NEWEGG_CREDENTIALS_MARKETPLACE` (the marketplace the keys were issued for; must equal `NEWEGG_MARKETPLACE`).
 Optional: `EXAMPLE_SELLER_PART_NUMBER` (default `YOUR-SKU`), `EXAMPLE_NEW_PRICE` (default `19.99`).
 
 Credentials are read from the environment and never printed. See
@@ -21,6 +21,7 @@ Credentials are read from the environment and never printed. See
 
 ```bash
 NEWEGG_SELLER_ID=... NEWEGG_API_KEY=... NEWEGG_SECRET_KEY=... NEWEGG_MARKETPLACE=us \
+  NEWEGG_CREDENTIALS_MARKETPLACE=us \
   npm run start -w example-sdk-pricing-preview
 ```
 

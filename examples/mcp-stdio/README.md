@@ -17,7 +17,7 @@ config points `command`/`args` at it and provides the `NEWEGG_*` env; see the re
 
 ## Environment
 
-Required: `NEWEGG_SELLER_ID`, `NEWEGG_API_KEY`, `NEWEGG_SECRET_KEY`, `NEWEGG_MARKETPLACE`.
+Required: `NEWEGG_SELLER_ID`, `NEWEGG_API_KEY`, `NEWEGG_SECRET_KEY`, `NEWEGG_MARKETPLACE`, `NEWEGG_CREDENTIALS_MARKETPLACE` (the marketplace the keys were issued for; must equal `NEWEGG_MARKETPLACE`; or use the `NEWEGG_<MP>_*` credential names).
 Config is read by `loadMcpConfigFromEnv()`, which throws `McpConfigError` (secret-free
 message) if anything is missing. Never commit real values — see
 [`.env.example`](../../.env.example).
@@ -26,6 +26,7 @@ message) if anything is missing. Never commit real values — see
 
 ```bash
 NEWEGG_SELLER_ID=... NEWEGG_API_KEY=... NEWEGG_SECRET_KEY=... NEWEGG_MARKETPLACE=us \
+  NEWEGG_CREDENTIALS_MARKETPLACE=us \
   npm run start -w example-mcp-stdio
 ```
 

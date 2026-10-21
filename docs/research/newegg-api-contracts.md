@@ -41,7 +41,31 @@ Other observed error shapes:
 - **All datetime fields are Pacific Time** (docs say "Pacific Standard Time") in requests
   and responses, e.g. `2/22/2012 17:24:35`. Response timestamps sometimes carry an
   explicit offset (`2022-04-20T23:46:41.7786361-07:00`).
-- API credentials are **platform-specific**: a US key is not valid on `/b2b/` or `/can/`.
+- **Credentials belong to a seller account; the URL prefix does not select it (observed live 2026-10-21,
+  T-5911; evidence commit `1346a9fa` in the private evidence repo, folder T-5906).** Newegg's gateway
+  authenticates on `sellerid` + `Authorization` (API key) + `SecretKey` only. The prefix (none / `b2b/` /
+  `can/`) is never checked against the key. It selects only the request schema and the response shape
+  (and a few catalog-bound routes, below); the DATA is always the account the key resolves to. With the one
+  credential set the account has (issued under the Newegg.ca tab), reads on all three prefixes answered HTTP 200
+  for orders, service status (all 8 domains), report status, RMA list, seller status and a single inventory
+  read: the same 30 CAD orders (identical order-set hash on `us`/`b2b`/`ca`) and the same RMAs, while the
+  portal's Newegg.com view shows different USD orders. A bogus seller id / key / secret answers 401
+  `Gateway: Seller Auth failed.` on every prefix (the seller id is case-insensitive). Consequences:
+  - A client for marketplace X built with another marketplace's keys looks healthy and **silently reads (and
+    would write) the key owner's own account** under an X label. Only the order `CurrencyCode` is a reliable
+    response tell (CAD vs USD, see §10); inventory, RMA, seller status, report status and ads carry no
+    marketplace signal, so a response guard cannot cover them.
+  - Routes that DO see the prefix with a foreign key (observed with the CA key on `us`/`b2b`): batch
+    inventory 401 `InvalidToken` (§5.3), volume discount 500 (§22.1), B2B price `CT026`, a US inventory read
+    that returns an empty shell (quantity 0, no warehouses), and a US price list that shows `Currency` CAD /
+    `Country` CAN.
+  - The SDK therefore binds credentials to a marketplace instead of trusting the prefix:
+    `credentialMarketplace` in the client config, and `NEWEGG_CREDENTIALS_MARKETPLACE` /
+    `NEWEGG_<MP>_*` for the MCP server (ADR 0006).
+  - **UNPROVEN** (no US / Business API account exists yet; both show "No API account has been set up" under
+    Settings > Data Feed Settings > API Settings): that a Newegg.com key works on `/` and answers USD
+    orders, that Business orders are USD, and the `IsInternal` semantics. The reverse direction (a US key
+    on `/can/`) was never run.
 
 ## 3. Throttling
 
@@ -149,14 +173,15 @@ the seller has no offer on fail **CT010** (9/9 observed; CT010 also covers malfo
 values — the two are indistinguishable on the wire). Also: while an item is deactivated,
 reads report `AvailableQuantity` 0, which may mask the stored quantity.
 
-**Observed live (B2B, 2026-10-21, T-5611) — empty shell record:** a B2B single-item inventory read of a
-seller part number that exists only in the CA store answers HTTP **200** with a well-formed but empty
+**Observed live (B2B, 2026-10-21, T-5611; cause T-5911) — empty shell record:** with the CA key pair under the
+`b2b/` prefix (a foreign key, §2), a single-item inventory read of a seller part number that exists only in the CA
+store answers HTTP **200** with a well-formed but empty
 record (`Active` "0", `AvailableQuantity` 0, item number and SKU echoed), not CT026. The same record shape is
 returned for a real CA item that is deactivated or sold out, so the inventory response alone cannot tell
 "missing" from "zero stock". The Get Item Price read does tell them apart (400 CT026 for a missing item,
 §15.2 list, §15.6 `tryGet`: PRICE_NOT_FOUND = CT026/CT010); the live suite therefore confirms an item exists on the marketplace with a price read first.
-The order-info endpoint returns the SAME orders (CA-store SKUs) under the `us/`, `b2b/` and `can/`
-prefixes, so SKUs discovered from order lines are not evidence an item exists on US or B2B.
+The order-info endpoint ignores the prefix and returns the key owner's own orders (CA-store SKUs) under `us/`,
+`b2b/` and `can/` alike (§2), so SKUs discovered from order lines are not evidence an item exists on US or B2B.
 
 ### 5.3 US batch — Get Batch Inventory (International)
 
@@ -195,16 +220,17 @@ Response envelope:
 render in extraction; the SDK chunks batch reads at **100** identifiers per request
 (constant `GET_BATCH_INVENTORY_MAX_VALUES`, documented and configurable).
 
-**Observed live behaviour (US and B2B, 2026-10-21, T-5611) — batch read answers 401 InvalidToken:** with the
-account's one credential set, this route answers HTTP 401 with code `InvalidToken` ("Illegal secret key") on
-Newegg.com (POST, PUT, and PUT with `WarehouseList` alike) and on Newegg Business, while the same credentials
-read single-item inventory (§5.1), price (§15.2) and order-info on the same platform with HTTP 200, and the
-CA batch route (§5.4) answers 200. The URL, verb and body match the official page, so this is not a request
-shape bug. **ASSUMPTION (cause)**: the API key and secret were issued under the Newegg.ca (CAN) tab of the
-Seller Portal and Newegg's gateway enforces the key per marketplace on the `inventorylist` route family only;
-not proven. Not-yet-verified fix: generate the keys under the Newegg.com / Newegg Business tab and re-run.
-The SDK surfaces this as `NeweggAuthenticationError` (`httpStatus` 401, `neweggErrorCode` "InvalidToken"); the
-live suite treats it as a documented non-CA skip and stays strict on CA.
+**Observed live behaviour (US and B2B, 2026-10-21, T-5611; root cause T-5911) — batch read answers 401
+InvalidToken with a foreign key:** with the account's one credential set (issued under the Newegg.ca tab), this
+route answers HTTP 401 with code `InvalidToken` ("Illegal secret key") on Newegg.com (POST, PUT, and PUT with
+`WarehouseList` alike) and on Newegg Business, while the same credentials read single-item inventory (§5.1),
+price (§15.2) and order-info on the same prefix with HTTP 200 (as the CA account's own data, §2), and the CA batch
+route (§5.4) answers 200. The URL, verb and body match the official page, so this is not a request shape bug.
+Cause: `inventorylist` is one of the few catalog-bound routes that sees the prefix, and a key issued for one
+marketplace does not resolve under another (§2). **ASSUMPTION (fix)**: a key issued under the Newegg.com /
+Newegg Business tab works on this route; not yet verifiable (no such account exists). The SDK surfaces this as
+`NeweggAuthenticationError` (`httpStatus` 401, `neweggErrorCode` "InvalidToken"). Since T-5911 a CA key pair
+cannot be pointed at `us`/`b2b` at all (`credentialMarketplace`), so the live suite no longer produces this.
 
 ### 5.4 B2B / CAN batch — Get Batch Inventory
 
@@ -636,6 +662,16 @@ wrapper — tolerate both.
 **ASSUMPTION (default version):** the SDK pins `version=315` (highest documented, and the top
 of the page's version table) for order reads so every mapped field is available; older
 versions merely omit newer fields. Isolated behind the order adapter, overridable.
+
+**Expected currency per marketplace (T-5911; platform adapter `expectedOrderCurrencies`).** `ca`: **CAD**,
+confirmed live (the CA account's orders are all CAD). `us` and `b2b`: **USD** — **ASSUMPTION**, not verified
+against a real Newegg.com / Business account (none exists); the §10.1 sample is USD. The SDK's orders guard
+(`orders.list`, and `get`/`tryGet` through it) throws `NeweggMarketplaceMismatchError` when a NON-EMPTY page has
+a defined `CurrencyCode` on EVERY order and none is in the marketplace's expected set (a CAD page on `us`/`b2b`
+means CA keys; a USD page on `ca` means US keys). Empty pages, pages with any currency-less order, and mixed pages
+pass. It is defense in depth for a client built WITHOUT `credentialMarketplace`, which stays the primary,
+fail-closed protection (§2). US price lists are deliberately not guarded: per-destination CAD/CAN there is
+legitimate.
 
 ### 10.2 Get Order Status
 
@@ -2466,7 +2502,9 @@ an e-mail) and the label tracking number / URL (see `docs/mcp-security.md`).
 - The RMA lists on US and B2B were populated (a small non-empty page on each, `rma.get` round-tripped), the courtesy
   refund list and the request-status list were empty on US, B2B and CAN, and the normalized currency was
   `USD` on US and B2B. The RMA count was identical on all three platforms; that was observed, not explained
-  (whether the seller account shares RMAs across platforms is not established).
+  (whether the seller account shares RMAs across platforms is not established). **T-5911 explains it:** Newegg
+  ignores the URL prefix when authenticating (§2), so those "US" and "B2B" lists were the CA account's own RMAs
+  returned under another prefix, not evidence about Newegg.com / Business accounts or their currency.
 
 **ASSUMPTIONs (retire when verified live):**
 
@@ -3276,15 +3314,16 @@ A 200 with no `ItemVolumeDiscountInfo` is a `NeweggApiError`.
 Newegg.com (`api.newegg.com/marketplace/contentmgmt/item/volumediscount`) and Newegg Business answers HTTP
 **500** `InternalError` ("Our servers are currently unavailable...", which the SDK marks retryable) when the
 lookup resolves a real item with no discount on file, where CA answers 400 `CT060` for the same situation. An
-unknown SKU on the same US/B2B routes still answers a clean 400 `CT002`, so the route is alive and the failure
-is inside Newegg. It is not rate limiting (500, not 429; the 100/hour budget was not near). The official page
-was last updated in 2018 and only CA is verified. **ASSUMPTION**: Newegg-side limitation on US/B2B; do not
-treat a 500 as "no discount". `tryGet` deliberately maps only `CT060` to `undefined`; the live suite skips
-(non-CA only) on this 500 and stays strict on CA.
+unknown SKU on the same `us`/`b2b` routes still answered a clean 400 `CT002` with that key, so the route is alive
+and the failure is not a transport problem. It is not rate limiting (500, not 429; the 100/hour budget was not near). The official page
+was last updated in 2018 and only CA is verified. **ASSUMPTION**: another catalog-bound route reacting to
+the foreign CA key pair (§2, T-5911) rather than a Newegg.com / Business defect; unproven. Do not treat a 500
+as "no discount". `tryGet` deliberately maps only `CT060` to `undefined`.
 
 **Observed live (CA, 2026-10-21, T-5776) — unknown SKU:** a read of a seller part number that does not exist
-answers HTTP 400 `CT002` ("Invalid SellerPartNumber") on CA, the same as US/B2B; `CT060` is reserved for a real
-item without a discount. The live suite pins CA unknown-SKU reads to `CT002`.
+answers HTTP 400 `CT002` ("Invalid SellerPartNumber") on CA; `CT060` is reserved for a real item without a
+discount. The same `CT002` was seen under the `us/` and `b2b/` prefixes, but only with the CA key pair (§2, T-5911),
+so it is not evidence of Newegg.com / Business behaviour. The live suite pins CA unknown-SKU reads to `CT002`.
 
 **Propagation lag:** after a feed finished successfully the read kept returning `CT060` for about 13 minutes
 (feed submitted 04:33 Pacific; 400 `CT060` at +2 and +8 minutes; 200 with the tiers at +13 minutes). Do not read

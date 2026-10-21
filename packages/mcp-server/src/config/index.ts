@@ -84,6 +84,12 @@ export interface McpHttpConfig {
 
 export interface McpServerConfig {
   readonly marketplace: NeweggMarketplace;
+  /**
+   * The marketplace the credentials were issued for. Always equals `marketplace` once
+   * `loadMcpConfigFromEnv` succeeds (a mismatch refuses to start); it is passed to the SDK as
+   * `credentialMarketplace` so the client re-checks the binding (T-5911, ADR 0006).
+   */
+  readonly credentialMarketplace: NeweggMarketplace;
   /** Trusted-config-only base URL override; never exposed through MCP tools/resources. */
   readonly baseUrl?: string;
   readonly allowWrites: boolean;
@@ -130,21 +136,6 @@ function normalizeMarketplace(raw: string): NeweggMarketplace | undefined {
   return (MARKETPLACES as readonly string[]).includes(canonical)
     ? (canonical as NeweggMarketplace)
     : undefined;
-}
-
-/** Required, trimmed, non-empty string. The var name is guaranteed to appear in the error. */
-function requiredEnv(name: string) {
-  return z
-    .string()
-    .optional()
-    .transform((raw, ctx) => {
-      const trimmed = raw?.trim();
-      if (trimmed === undefined || trimmed === "") {
-        ctx.addIssue({ code: "custom", message: required(name) });
-        return z.NEVER;
-      }
-      return trimmed;
-    });
 }
 
 /** Required marketplace with distinct "missing" vs "invalid value" messages. */
@@ -357,9 +348,7 @@ function optionalTrimmedEnv() {
 }
 
 const envSchema = z.object({
-  NEWEGG_SELLER_ID: requiredEnv("NEWEGG_SELLER_ID"),
-  NEWEGG_API_KEY: requiredEnv("NEWEGG_API_KEY"),
-  NEWEGG_SECRET_KEY: requiredEnv("NEWEGG_SECRET_KEY"),
+  // Credentials are resolved separately (see resolveCredentials): they depend on the marketplace.
   NEWEGG_MARKETPLACE: marketplaceEnv("NEWEGG_MARKETPLACE"),
   NEWEGG_API_BASE_URL: urlEnv("NEWEGG_API_BASE_URL"),
   // SECURITY gate: only the EXACT literal "true" enables writes. "1"/"TRUE"/" true "/unset all
@@ -434,9 +423,100 @@ const envSchema = z.object({
   NEWEGG_MCP_HTTP_ALLOWED_HOSTS: csvEnv(),
 });
 
+const CREDENTIAL_FIELDS = ["SELLER_ID", "API_KEY", "SECRET_KEY"] as const;
+
+const isSet = (env: EnvRecord, name: string): boolean => (env[name]?.trim() ?? "") !== "";
+
+const prefixedCredentialNames = (marketplace: NeweggMarketplace): string[] =>
+  CREDENTIAL_FIELDS.map((field) => `NEWEGG_${marketplace.toUpperCase()}_${field}`);
+
+type CredentialOutcome =
+  | { readonly credentials: McpCredentials; readonly issues: readonly [] }
+  | { readonly credentials?: undefined; readonly issues: readonly string[] };
+
+/** Builds the credentials holder from three env variable names that are known to be set. */
+function credentialsFrom(env: EnvRecord, names: readonly string[]): McpCredentials {
+  const [sellerId, apiKey, secretKey] = names.map((name) => env[name]?.trim() ?? "");
+  return makeCredentials(sellerId ?? "", apiKey ?? "", secretKey ?? "");
+}
+
+/**
+ * Resolves the credential set for the SELECTED marketplace (T-5911, ADR 0006). Newegg
+ * authenticates on seller id + key pair only and ignores the URL prefix, so keys from one
+ * marketplace's seller account would silently serve that account under any other marketplace.
+ *
+ * 1. If any `NEWEGG_<MP>_{SELLER_ID,API_KEY,SECRET_KEY}` is set for the selected marketplace, all
+ *    three are required and used.
+ * 2. Otherwise the legacy unprefixed `NEWEGG_{SELLER_ID,API_KEY,SECRET_KEY}` are accepted only
+ *    when `NEWEGG_CREDENTIALS_MARKETPLACE` names the marketplace they were issued for AND equals
+ *    `NEWEGG_MARKETPLACE`.
+ * 3. Never a fallback to another marketplace's set. Messages name variables and marketplaces only,
+ *    never values.
+ */
+function resolveCredentials(env: EnvRecord, marketplace: NeweggMarketplace): CredentialOutcome {
+  const prefixed = prefixedCredentialNames(marketplace);
+  if (prefixed.some((name) => isSet(env, name))) {
+    const missing = prefixed.filter((name) => !isSet(env, name));
+    if (missing.length > 0) {
+      return {
+        issues: [
+          `Incomplete credential set for marketplace "${marketplace}": ${missing.join(", ")} not set. ` +
+            `When any of ${prefixed.join("/")} is set, all three are required.`,
+        ],
+      };
+    }
+    return { credentials: credentialsFrom(env, prefixed), issues: [] };
+  }
+
+  const legacy = CREDENTIAL_FIELDS.map((field) => `NEWEGG_${field}`);
+  const missingLegacy = legacy.filter((name) => !isSet(env, name));
+  if (missingLegacy.length === legacy.length) {
+    const others = (["us", "b2b", "ca"] as const)
+      .filter((other) => other !== marketplace)
+      .filter((other) => prefixedCredentialNames(other).some((name) => isSet(env, name)));
+    const hint =
+      others.length > 0
+        ? ` Credentials for ${others.join(", ")} are set but are never reused for another marketplace.`
+        : "";
+    return {
+      issues: [
+        `No credentials configured for NEWEGG_MARKETPLACE=${marketplace}: set ${prefixed.join(", ")} ` +
+          `(the keys issued for that marketplace), or the unprefixed ${legacy.join(", ")} together ` +
+          `with NEWEGG_CREDENTIALS_MARKETPLACE=${marketplace}.${hint}`,
+      ],
+    };
+  }
+
+  const issues: string[] = missingLegacy.map(required);
+  const declared = env["NEWEGG_CREDENTIALS_MARKETPLACE"]?.trim() ?? "";
+  if (declared === "") {
+    issues.push(
+      `NEWEGG_CREDENTIALS_MARKETPLACE is required with the unprefixed ${legacy.join("/")}: set it ` +
+        `to the marketplace those keys were issued for (us, b2b or ca); it must equal ` +
+        `NEWEGG_MARKETPLACE (${marketplace}). Newegg ignores the URL prefix when authenticating, ` +
+        `so unlabeled keys could silently operate another marketplace's account. Alternatively ` +
+        `use ${prefixed.join("/")}.`,
+    );
+  } else {
+    const declaredMarketplace = normalizeMarketplace(declared);
+    if (declaredMarketplace === undefined) {
+      issues.push(marketplaceHint("NEWEGG_CREDENTIALS_MARKETPLACE"));
+    } else if (declaredMarketplace !== marketplace) {
+      issues.push(
+        `NEWEGG_CREDENTIALS_MARKETPLACE (${declaredMarketplace}) does not match ` +
+          `NEWEGG_MARKETPLACE (${marketplace}); refusing to start. Set ` +
+          `NEWEGG_MARKETPLACE=${declaredMarketplace}, or provide the keys issued for ` +
+          `${marketplace} as ${prefixed.join("/")}.`,
+      );
+    }
+  }
+  if (issues.length > 0) return { issues };
+  return { credentials: credentialsFrom(env, legacy), issues: [] };
+}
+
 /** Renders all collected issues into one secret-free message (a single line when there is one). */
-function formatIssues(error: z.ZodError): string {
-  const messages = [...new Set(error.issues.map((issue) => issue.message))];
+function formatIssues(allMessages: readonly string[]): string {
+  const messages = [...new Set(allMessages)];
   const [only] = messages;
   if (messages.length === 1 && only !== undefined) return only;
   return `Invalid MCP server configuration:\n${messages.map((m) => `  - ${m}`).join("\n")}`;
@@ -449,10 +529,25 @@ function formatIssues(error: z.ZodError): string {
  */
 export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerConfig {
   const result = envSchema.safeParse(env);
-  if (!result.success) {
-    throw new McpConfigError(formatIssues(result.error));
+  const rawMarketplace = env["NEWEGG_MARKETPLACE"]?.trim() ?? "";
+  const selected = result.success
+    ? result.data.NEWEGG_MARKETPLACE
+    : rawMarketplace === ""
+      ? undefined
+      : normalizeMarketplace(rawMarketplace);
+  // Credentials depend on the selected marketplace; with no valid one the marketplace issue is
+  // already reported and there is nothing sound to resolve them against.
+  const outcome = selected === undefined ? undefined : resolveCredentials(env, selected);
+  if (!result.success || outcome?.credentials === undefined) {
+    throw new McpConfigError(
+      formatIssues([
+        ...(result.success ? [] : result.error.issues.map((issue) => issue.message)),
+        ...(outcome?.issues ?? []),
+      ]),
+    );
   }
   const parsed = result.data;
+  const credentials = outcome.credentials;
 
   const allowedMarketplaces = parsed.NEWEGG_MCP_ALLOWED_MARKETPLACES;
   if (allowedMarketplaces.length > 0 && !allowedMarketplaces.includes(parsed.NEWEGG_MARKETPLACE)) {
@@ -460,12 +555,6 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
       `Configured NEWEGG_MARKETPLACE (${parsed.NEWEGG_MARKETPLACE}) is not present in NEWEGG_MCP_ALLOWED_MARKETPLACES; refusing to start.`,
     );
   }
-
-  const credentials = makeCredentials(
-    parsed.NEWEGG_SELLER_ID,
-    parsed.NEWEGG_API_KEY,
-    parsed.NEWEGG_SECRET_KEY,
-  );
 
   const limits: McpLimits = {
     maxItemsPerOperation: parsed.NEWEGG_MCP_MAX_ITEMS_PER_OPERATION,
@@ -491,6 +580,7 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
 
   return {
     marketplace: parsed.NEWEGG_MARKETPLACE,
+    credentialMarketplace: parsed.NEWEGG_MARKETPLACE,
     baseUrl: parsed.NEWEGG_API_BASE_URL,
     allowWrites: parsed.NEWEGG_MCP_ALLOW_WRITES,
     credentials,

@@ -12,7 +12,7 @@ item's inventory, and preview an inventory update. No write happens unless you o
 
 ## Environment
 
-Required: `NEWEGG_SELLER_ID`, `NEWEGG_API_KEY`, `NEWEGG_SECRET_KEY`, `NEWEGG_MARKETPLACE`.
+Required: `NEWEGG_SELLER_ID`, `NEWEGG_API_KEY`, `NEWEGG_SECRET_KEY`, `NEWEGG_MARKETPLACE`, `NEWEGG_CREDENTIALS_MARKETPLACE` (the marketplace the keys were issued for; must equal `NEWEGG_MARKETPLACE`).
 Optional: `EXAMPLE_SELLER_PART_NUMBER` (default `EXAMPLE-SKU`), `EXAMPLE_QUANTITY` (default `5`).
 
 Credentials are read from the environment and never printed. Never commit real values — see
@@ -22,6 +22,7 @@ Credentials are read from the environment and never printed. Never commit real v
 
 ```bash
 NEWEGG_SELLER_ID=... NEWEGG_API_KEY=... NEWEGG_SECRET_KEY=... NEWEGG_MARKETPLACE=us \
+  NEWEGG_CREDENTIALS_MARKETPLACE=us \
   npm run start -w example-sdk-basic
 ```
 
