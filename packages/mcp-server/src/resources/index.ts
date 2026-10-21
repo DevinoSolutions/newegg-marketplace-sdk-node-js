@@ -37,11 +37,22 @@ export function buildCapabilities(
       maxPriceChangePercent: config.limits.maxPriceChangePercent,
       maxRefundAmount: config.limits.maxRefundAmount,
       maxLabelAmount: config.limits.maxLabelAmount ?? "unlimited",
-      allowLabelReprint: config.limits.allowLabelReprint,
+      allowLabelReprint: effectiveAllowLabelReprint(config),
+      labelReprintCooldownSeconds: config.limits.labelReprintCooldownSeconds,
+      maxLabelReprintsPerHour: config.limits.maxLabelReprintsPerHour,
       allowedWarehouses: config.limits.allowedWarehouses,
       allowedMarketplaces: config.limits.allowedMarketplaces,
     },
   };
+}
+
+/**
+ * Whether a label reprint can actually be requested under a cap: the reprint tools exist only with
+ * writes enabled, so the opt-in flag alone is not the effective permission. (The per-order
+ * cooldown and per-hour limits below apply to every reprint either way.)
+ */
+function effectiveAllowLabelReprint(config: McpServerConfig): boolean {
+  return config.allowWrites && config.limits.allowLabelReprint;
 }
 
 /**
@@ -67,7 +78,9 @@ export function buildPublicConfiguration(
       maxPriceChangePercent: config.limits.maxPriceChangePercent,
       maxRefundAmount: config.limits.maxRefundAmount,
       maxLabelAmount: config.limits.maxLabelAmount ?? "unlimited",
-      allowLabelReprint: config.limits.allowLabelReprint,
+      allowLabelReprint: effectiveAllowLabelReprint(config),
+      labelReprintCooldownSeconds: config.limits.labelReprintCooldownSeconds,
+      maxLabelReprintsPerHour: config.limits.maxLabelReprintsPerHour,
     },
     batchLimits: {
       feedMaxRecords: INVENTORY_FEED_MAX_RECORDS,

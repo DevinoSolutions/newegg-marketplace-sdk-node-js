@@ -16,7 +16,7 @@ const LABEL_GUIDANCE =
   "A shipping label may have been bought. Check the order (orders.get / orders.getStatus: a " +
   "Shipped order with a tracking number means the label exists) and use reprint to fetch it " +
   "instead of creating another one (a reprint may itself be billed; a guarded caller such as the " +
-  "MCP server only allows it once its operator has opted in to label reprints). Do not resubmit a create request until you have verified " +
+  "MCP server may restrict it). Do not resubmit a create request until you have verified " +
   "the order is still unshipped.";
 
 /** Builds the indeterminate error for a label write. */
