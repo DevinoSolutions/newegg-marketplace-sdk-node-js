@@ -136,6 +136,76 @@ describe("order criteria per marketplace (T-5912)", () => {
     }
   });
 
+  it("rejects an unknown type or premierOrder on every marketplace before any request", async () => {
+    const badTypes: unknown[] = [4, 0, "NWS", "bogus", "", "toString", null, {}];
+    const badPremier: unknown[] = [1, "Premier", "", "constructor", null];
+    for (const marketplace of ["us", "b2b", "ca"] as const) {
+      for (const [field, values] of [
+        ["type", badTypes],
+        ["premierOrder", badPremier],
+      ] as const) {
+        for (const bad of values) {
+          const fetchSpy = vi.fn(() => {
+            throw new Error("fetch must not be called");
+          }) as unknown as typeof globalThis.fetch;
+          const { client } = makeClient(marketplace, [], { fetch: fetchSpy });
+          const error: unknown = await client.orders
+            .list({ [field]: bad } as unknown as ListOrdersInput)
+            .then(
+              () => undefined,
+              (e: unknown) => e,
+            );
+          expect(error, `${marketplace} ${field}=${String(bad)}`).toBeInstanceOf(
+            NeweggValidationError,
+          );
+          expect((error as NeweggValidationError).issues[0]?.path).toBe(field);
+          expect(fetchSpy).not.toHaveBeenCalled();
+        }
+      }
+    }
+  });
+
+  it("still accepts every documented type and premierOrder value", async () => {
+    for (const type of ["all", "sbn", "sbs", "multiChannel"] as const) {
+      const { client, calls } = clientFor("ca");
+      await client.orders.list({ type });
+      expect(criteriaOf(calls).Type).toBe({ all: 0, sbn: 1, sbs: 2, multiChannel: 3 }[type]);
+    }
+    for (const premierOrder of ["all", "premierOnly", "noPremier"] as const) {
+      const { client, calls } = clientFor("us");
+      await client.orders.list({ premierOrder });
+      expect(criteriaOf(calls).PremierOrder).toBe(
+        { all: 0, premierOnly: 1, noPremier: 2 }[premierOrder],
+      );
+    }
+  });
+
+  it("rejects a lastUpdatedAfter string that is not one of the two probed wire formats", async () => {
+    const bad = [
+      "2026-01-02",
+      "2026-01-02T03:04:05Z",
+      "2026-01-02 03:04",
+      "13/02/2026 03:04:05",
+      "2026-13-02 03:04:05",
+      "2026-01-02 24:00:00",
+      "tomorrow",
+      " 2026-01-02 03:04:05",
+    ];
+    for (const value of bad) {
+      const fetchSpy = vi.fn(() => {
+        throw new Error("fetch must not be called");
+      }) as unknown as typeof globalThis.fetch;
+      const { client } = makeClient("ca", [], { fetch: fetchSpy });
+      const error: unknown = await client.orders.list({ lastUpdatedAfter: value }).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(error, value).toBeInstanceOf(NeweggValidationError);
+      expect((error as NeweggValidationError).issues[0]?.path).toBe("lastUpdatedAfter");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }
+  });
+
   it("rejects an invalid lastUpdatedAfter before any request", async () => {
     for (const bad of [new Date("not a date"), "", "  "]) {
       const { client, calls } = clientFor("ca");

@@ -2788,8 +2788,9 @@ export interface ShippingLabelsApi {
     matches (`tryGet` → `undefined`); `getStatus` throws on `SO003` (`tryGetStatus` → `undefined`).
     `pageSize` outside 1–100 or `page` < 1 throws `NeweggValidationError` (never silently clamped). `list` criteria
     Newegg rejects per platform (`countryCode`, `premierOrder`, `type: "nws"`: Newegg.com only, 400 CE003 on b2b/ca; contracts §10.1)
-    throw `UnsupportedMarketplaceOperationError` BEFORE any request, never dropped silently; an invalid `isInternal` /
-    `lastUpdatedAfter` throws `NeweggValidationError`.
+    throw `UnsupportedMarketplaceOperationError` BEFORE any request, never dropped silently; an invalid `isInternal`, an unknown
+    `type` / `premierOrder` (never silently dropped), or a `lastUpdatedAfter` string that is not `MM/DD/YYYY HH:mm:ss` or
+    `YYYY-MM-DD HH:mm:ss` throws `NeweggValidationError` before any request.
 11. **Order writes (non-idempotent)**: `orders.ship` (Action 2) / `cancel` (Action 1) /
     `confirmDownload` / `removeItems` (KillItem) mutate and follow ADR 0004 — a provably-unsent
     transport error retries, but an ambiguous failure (timeout/reset after dispatch, or 408/5xx)

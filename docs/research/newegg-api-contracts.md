@@ -575,7 +575,8 @@ validates against, which is the part the prefix does select):
 
 - The CA error lists the valid elements as `OrderNumberList, Status, LastUpdatedAfter, VoidSoon, OrderDownloaded,
 SellerOrderNumberList, IsInternal, Type`.
-- `LastUpdatedAfter` accepts `MM/DD/YYYY HH:mm:ss` and `YYYY-MM-DD HH:mm:ss` (Pacific, §2). Verified on CA: a date in
+- `LastUpdatedAfter` accepts `MM/DD/YYYY HH:mm:ss` and `YYYY-MM-DD HH:mm:ss` (Pacific, §2); the SDK rejects any other
+  string with `NeweggValidationError` (a `Date` is rendered to the second form). Verified on CA: a date in
   2030 returned 0 orders and a date in 2020 returned all of them. **ASSUMPTION**: it filters on the order's
   last-update time (not the order date); only the wire format and the far-past/far-future behaviour were observed.
 - `IsInternal` is an integer (`"true"` is rejected); `0` and `1` both returned every order on the CA account.

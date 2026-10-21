@@ -82,9 +82,10 @@ export class OrdersApiImpl implements OrdersApi {
   async list(input: ListOrdersInput = {}, options: RequestOptions = {}): Promise<OrdersPage> {
     const { marketplace, sellerId } = this.#config;
     const correlationId = options.correlationId ?? randomUUID();
-    // Refuse criteria this marketplace's Newegg API rejects (CE003) before anything is sent.
-    assertOrderCriteriaSupported(getOrderCriteriaPlatform(marketplace), input);
+    // Validate first (an unknown filter value is a NeweggValidationError), then refuse criteria this
+    // marketplace's Newegg API rejects (CE003); both happen before anything is sent.
     const { body, pageIndex, pageSize } = buildOrderInfoRequest(input);
+    assertOrderCriteriaSupported(getOrderCriteriaPlatform(marketplace), input);
     const spec: RequestSpec = {
       method: "PUT",
       path: `${this.#http.adapter.prefix}ordermgmt/order/orderinfo`,
