@@ -374,9 +374,12 @@ export function createSdkTypeProbe(typeExpressions: readonly string[]): SdkTypeP
 /**
  * The probe reads the SDK's built `.d.ts` (dist), so a dist older than src (e.g. a OneDrive
  * rollback, or a forgotten rebuild) would silently compare against stale types. Returns a
- * human-readable problem, or undefined when dist is current.
+ * human-readable problem, or undefined when dist is current (always undefined on CI).
  */
 export function sdkDistStaleness(): string | undefined {
+  // CI downloads the dist artifact (tar preserves the build job's older mtimes) AFTER checking
+  // out the same commit, so mtimes say nothing there; the artifact is built from this commit.
+  if (process.env.CI === "true") return undefined;
   const sdkRoot = path.resolve(PACKAGE_ROOT, "..", "sdk");
   const newest = (dir: string, ext: string): number => {
     let latest = 0;
