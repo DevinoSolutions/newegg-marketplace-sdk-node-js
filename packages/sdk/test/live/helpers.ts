@@ -1,3 +1,4 @@
+import { expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -48,12 +49,14 @@ export const liveEnabled =
   Boolean(env.NEWEGG_API_KEY) &&
   Boolean(env.NEWEGG_SECRET_KEY);
 
-let warnedMarketplace = false;
+// Vitest isolates modules per test file, so a module-level flag would warn once per file; a
+// process.env flag is shared by every file that runs in the same worker process (the guard bans
+// globalThis in the live suite).
 
 export function marketplace(): NeweggMarketplace {
   const value = env.NEWEGG_MARKETPLACE?.toLowerCase();
-  if (!warnedMarketplace && value !== "us" && value !== "b2b" && value !== "ca") {
-    warnedMarketplace = true;
+  if (env.NEWEGG_LIVE_MARKETPLACE_WARNED === undefined && value !== "us" && value !== "b2b" && value !== "ca") {
+    env.NEWEGG_LIVE_MARKETPLACE_WARNED = "1";
     console.warn(
       `NEWEGG_MARKETPLACE is ${value === undefined || value === "" ? "unset" : "invalid"}; ` +
         'the live suite falls back to the lenient "us" path. Set NEWEGG_MARKETPLACE=ca for the ' +
@@ -113,6 +116,31 @@ export const NON_CA_VOLUME_DISCOUNT_500: NonCaLimitation = {
   reason: "Get Volume Discount answers HTTP 500 InternalError for a real SKU (Newegg-side; T-5611)",
   matches: (error) => error.httpStatus === 500 && error.neweggErrorCode === "InternalError",
 };
+
+/**
+ * Asserts that `error` is the documented not-found answer for an unknown SKU. On CA it must be a
+ * `NeweggError` carrying one of `codes` (cited per endpoint by the caller), so a 401/5xx cannot
+ * pass. On US/B2B an unexpected error skips with its HTTP status and code in the reason instead of
+ * passing, so an auth failure is reported and never mistaken for "not found".
+ */
+export function expectUnknownSkuNotFound(
+  ctx: { skip: (note?: string) => never },
+  error: unknown,
+  codes: readonly string[],
+): void {
+  if (error instanceof NeweggError && codes.includes(error.neweggErrorCode ?? "")) {
+    expect(codes).toContain(error.neweggErrorCode);
+    return;
+  }
+  if (isCa()) {
+    expect.fail(
+      `expected not-found ${codes.join("/")} on ca, got ${describeError(error)} (an auth or server error must not pass)`,
+    );
+  }
+  ctx.skip(
+    `${marketplace()}: unknown SKU did not answer ${codes.join("/")} (got ${describeError(error)})`,
+  );
+}
 
 export function makeLiveClient(): NeweggClient {
   return createNeweggClient({

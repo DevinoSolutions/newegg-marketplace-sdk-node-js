@@ -1,7 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { NeweggError, type ItemIdentifier } from "../../src/index.js";
+import { type ItemIdentifier } from "../../src/index.js";
 import {
   discoverIdentifiers,
+  expectUnknownSkuNotFound,
+  isCa,
   liveEnabled,
   makeLiveClient,
   marketplace,
@@ -56,15 +58,17 @@ describe.skipIf(!liveEnabled)("live (read-only): volume discount reads", () => {
     }
   });
 
-  it("an unknown SKU surfaces as undefined (tryGet) or a typed SDK error (read-only)", async () => {
+  it("an unknown SKU answers the documented not-found code (read-only)", async (ctx) => {
     const client = makeLiveClient();
     try {
-      const snapshot = await client.volumeDiscounts.tryGet({
+      const snapshot = await client.volumeDiscounts.get({
         sellerPartNumber: "NONEXISTENT-PROBE-SKU-XYZ",
       });
-      expect(snapshot === undefined || snapshot.marketplace === marketplace()).toBe(true);
+      expect(isCa()).toBe(false);
+      expect(snapshot.marketplace).toBe(marketplace());
     } catch (error) {
-      expect(error).toBeInstanceOf(NeweggError);
+      // Contracts §22.1: an unknown SKU answers 400 CT002 (US/B2B observed 2026-10-21)
+      expectUnknownSkuNotFound(ctx, error, ["CT002", "CT060"]);
     }
   });
 });

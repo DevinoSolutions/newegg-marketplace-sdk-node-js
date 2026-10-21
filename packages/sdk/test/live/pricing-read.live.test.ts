@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { NeweggError, type ItemIdentifier } from "../../src/index.js";
+import { type ItemIdentifier } from "../../src/index.js";
 import {
   discoverIdentifiers,
+  expectUnknownSkuNotFound,
   isCa,
   liveEnabled,
   makeLiveClient,
@@ -72,15 +73,18 @@ describe.skipIf(!liveEnabled)("live (read-only): pricing reads", () => {
     expect(batch.items.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("an unknown SKU surfaces as undefined (tryGet) or a typed SDK error (read-only)", async () => {
+  it("an unknown SKU answers the documented not-found code (read-only)", async (ctx) => {
     const client = makeLiveClient();
     try {
-      const snapshot = await client.pricing.tryGet({
+      const snapshot = await client.pricing.get({
         identifier: { type: "sellerPartNumber", value: "NONEXISTENT-PROBE-SKU-XYZ" },
       });
-      expect(snapshot === undefined || snapshot.marketplace === marketplace()).toBe(true);
+      // Only non-CA may resolve a snapshot here; CA must answer not-found.
+      expect(isCa()).toBe(false);
+      expect(snapshot.marketplace).toBe(marketplace());
     } catch (error) {
-      expect(error).toBeInstanceOf(NeweggError);
+      // Contracts §15.2 errors list / §15.6 tryGet: not found is CT026 or CT010 (HTTP 400).
+      expectUnknownSkuNotFound(ctx, error, ["CT026", "CT010"]);
     }
   });
 });

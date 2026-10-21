@@ -1,7 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { NeweggError, type ItemIdentifier } from "../../src/index.js";
+import { type ItemIdentifier } from "../../src/index.js";
 import {
   discoverIdentifiers,
+  expectUnknownSkuNotFound,
+  isCa,
   liveEnabled,
   makeLiveClient,
   marketplace,
@@ -69,7 +71,7 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
 
   it("getMany reads MULTIPLE real items in one batch", async (ctx) => {
     if (identifiers.length < 2) {
-      ctx.skip(`fewer than 2 ${marketplace()} items discoverable (${noItemReason()})`);
+      ctx.skip(`fewer than 2 ${marketplace()} items discoverable (${identifiers.length} found; ${noItemReason()})`);
       return;
     }
     const client = makeLiveClient();
@@ -88,19 +90,21 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
     }
   });
 
-  it("getItem for an unknown SKU surfaces a typed result (real endpoint, read-only)", async () => {
+  it("getItem for an unknown SKU answers the documented not-found code (real endpoint, read-only)", async (ctx) => {
     const client = makeLiveClient();
     try {
       const snapshot = await client.inventory.getItem({
         identifier: { type: "sellerPartNumber", value: "NONEXISTENT-PROBE-SKU-XYZ" },
         warehouses: warehouses(),
       });
-      // Some responses come back as an empty snapshot rather than an error.
+      // B2B answers an empty 200 shell for a SKU it does not know (contracts §5, T-5611); CA must
+      // answer not-found.
+      expect(isCa()).toBe(false);
       expect(snapshot.marketplace).toBe(marketplace());
       expect(typeof snapshot.totalAvailableQuantity).toBe("number");
     } catch (error) {
-      // Unknown items surface as a typed SDK error (observed: NeweggApiError, HTTP 400 CT026).
-      expect(error).toBeInstanceOf(NeweggError);
+      // Contracts §5 (identifier resolution, verified live 2026-07-18): SKU reads fail 400 CT026.
+      expectUnknownSkuNotFound(ctx, error, ["CT026"]);
     }
   });
 
