@@ -3554,16 +3554,19 @@ reprint to fetch the label instead of buying another). The estimate goes through
 path (`HttpClient.requestOnce`): one request, no retry, errors mapped. There is no void / refund-a-label
 operation in the documented API.
 
-**Opt-in cost ceiling (MCP only).** `NEWEGG_MCP_MAX_LABEL_AMOUNT` (unset by default, a number above 0 and at
-most 99,999.99, in the marketplace currency) mirrors `NEWEGG_MCP_MAX_REFUND_AMOUNT` but is off unless set;
-with it unset nothing changes and no estimate is requested by the previews. When set: the create preview
+**Cost ceiling (MCP only, on by default).** `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100; a number above 0 and at
+most 99,999.99, in the marketplace currency: USD on us/b2b, CAD on ca, and the number is compared as-is, with
+no currency conversion) mirrors `NEWEGG_MCP_MAX_REFUND_AMOUNT`. Leaving it unset or empty keeps the default;
+only the explicit value `unlimited` (or `off`, case-insensitive) disables it, and any other value is rejected
+at startup. With the cap disabled no estimate is requested by the previews. While a cap is active: the create preview
 requests one estimate, reports it as `estimatedCost` (with `maxLabelAmount`) and is blocked, with no
 `previewId`, when the total is above the cap; the quoted cost (cents) is part of the stored preview's hash;
-`apply_create` asks for a **fresh** estimate (the carrier rate can move) and refuses with `preview_stale`,
-sending nothing, when it is above the cap. It fails closed: a quote that errors, a quote for a different
+`apply_create` first refuses with `preview_stale` when the stored quote is above the CURRENT cap (a restart with a
+lower cap), then asks for a **fresh** estimate (the carrier rate can move) and refuses with `preview_stale`,
+sending nothing, when that is above the cap. It fails closed: a quote that errors, a quote for a different
 number of packages than the purchase, a package Newegg did not rate, or a total that is not above 0 blocks the preview and the apply. A **reprint** has no quote (its
-request carries only the order number) and may be billed, so while the cap is set a reprint preview is
-blocked as an undeterminable cost. The SDK enforces no ceiling; SDK callers are the operator.
+request carries only the order number) and may be billed, so while a cap is active (the default) a reprint preview is
+blocked as an undeterminable cost; the operator must set `NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited` to reprint. The SDK enforces no ceiling; SDK callers are the operator.
 
 ### 23.6 ASSUMPTIONs (retire only with an owner-authorized live probe)
 

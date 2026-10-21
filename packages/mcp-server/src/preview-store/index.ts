@@ -112,7 +112,7 @@ export type ShippingLabelPreviewRecord = {
     readonly input: ShippingLabelInputs[K];
     /**
      * The quoted cost of the previewed label in whole cents, recorded only when
-     * `NEWEGG_MCP_MAX_LABEL_AMOUNT` was set at preview time (undefined otherwise). Part of the
+     * a label cap was active at preview time (undefined when it was `unlimited`). Part of the
      * hash so it cannot be edited in the store.
      */
     readonly costCents?: number;
