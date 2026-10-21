@@ -22,6 +22,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:live": "vitest run --config packages/sdk/vitest.live.config.ts",
+    "test:live:reports": "vitest run --config packages/sdk/vitest.live.reports.config.ts",
     "docs:api": "typedoc",
     "verify:exports": "tsx scripts/verify-exports.ts",
     "check:secrets": "tsx scripts/check-secrets.ts",

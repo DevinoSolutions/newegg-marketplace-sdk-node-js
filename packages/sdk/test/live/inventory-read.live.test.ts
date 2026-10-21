@@ -5,6 +5,8 @@ import {
   liveEnabled,
   makeLiveClient,
   marketplace,
+  NON_CA_BATCH_INVENTORY_401,
+  skipNonCaLimitation,
   testWarehouse,
 } from "./helpers.js";
 
@@ -13,12 +15,18 @@ import {
  * discovered read-only (explicit NEWEGG_LIVE_TEST_SELLER_PART_NUMBER, else from recent orders);
  * the real-data reads skip cleanly if none is found. Every call here is a read — `getItem` /
  * `getMany`. There is deliberately NO write test in the live suite.
+ *
+ * On US/B2B the discovered identifiers are limited to items that exist on that marketplace (a B2B
+ * inventory read of a missing item is an empty 200 shell that would pass vacuously), and the batch
+ * reads skip on the documented 401 InvalidToken (contracts section 5.3). CA stays strict.
  */
 const warehouses = (): string[] | undefined => {
   if (marketplace() !== "us") return undefined; // warehouses are US-only
   const wh = testWarehouse();
   return wh ? [wh] : undefined;
 };
+
+const noItem = (): string => `no ${marketplace()} item discoverable (T-5611)`;
 
 describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
   let identifiers: ItemIdentifier[] = [];
@@ -30,7 +38,7 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
   it("getItem returns a real snapshot for a discovered item", async (ctx) => {
     const id = identifiers[0];
     if (!id) {
-      ctx.skip();
+      ctx.skip(noItem());
       return;
     }
     const client = makeLiveClient();
@@ -44,11 +52,16 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
   it("getMany returns a real batch snapshot for a single discovered item", async (ctx) => {
     const id = identifiers[0];
     if (!id) {
-      ctx.skip();
+      ctx.skip(noItem());
       return;
     }
     const client = makeLiveClient();
-    const batch = await client.inventory.getMany({ identifiers: [id], warehouses: warehouses() });
+    const batch = await client.inventory
+      .getMany({ identifiers: [id], warehouses: warehouses() })
+      .catch((error: unknown) => {
+        skipNonCaLimitation(ctx, error, NON_CA_BATCH_INVENTORY_401);
+        throw error;
+      });
     expect(batch.marketplace).toBe(marketplace());
     expect(Array.isArray(batch.items)).toBe(true);
     expect(batch.items.length).toBeGreaterThanOrEqual(1);
@@ -57,11 +70,16 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
 
   it("getMany reads MULTIPLE real items in one batch", async (ctx) => {
     if (identifiers.length < 2) {
-      ctx.skip();
+      ctx.skip(`fewer than 2 ${marketplace()} items discoverable for a multi-item batch`);
       return;
     }
     const client = makeLiveClient();
-    const batch = await client.inventory.getMany({ identifiers, warehouses: warehouses() });
+    const batch = await client.inventory
+      .getMany({ identifiers, warehouses: warehouses() })
+      .catch((error: unknown) => {
+        skipNonCaLimitation(ctx, error, NON_CA_BATCH_INVENTORY_401);
+        throw error;
+      });
     expect(batch.marketplace).toBe(marketplace());
     expect(batch.items.length).toBeGreaterThanOrEqual(1);
     expect(batch.totalCount).toBeGreaterThanOrEqual(1);
@@ -90,7 +108,7 @@ describe.skipIf(!liveEnabled)("live (read-only): inventory reads", () => {
   it("normalized totals match the raw Newegg payload (invariant, read-only)", async (ctx) => {
     const id = identifiers[0];
     if (!id) {
-      ctx.skip();
+      ctx.skip(noItem());
       return;
     }
     const client = makeLiveClient();

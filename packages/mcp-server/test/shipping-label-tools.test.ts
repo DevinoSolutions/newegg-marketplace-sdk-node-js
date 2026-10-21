@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { MockRoute } from "@devino/newegg-marketplace-sdk/testing";
-import { loadMcpConfigFromEnv, type ShippingLabelPreviewRecord } from "../src/index.js";
+import {
+  InMemoryPreviewStore,
+  loadMcpConfigFromEnv,
+  type ShippingLabelPreviewRecord,
+} from "../src/index.js";
 import { callTool, makeEnv, startHarness, type Harness } from "./helpers.js";
 
 /**
@@ -17,8 +21,14 @@ const TRACKING = "1ZTEST0000000000";
 const LABEL_URL = "https://labels.newegg.com/test/label.pdf";
 const PACKING_URL = "https://labels.newegg.com/test/packing.pdf";
 
+// The label cost cap defaults to 100, so the purchase-flow suites (which route no estimate) lift it
+// explicitly; the cap suites below override it, and the default-cap suite builds its own env.
 const writesEnv = (overrides: Record<string, string | undefined> = {}) =>
-  makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "true", ...overrides });
+  makeEnv({
+    NEWEGG_MCP_ALLOW_WRITES: "true",
+    NEWEGG_MCP_MAX_LABEL_AMOUNT: "unlimited",
+    ...overrides,
+  });
 
 const TOOLS = {
   estimate: "newegg_shipping_label_estimate",
@@ -633,7 +643,7 @@ const wasCreateSent = (harness: Harness) =>
   posts(harness).some((call) => CREATE.test(call.url.pathname));
 
 describe("NEWEGG_MCP_MAX_LABEL_AMOUNT cost cap", () => {
-  it("leaves the purchase flow unchanged when the cap is unset (no quote call)", async () => {
+  it("leaves the purchase flow unchanged when the cap is explicitly unlimited (no quote call)", async () => {
     const harness = await harnessFor([
       postRoute(ESTIMATE, 200, estimateBody("999.99")),
       postRoute(CREATE, 200, createBody()),
@@ -798,7 +808,7 @@ describe("NEWEGG_MCP_MAX_LABEL_AMOUNT cost cap", () => {
     }
   });
 
-  it("blocks a reprint while the cap is set, and allows it when the cap is unset", async () => {
+  it("blocks a reprint while a cap is active, and allows it when the cap is unlimited", async () => {
     const capped = await harnessFor(
       [postRoute(REPRINT, 200, reprintBody)],
       capEnv("20"),
@@ -911,21 +921,273 @@ describe("NEWEGG_MCP_MAX_LABEL_AMOUNT cost cap", () => {
   });
 });
 
+describe("NEWEGG_MCP_MAX_LABEL_AMOUNT default cap", () => {
+  // No override of the label cap: this is what an operator gets by enabling writes and nothing else.
+  const defaultEnv = () => makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "true" });
+
+  it("previews a quote within the default cap of 100 and carries the cap", async () => {
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 200, estimateBody("99.99")), postRoute(CREATE, 200, createBody())],
+      defaultEnv(),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json).toMatchObject({
+        eligible: true,
+        estimatedCost: 99.99,
+        maxLabelAmount: 100,
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("blocks a preview above the default cap with no env var set, issuing no previewId", async () => {
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 200, estimateBody("100.01")), postRoute(CREATE, 200, createBody())],
+      defaultEnv(),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(false);
+      expect(preview.json.previewId).toBeUndefined();
+      expect(preview.json.maxLabelAmount).toBe(100);
+      expect((preview.json.blockers as string[]).join("\n")).toContain(
+        "NEWEGG_MCP_MAX_LABEL_AMOUNT",
+      );
+      expect(wasCreateSent(harness)).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("treats an empty value as unset: the default cap still applies", async () => {
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 200, estimateBody("250.00")), postRoute(CREATE, 200, createBody())],
+      writesEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: "" }),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(false);
+      expect(preview.json.maxLabelAmount).toBe(100);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("fails closed by default: a failed quote blocks the preview", async () => {
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 503, { message: "down" }), postRoute(CREATE, 200, createBody())],
+      defaultEnv(),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(false);
+      expect(preview.json.previewId).toBeUndefined();
+      expect(wasCreateSent(harness)).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("blocks a reprint by default (no quote, billing unknown) and says how to allow it", async () => {
+    const harness = await harnessFor(
+      [postRoute(REPRINT, 200, reprintBody)],
+      defaultEnv(),
+      undefined,
+      true,
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewReprint, {
+        orderNumber: ORDER_NUMBER,
+      });
+      expect(preview.json.eligible).toBe(false);
+      expect(preview.json.previewId).toBeUndefined();
+      expect((preview.json.blockers as string[]).join("\n")).toContain("=unlimited");
+      expect(posts(harness)).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("allows a quote above the default cap once the operator raises the cap", async () => {
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 200, estimateBody("150.00")), postRoute(CREATE, 200, createBody())],
+      capEnv("200"),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json).toMatchObject({ eligible: true, maxLabelAmount: 200 });
+      const applied = await callTool(harness.mcp, TOOLS.applyCreate, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(false);
+      expect(wasCreateSent(harness)).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it.each(["unlimited", "UNLIMITED", " off "])("%j disables the cap", async (value) => {
+    const harness = await harnessFor(
+      [postRoute(ESTIMATE, 200, estimateBody("999.99")), postRoute(CREATE, 200, createBody())],
+      writesEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: value }),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(true);
+      expect(preview.json.maxLabelAmount).toBeUndefined();
+      expect(posts(harness)).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("apply refuses a stored preview that is over a cap lowered after the preview, sending nothing", async () => {
+    const previewStore = new InMemoryPreviewStore();
+    const previewed = await startHarness({
+      env: capEnv("200"),
+      routes: [orderRoute(), postRoute(ESTIMATE, 200, estimateBody("80.00"))],
+      previewStore,
+    });
+    let id: string;
+    try {
+      const preview = await callTool(previewed.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(true);
+      id = preview.json.previewId as string;
+      const stored = (await previewStore.get(id)) as unknown as { costCents?: number };
+      expect(stored.costCents).toBe(8000);
+    } finally {
+      await previewed.close();
+    }
+    // The same server restarts with a lower cap; the stored 80.00 is now over it.
+    const lowered = await startHarness({
+      env: capEnv("50"),
+      routes: [
+        orderRoute(),
+        postRoute(ESTIMATE, 200, estimateBody("80.00")),
+        postRoute(CREATE, 200, createBody()),
+      ],
+      previewStore,
+    });
+    try {
+      const applied = await callTool(lowered.mcp, TOOLS.applyCreate, { previewId: id });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(applied.text).toContain("Nothing was sent");
+      expect(applied.text).toContain("NEWEGG_MCP_MAX_LABEL_AMOUNT");
+      // The stored amount alone decides: no fresh quote and no purchase.
+      expect(posts(lowered)).toHaveLength(0);
+      const replay = await callTool(lowered.mcp, TOOLS.applyCreate, { previewId: id });
+      expect(replay.isError).toBe(true);
+    } finally {
+      await lowered.close();
+    }
+  });
+
+  it("apply refuses a preview made while unlimited once the default cap is back, via a fresh quote", async () => {
+    const previewStore = new InMemoryPreviewStore();
+    const open = await startHarness({
+      env: writesEnv(),
+      routes: [orderRoute(), postRoute(CREATE, 200, createBody())],
+      previewStore,
+    });
+    let id: string;
+    try {
+      const preview = await callTool(open.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(true);
+      id = preview.json.previewId as string;
+    } finally {
+      await open.close();
+    }
+    const capped = await startHarness({
+      env: defaultEnv(),
+      routes: [
+        orderRoute(),
+        postRoute(ESTIMATE, 200, estimateBody("300.00")),
+        postRoute(CREATE, 200, createBody()),
+      ],
+      previewStore,
+    });
+    try {
+      const applied = await callTool(capped.mcp, TOOLS.applyCreate, { previewId: id });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(wasCreateSent(capped)).toBe(false);
+    } finally {
+      await capped.close();
+    }
+  });
+
+  it("apply under the default cap re-quotes and refuses when the rate rose above 100", async () => {
+    let quotes = 0;
+    const estimateRoute: MockRoute = {
+      method: "POST",
+      pathPattern: ESTIMATE,
+      reply: () => {
+        quotes += 1;
+        return { status: 200, body: estimateBody(quotes === 1 ? "90.00" : "130.00") };
+      },
+    };
+    const harness = await harnessFor(
+      [estimateRoute, postRoute(CREATE, 200, createBody())],
+      defaultEnv(),
+    );
+    try {
+      const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(preview.json.eligible).toBe(true);
+      const applied = await callTool(harness.mcp, TOOLS.applyCreate, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(wasCreateSent(harness)).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
 describe("NEWEGG_MCP_MAX_LABEL_AMOUNT config", () => {
-  it("is unset by default and accepts a decimal", () => {
-    expect(loadMcpConfigFromEnv(makeEnv()).limits.maxLabelAmount).toBeUndefined();
+  it("defaults to 100 when unset or blank, and accepts a decimal", () => {
+    expect(loadMcpConfigFromEnv(makeEnv()).limits.maxLabelAmount).toBe(100);
     expect(
       loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: "" })).limits.maxLabelAmount,
-    ).toBeUndefined();
+    ).toBe(100);
+    expect(
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: "  " })).limits.maxLabelAmount,
+    ).toBe(100);
     expect(
       loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: "25.5" })).limits.maxLabelAmount,
     ).toBe(25.5);
+    expect(
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: "750" })).limits.maxLabelAmount,
+    ).toBe(750);
   });
 
-  it.each(["0", "-1", "abc", "100000"])("rejects %s", (value) => {
-    expect(() => loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: value }))).toThrow(
-      /NEWEGG_MCP_MAX_LABEL_AMOUNT/,
-    );
+  it.each(["unlimited", "UNLIMITED", "Off", " off "])("%j disables the cap", (value) => {
+    expect(
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: value })).limits.maxLabelAmount,
+    ).toBeUndefined();
+  });
+
+  it.each(["0", "-1", "abc", "100000", "none", "false", "Infinity", "NaN", "1e999"])(
+    "rejects %s with a clear message, never falling back silently",
+    (value) => {
+      expect(() => loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: value }))).toThrow(
+        /NEWEGG_MCP_MAX_LABEL_AMOUNT must be .*unlimited/,
+      );
+    },
+  );
+
+  it("leaves the refund cap default and validation unchanged", () => {
+    expect(loadMcpConfigFromEnv(makeEnv()).limits.maxRefundAmount).toBe(500);
+    expect(
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_REFUND_AMOUNT: "250" })).limits.maxRefundAmount,
+    ).toBe(250);
+    // "unlimited" is a label-cap-only opt-out: the refund cap has no off switch.
+    expect(() =>
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_MAX_REFUND_AMOUNT: "unlimited" })),
+    ).toThrow(/NEWEGG_MCP_MAX_REFUND_AMOUNT/);
   });
 });
 

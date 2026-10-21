@@ -40,12 +40,14 @@ export interface McpLimits {
    */
   readonly maxRefundAmount: number;
   /**
-   * Opt-in ceiling on what ONE shipping label purchase (all its packages together) may cost, in the
-   * marketplace currency; a dearer purchase is blocked at preview and again at apply. Unset (the
-   * default) means no cap and the label tools behave as before. When set, a cost that cannot be
-   * determined is blocked too (fail closed).
+   * Ceiling on what ONE shipping label purchase (all its packages together) may cost, in the
+   * marketplace currency (USD on us/b2b, CAD on ca; the number is compared as-is); a dearer
+   * purchase is blocked at preview and again at apply. Default 100. `undefined` means NO cap and is
+   * reachable only through the explicit `NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited` (or `off`) opt-out,
+   * never by leaving the variable unset or empty. While a cap is set, a cost that cannot be
+   * determined (failed quote, unrated package, any reprint) is blocked too (fail closed).
    */
-  readonly maxLabelAmount?: number;
+  readonly maxLabelAmount: number | undefined;
   /** Uppercased warehouse codes; empty means "all warehouses allowed". */
   readonly allowedWarehouses: string[];
   /** Normalized marketplace codes; empty means "all marketplaces allowed". */
@@ -182,17 +184,32 @@ function numberEnv(name: string, fallback: number, check: (n: number) => boolean
     });
 }
 
-/** Optional finite number with NO default (undefined when unset/blank); must satisfy `check`. */
-function optionalNumberEnv(name: string, check: (n: number) => boolean, hint: string) {
+/** The only spellings (case-insensitive) that switch a safety cap off. */
+const CAP_DISABLED_TOKENS: readonly string[] = ["unlimited", "off"];
+
+/**
+ * Safety cap with a default: unset/blank yields `fallback` (never "no cap"), a number must satisfy
+ * `check`, and the cap is disabled (`undefined`) only by an explicit `unlimited` / `off`.
+ */
+function cappedNumberEnv(
+  name: string,
+  fallback: number,
+  check: (n: number) => boolean,
+  hint: string,
+) {
   return z
     .string()
     .optional()
-    .transform((raw, ctx) => {
+    .transform((raw, ctx): number | undefined => {
       const trimmed = raw?.trim();
-      if (trimmed === undefined || trimmed === "") return undefined;
+      if (trimmed === undefined || trimmed === "") return fallback;
+      if (CAP_DISABLED_TOKENS.includes(trimmed.toLowerCase())) return undefined;
       const parsed = Number(trimmed);
       if (!Number.isFinite(parsed) || !check(parsed)) {
-        ctx.addIssue({ code: "custom", message: `${name} must be ${hint}.` });
+        ctx.addIssue({
+          code: "custom",
+          message: `${name} must be ${hint}, or "unlimited" to disable the cap.`,
+        });
         return z.NEVER;
       }
       return parsed;
@@ -316,8 +333,9 @@ const envSchema = z.object({
     (n) => n > 0 && n <= 99_999.99,
     "a number greater than 0 and at most 99999.99",
   ),
-  NEWEGG_MCP_MAX_LABEL_AMOUNT: optionalNumberEnv(
+  NEWEGG_MCP_MAX_LABEL_AMOUNT: cappedNumberEnv(
     "NEWEGG_MCP_MAX_LABEL_AMOUNT",
+    100,
     (n) => n > 0 && n <= 99_999.99,
     "a number greater than 0 and at most 99999.99",
   ),

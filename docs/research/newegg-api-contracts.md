@@ -149,6 +149,15 @@ the seller has no offer on fail **CT010** (9/9 observed; CT010 also covers malfo
 values — the two are indistinguishable on the wire). Also: while an item is deactivated,
 reads report `AvailableQuantity` 0, which may mask the stored quantity.
 
+**Observed live (B2B, 2026-10-21, T-5611) — empty shell record:** a B2B single-item inventory read of a
+seller part number that exists only in the CA store answers HTTP **200** with a well-formed but empty
+record (`Active` "0", `AvailableQuantity` 0, item number and SKU echoed), not CT026. The same record shape is
+returned for a real CA item that is deactivated or sold out, so the inventory response alone cannot tell
+"missing" from "zero stock". The Get Item Price read does tell them apart (400 CT026 for a missing item,
+§15.3); the live suite therefore confirms an item exists on the marketplace with a price read first.
+The order-info endpoint returns the SAME orders (CA-store SKUs) under the `us/`, `b2b/` and `can/`
+prefixes, so SKUs discovered from order lines are not evidence an item exists on US or B2B.
+
 ### 5.3 US batch — Get Batch Inventory (International)
 
 ```
@@ -185,6 +194,17 @@ Response envelope:
 **ASSUMPTION (batch size)**: the documented per-request maximum for `Values` did not
 render in extraction; the SDK chunks batch reads at **100** identifiers per request
 (constant `GET_BATCH_INVENTORY_MAX_VALUES`, documented and configurable).
+
+**Observed live behaviour (US and B2B, 2026-10-21, T-5611) — batch read answers 401 InvalidToken:** with the
+account's one credential set, this route answers HTTP 401 with code `InvalidToken` ("Illegal secret key") on
+Newegg.com (POST, PUT, and PUT with `WarehouseList` alike) and on Newegg Business, while the same credentials
+read single-item inventory (§5.1), price (§15.2) and order-info on the same platform with HTTP 200, and the
+CA batch route (§5.4) answers 200. The URL, verb and body match the official page, so this is not a request
+shape bug. **ASSUMPTION (cause)**: the API key and secret were issued under the Newegg.ca (CAN) tab of the
+Seller Portal and Newegg's gateway enforces the key per marketplace on the `inventorylist` route family only;
+not proven. Not-yet-verified fix: generate the keys under the Newegg.com / Newegg Business tab and re-run.
+The SDK surfaces this as `NeweggAuthenticationError` (`httpStatus` 401, `neweggErrorCode` "InvalidToken"); the
+live suite treats it as a documented non-CA skip and stays strict on CA.
 
 ### 5.4 B2B / CAN batch — Get Batch Inventory
 
@@ -3252,6 +3272,16 @@ does not have volume discount yet." }]`. `tryGet` maps exactly `CT060` to `undef
 (`CT001` invalid item number, `CT002` invalid seller part number, `CT059` identifier missing) still throws.
 A 200 with no `ItemVolumeDiscountInfo` is a `NeweggApiError`.
 
+**Observed live behaviour (US and B2B, 2026-10-21, T-5611) — HTTP 500 for a real SKU:** the same read on
+Newegg.com (`api.newegg.com/marketplace/contentmgmt/item/volumediscount`) and Newegg Business answers HTTP
+**500** `InternalError` ("Our servers are currently unavailable...", which the SDK marks retryable) when the
+lookup resolves a real item with no discount on file, where CA answers 400 `CT060` for the same situation. An
+unknown SKU on the same US/B2B routes still answers a clean 400 `CT002`, so the route is alive and the failure
+is inside Newegg. It is not rate limiting (500, not 429; the 100/hour budget was not near). The official page
+was last updated in 2018 and only CA is verified. **ASSUMPTION**: Newegg-side limitation on US/B2B; do not
+treat a 500 as "no discount". `tryGet` deliberately maps only `CT060` to `undefined`; the live suite skips
+(non-CA only) on this 500 and stays strict on CA.
+
 **Propagation lag:** after a feed finished successfully the read kept returning `CT060` for about 13 minutes
 (feed submitted 04:33 Pacific; 400 `CT060` at +2 and +8 minutes; 200 with the tiers at +13 minutes). Do not read
 a discount back immediately after `update` and conclude it failed; poll the feed result instead (§7.5, §7.6).
@@ -3524,16 +3554,19 @@ reprint to fetch the label instead of buying another). The estimate goes through
 path (`HttpClient.requestOnce`): one request, no retry, errors mapped. There is no void / refund-a-label
 operation in the documented API.
 
-**Opt-in cost ceiling (MCP only).** `NEWEGG_MCP_MAX_LABEL_AMOUNT` (unset by default, a number above 0 and at
-most 99,999.99, in the marketplace currency) mirrors `NEWEGG_MCP_MAX_REFUND_AMOUNT` but is off unless set;
-with it unset nothing changes and no estimate is requested by the previews. When set: the create preview
+**Cost ceiling (MCP only, on by default).** `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100; a number above 0 and at
+most 99,999.99, in the marketplace currency: USD on us/b2b, CAD on ca, and the number is compared as-is, with
+no currency conversion) mirrors `NEWEGG_MCP_MAX_REFUND_AMOUNT`. Leaving it unset or empty keeps the default;
+only the explicit value `unlimited` (or `off`, case-insensitive) disables it, and any other value is rejected
+at startup. With the cap disabled no estimate is requested by the previews. While a cap is active: the create preview
 requests one estimate, reports it as `estimatedCost` (with `maxLabelAmount`) and is blocked, with no
 `previewId`, when the total is above the cap; the quoted cost (cents) is part of the stored preview's hash;
-`apply_create` asks for a **fresh** estimate (the carrier rate can move) and refuses with `preview_stale`,
-sending nothing, when it is above the cap. It fails closed: a quote that errors, a quote for a different
+`apply_create` first refuses with `preview_stale` when the stored quote is above the CURRENT cap (a restart with a
+lower cap), then asks for a **fresh** estimate (the carrier rate can move) and refuses with `preview_stale`,
+sending nothing, when that is above the cap. It fails closed: a quote that errors, a quote for a different
 number of packages than the purchase, a package Newegg did not rate, or a total that is not above 0 blocks the preview and the apply. A **reprint** has no quote (its
-request carries only the order number) and may be billed, so while the cap is set a reprint preview is
-blocked as an undeterminable cost. The SDK enforces no ceiling; SDK callers are the operator.
+request carries only the order number) and may be billed, so while a cap is active (the default) a reprint preview is
+blocked as an undeterminable cost; the operator must set `NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited` to reprint. The SDK enforces no ceiling; SDK callers are the operator.
 
 ### 23.6 ASSUMPTIONs (retire only with an owner-authorized live probe)
 

@@ -7,10 +7,12 @@
  *
  * The label download links Newegg returns are bearer links: they are surfaced only when they point
  * at a `*.newegg.com` https host, and customer data (the ship-to address) is never returned.
- * By default there is no server-side cost ceiling and a human must read the preview before applying.
- * `NEWEGG_MCP_MAX_LABEL_AMOUNT` is an opt-in ceiling: when it is set, the create preview carries
- * Newegg's quote and is blocked above the cap (re-checked at apply), and any cost that cannot be
- * determined (a failed quote, an unrated package, or a reprint, which has no quote) is blocked too.
+ * `NEWEGG_MCP_MAX_LABEL_AMOUNT` is a cost ceiling that is ON by default (100, marketplace currency):
+ * the create preview carries Newegg's quote and is blocked above the cap (re-checked at apply
+ * against both the stored quote and a fresh one), and any cost that cannot be determined (a failed
+ * quote, an unrated package, or a reprint, which has no quote) is blocked too. It is lifted only by
+ * the explicit `NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited`, after which a human must read the preview
+ * before applying.
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -59,9 +61,9 @@ const previewOutputSchema = z.object({
   warnings: z.array(z.string()),
   /** The exact normalized request the apply tool will send. */
   request: z.record(z.string(), z.unknown()),
-  /** Newegg's quote for the label(s), present only when NEWEGG_MCP_MAX_LABEL_AMOUNT is set. */
+  /** Newegg's quote for the label(s), present whenever a cap is active (the default). */
   estimatedCost: z.number().optional(),
-  /** The configured NEWEGG_MCP_MAX_LABEL_AMOUNT, present only when it is set. */
+  /** The configured NEWEGG_MCP_MAX_LABEL_AMOUNT, absent only when it was set to "unlimited". */
   maxLabelAmount: z.number().optional(),
   previewId: z.string().optional(),
   previewExpiresAt: z.string().optional(),
@@ -113,8 +115,8 @@ const applyOutputSchema = z.object({
 const COST_WARNING =
   "WARNING: creating a label spends money (UPS charge billed to the seller's Newegg account), marks " +
   "the order shipped and cannot be undone through this server; the call is not idempotent. Only " +
-  "apply after a human has read the preview. When NEWEGG_MCP_MAX_LABEL_AMOUNT is set the preview " +
-  "carries the quoted cost and is blocked above that cap.";
+  "apply after a human has read the preview. Unless NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited the preview " +
+  "carries the quoted cost and is blocked above that cap (default 100, marketplace currency).";
 
 const toCents = (amount: number): number => Math.round(amount * 100);
 
@@ -135,8 +137,8 @@ type LabelCost = { total: number; currency: string } | { problem: string };
 /** A reprint has no quote: Newegg's reprint request carries only the order number. */
 const REPRINT_UNQUOTABLE =
   "The cost of a reprint cannot be determined (Newegg has no quote for it and does not say whether " +
-  "it is billed), so it cannot be checked against NEWEGG_MCP_MAX_LABEL_AMOUNT. Unset the cap to " +
-  "reprint after a human review.";
+  "it is billed), so it cannot be checked against NEWEGG_MCP_MAX_LABEL_AMOUNT. The operator must set " +
+  "NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited to reprint after a human review.";
 
 /**
  * Quotes a label purchase through the SDK estimate. Never throws and fails closed: a failed quote,
@@ -235,8 +237,8 @@ function shapePackage(pkg: ShippingLabelPackageResult) {
 }
 
 /**
- * Runs a label preview and stores the plan when it is clean. With `NEWEGG_MCP_MAX_LABEL_AMOUNT`
- * set, the plan also carries the quoted cost and is blocked above the cap or when no cost can be
+ * Runs a label preview and stores the plan when it is clean. While a cap is active (the default;
+ * `NEWEGG_MCP_MAX_LABEL_AMOUNT` not `unlimited`), the plan also carries the quoted cost and is blocked above the cap or when no cost can be
  * determined (`quote`).
  */
 async function runLabelPreview<K extends ShippingLabelKind>(
@@ -342,9 +344,19 @@ async function runLabelApply<K extends ShippingLabelKind>(
     );
   }
 
-  // Opt-in cost ceiling, re-checked against a fresh quote because the carrier rate may have moved.
+  // Cost ceiling, re-checked against the CURRENT cap: first the amount stored at preview time (the
+  // cap may be lower than when the preview was made), then a fresh quote because the carrier rate
+  // may have moved. A preview made with no cap stores no amount and is quoted fresh.
   const { maxLabelAmount } = ctx.config.limits;
   if (maxLabelAmount !== undefined) {
+    if (record.costCents !== undefined && record.costCents > toCents(maxLabelAmount)) {
+      return errorResult(
+        businessError(
+          "preview_stale",
+          `Nothing was sent: the previewed label cost of ${(record.costCents / 100).toFixed(2)} exceeds the server limit of ${maxLabelAmount} (NEWEGG_MCP_MAX_LABEL_AMOUNT). The preview has been consumed; create a new preview and review it.`,
+        ),
+      );
+    }
     const cost = await quote(record.input);
     const problem = "problem" in cost ? cost.problem : overCap(cost, maxLabelAmount);
     if (problem !== undefined) {
@@ -391,7 +403,7 @@ export const shippingLabelPreviewCreateTool: ToolDefinition<
     "code, UPS size and weight limits, ZIP/postal code) and reads the order to report BLOCKERS " +
     "(unknown order, Newegg-fulfilled, not unshipped, seller part number not on the order, " +
     "quantity not the whole line, non-US destination) and WARNINGS (existing packages, uncovered " +
-    "lines, signature surcharge). When NEWEGG_MCP_MAX_LABEL_AMOUNT is set it also quotes the label " +
+    "lines, signature surcharge). Unless NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited it also quotes the label " +
     "cost (estimatedCost; one estimate request, which Newegg documents as side-effect free but is " +
     "unverified live) and blocks a cost above the cap or one that cannot be determined. Only a " +
     `clean plan gets a single-use previewId for newegg_shipping_label_apply_create. ${COST_WARNING} ` +
@@ -420,8 +432,8 @@ export const shippingLabelApplyCreateTool: ToolDefinition<
     "returns tracking numbers and label links. Accepts only the previewId; single-use. If the " +
     "outcome is unknown (timeout, 5xx) the error says so and the write is NOT retried: check the " +
     "order with newegg_orders_get_status and use newegg_shipping_label_preview_reprint to fetch " +
-    `an existing label instead of buying another. ${COST_WARNING} With NEWEGG_MCP_MAX_LABEL_AMOUNT ` +
-    "set, a fresh quote above the cap (or no readable quote) stops the purchase. Exists only when the " +
+    `an existing label instead of buying another. ${COST_WARNING} Unless NEWEGG_MCP_MAX_LABEL_AMOUNT ` +
+    "is unlimited, a fresh quote above the cap (or no readable quote) stops the purchase. Exists only when the " +
     "server is started with writes enabled.",
   annotations: {
     readOnlyHint: false,
@@ -472,7 +484,7 @@ export const shippingLabelPreviewReprintTool: ToolDefinition<
     "Plan a Newegg Shipping Label Reprint Request WITHOUT sending it. Reads the order and reports " +
     "BLOCKERS (unknown order, Newegg-fulfilled, order not shipped yet). Newegg does not say " +
     "whether a reprint is billed, so it is treated as billable and, because it has no quote, it is " +
-    "BLOCKED while NEWEGG_MCP_MAX_LABEL_AMOUNT is set. Only a clean plan gets a single-use " +
+    "BLOCKED unless NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited. Only a clean plan gets a single-use " +
     "previewId for newegg_shipping_label_apply_reprint. No Newegg mutation happens here.",
   annotations: { readOnlyHint: true, openWorldHint: true },
   inputSchema: reprintInputSchema,

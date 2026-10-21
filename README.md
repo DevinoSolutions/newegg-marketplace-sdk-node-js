@@ -260,9 +260,10 @@ blocker, and on an ambiguous failure throw `IndeterminateOrderWriteError` withou
 and use `reprint`, never create a second label). `estimate` is a quote ("for estimation only"); because that is only the docs' word, it is sent once and never retried. The seller must
 have signed up for the service in the Seller Portal (error `SL027`). The MCP exposes
 `newegg_shipping_label_estimate` and the four preview / apply tools only with
-`NEWEGG_MCP_ALLOW_WRITES=true`. Opt in to a spend ceiling with `NEWEGG_MCP_MAX_LABEL_AMOUNT` (unset =
-no cap): the create preview then carries the quote and is blocked above the cap, apply re-quotes, and a
-cost that cannot be determined (including any reprint) is blocked. None of it has been called against a real account; shapes follow archived
+`NEWEGG_MCP_ALLOW_WRITES=true`. A spend ceiling, `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100 in the marketplace
+currency; `unlimited` disables it), is ON by default: the create preview carries the quote and is blocked
+above the cap, apply checks the stored quote against the current cap and re-quotes, and a cost that cannot
+be determined (including any reprint) is blocked. None of it has been called against a real account; shapes follow archived
 documentation pages.
 
 ## Seller status and category reference (read-only)
@@ -501,22 +502,22 @@ key from another platform is the usual cause), see
 
 ### MCP server
 
-| Variable                              | Default                  | Meaning                                                                                                                                                                                    |
-| ------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `NEWEGG_MCP_ALLOW_WRITES`             | `false`                  | When `true`, registers the write tools (inventory, pricing, listings, RMA, courtesy refund). Otherwise they are absent from `tools/list`.                                                  |
-| `NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT` | `50`                     | Largest absolute % change one price update may make vs the current price; bigger is blocked at preview.                                                                                    |
-| `NEWEGG_MCP_MAX_REFUND_AMOUNT`        | `500`                    | Largest courtesy refund (or refund-RMA total) one preview may plan, in the marketplace currency.                                                                                           |
-| `NEWEGG_MCP_MAX_LABEL_AMOUNT`         | unset (no cap)           | Opt-in ceiling on the quoted cost of one UPS label purchase, in the marketplace currency; a bigger or undeterminable cost (and any reprint) is blocked at preview and re-checked at apply. |
-| `NEWEGG_MCP_MAX_ITEMS_PER_OPERATION`  | `500`                    | Hard cap on items per preview/apply.                                                                                                                                                       |
-| `NEWEGG_MCP_PREVIEW_TTL_SECONDS`      | `600`                    | Lifetime of a stored preview before it expires.                                                                                                                                            |
-| `NEWEGG_MCP_ALLOW_ZERO_QUANTITY`      | `true`                   | Whether quantity `0` (out-of-stock) writes are allowed.                                                                                                                                    |
-| `NEWEGG_MCP_ALLOWED_WAREHOUSES`       | empty = all              | Comma-separated warehouse allowlist.                                                                                                                                                       |
-| `NEWEGG_MCP_ALLOWED_MARKETPLACES`     | empty = all              | Comma-separated marketplace allowlist.                                                                                                                                                     |
-| `NEWEGG_MCP_HTTP_HOST`                | `127.0.0.1`              | HTTP transport bind host.                                                                                                                                                                  |
-| `NEWEGG_MCP_HTTP_PORT`                | `3919`                   | HTTP transport bind port.                                                                                                                                                                  |
-| `NEWEGG_MCP_HTTP_BEARER_TOKEN`        | empty                    | Bearer token; **required** before binding a non-loopback host.                                                                                                                             |
-| `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`     | empty = same-origin only | Comma-separated allowed browser `Origin` values.                                                                                                                                           |
-| `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`       | empty                    | Comma-separated allowed `Host` values (`host[:port]`); loopback always allowed.                                                                                                            |
+| Variable                              | Default                  | Meaning                                                                                                                                                                     |
+| ------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NEWEGG_MCP_ALLOW_WRITES`             | `false`                  | When `true`, registers the write tools (inventory, pricing, listings, RMA, courtesy refund). Otherwise they are absent from `tools/list`.                                   |
+| `NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT` | `50`                     | Largest absolute % change one price update may make vs the current price; bigger is blocked at preview.                                                                     |
+| `NEWEGG_MCP_MAX_REFUND_AMOUNT`        | `500`                    | Largest courtesy refund (or refund-RMA total) one preview may plan, in the marketplace currency.                                                                            |
+| `NEWEGG_MCP_MAX_LABEL_AMOUNT`         | `100`                    | Cap on one UPS label purchase (marketplace currency). Over-cap, unquotable and reprint plans are blocked at preview, re-checked at apply. `unlimited` or `off` disables it. |
+| `NEWEGG_MCP_MAX_ITEMS_PER_OPERATION`  | `500`                    | Hard cap on items per preview/apply.                                                                                                                                        |
+| `NEWEGG_MCP_PREVIEW_TTL_SECONDS`      | `600`                    | Lifetime of a stored preview before it expires.                                                                                                                             |
+| `NEWEGG_MCP_ALLOW_ZERO_QUANTITY`      | `true`                   | Whether quantity `0` (out-of-stock) writes are allowed.                                                                                                                     |
+| `NEWEGG_MCP_ALLOWED_WAREHOUSES`       | empty = all              | Comma-separated warehouse allowlist.                                                                                                                                        |
+| `NEWEGG_MCP_ALLOWED_MARKETPLACES`     | empty = all              | Comma-separated marketplace allowlist.                                                                                                                                      |
+| `NEWEGG_MCP_HTTP_HOST`                | `127.0.0.1`              | HTTP transport bind host.                                                                                                                                                   |
+| `NEWEGG_MCP_HTTP_PORT`                | `3919`                   | HTTP transport bind port.                                                                                                                                                   |
+| `NEWEGG_MCP_HTTP_BEARER_TOKEN`        | empty                    | Bearer token; **required** before binding a non-loopback host.                                                                                                              |
+| `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`     | empty = same-origin only | Comma-separated allowed browser `Origin` values.                                                                                                                            |
+| `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`       | empty                    | Comma-separated allowed `Host` values (`host[:port]`); loopback always allowed.                                                                                             |
 
 ### Live tests (opt-in; never in CI)
 
@@ -537,8 +538,8 @@ constraint in code:
   `NEWEGG_MCP_ALLOW_WRITES=true`.
 - **Preview → apply.** Writes require a two-step flow; apply takes only a single-use,
   TTL-bounded `previewId` and cannot alter the previewed plan. Price changes and refunds are
-  also capped (`NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT`, `NEWEGG_MCP_MAX_REFUND_AMOUNT`, and the opt-in
-  `NEWEGG_MCP_MAX_LABEL_AMOUNT`). No write follows an HTTP redirect, and a read follows one only to the same origin.
+  also capped (`NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT`, `NEWEGG_MCP_MAX_REFUND_AMOUNT`, and
+  `NEWEGG_MCP_MAX_LABEL_AMOUNT`, default 100). No write follows an HTTP redirect, and a read follows one only to the same origin.
 - **No credentials via MCP.** Callers can never supply credentials, base URLs, hostnames, or
   `Overwrite` values; raw upstream bodies never cross the MCP boundary.
 - **`Overwrite: "Yes"` is impossible** — the feed envelope hard-codes `"No"`, so catalog-wide
@@ -653,7 +654,10 @@ failures; feed submissions never blindly retry after an ambiguous send (they rai
   **read-only** (there is no live write test). It requires `NEWEGG_LIVE_TESTS=true` and valid
   platform credentials; inventory reads also need `NEWEGG_LIVE_TEST_SELLER_PART_NUMBER` (and
   `NEWEGG_LIVE_TEST_WAREHOUSE` on US) and skip cleanly without them. Run with
-  `NEWEGG_LIVE_TESTS=true npm run test:live`.
+  `NEWEGG_LIVE_TESTS=true npm run test:live` (fast reads) and
+  `NEWEGG_LIVE_TESTS=true npm run test:live:reports` (slow report and catalog-lookup polling, up to
+  several minutes per test, so run it in the background with the output sent to a file). On US/B2B
+  a few reads hit documented Newegg-side limitations and skip with a reason; CA is strict.
 - **The live suite is guarded READ-ONLY.** `npm run check:live-readonly` (its own CI job)
   scans `packages/sdk/test/live/` and fails if a mutating call is ever added there, so the
   opt-in live suite is structurally prevented from writing to a real account. It is an
@@ -682,6 +686,7 @@ Root scripts (npm workspaces):
 | `npm test`                                | Unit + integration tests (no credentials).                                                                                               |
 | `npm run test:coverage`                   | Tests with V8 coverage.                                                                                                                  |
 | `npm run test:live`                       | Opt-in live smoke suite (see [Testing](#testing)).                                                                                       |
+| `npm run test:live:reports`               | Opt-in slow live report / catalog-lookup polling tests (see [Testing](#testing)).                                                        |
 | `npm run docs:api`                        | Generate API docs with TypeDoc (`treatWarningsAsErrors`).                                                                                |
 | `npm run verify:exports`                  | Verify built packages expose their expected exports (needs a build); also fails if an `examples/*` workspace lacks a `typecheck` script. |
 | `npm run check:secrets`                   | Scan the **working tree** and fail if any credential/secret is present.                                                                  |

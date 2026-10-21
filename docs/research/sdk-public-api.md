@@ -2861,10 +2861,10 @@ export interface ShippingLabelsApi {
     void or refund of a label in the documented API. The MCP exposes
     `newegg_shipping_label_estimate` and the four preview / apply tools only with
     `NEWEGG_MCP_ALLOW_WRITES=true`; it returns label links only for `https://*.newegg.com`. The SDK has no
-    cost ceiling; the MCP has the opt-in `NEWEGG_MCP_MAX_LABEL_AMOUNT` (unset by default): with it set, the
-    create preview carries the estimate and is blocked above the cap, apply re-quotes and refuses above it,
-    any cost that cannot be determined (failed or unrated quote, any reprint) is blocked, and with it unset
-    behaviour is unchanged. Nothing was called live;
+    cost ceiling; the MCP has `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100, marketplace currency): the
+    create preview carries the estimate and is blocked above the cap, apply checks the stored quote against
+    the current cap and re-quotes and refuses above it, any cost that cannot be determined (failed or
+    unrated quote, any reprint) is blocked, and only the explicit `unlimited` value disables the cap. Nothing was called live;
     every shape is from archived page samples (contracts §23 **ASSUMPTION**s).
 19. **Sponsored Ads (reads)**: `ads.listCampaigns`/`listGroups`/`listProducts`/`listKeywords`/
     `listNegativeKeywords`/`listMatchTypes`, the suggestion reads `suggestKeywords`/
