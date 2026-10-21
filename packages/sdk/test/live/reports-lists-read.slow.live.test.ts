@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ReportTimeoutError, type OrderStatus } from "../../src/index.js";
-import { liveEnabled, makeLiveClient, marketplace } from "./helpers.js";
+import { NeweggError, ReportTimeoutError, type OrderStatus } from "../../src/index.js";
+import { isCa, liveEnabled, makeLiveClient, marketplace } from "./helpers.js";
 
 /**
  * READ-ONLY live checks for the Item Basic Information, Order List and RMA List reports
@@ -23,8 +23,11 @@ function dayOffset(days: number): string {
 }
 
 /** Runtime discovery (a free, synchronous read): an order status that actually has orders. */
-async function discoverOrderStatus(): Promise<Exclude<OrderStatus, "unknown">> {
+async function discoverOrderStatus(ctx: {
+  skip: (note?: string) => never;
+}): Promise<Exclude<OrderStatus, "unknown">> {
   const client = makeLiveClient();
+  const errors: string[] = [];
   const statuses = ["shipped", "invoiced", "unshipped", "voided"] as const;
   for (const status of statuses) {
     try {
@@ -35,9 +38,21 @@ async function discoverOrderStatus(): Promise<Exclude<OrderStatus, "unknown">> {
         pageSize: 1,
       });
       if (page.totalCount > 0) return status;
-    } catch {
-      // best-effort discovery only
+    } catch (error) {
+      // CA is the strict reference: an unexpected error must fail, not be swallowed.
+      if (isCa()) throw error;
+      errors.push(
+        error instanceof NeweggError
+          ? `HTTP ${error.httpStatus ?? "?"} ${error.neweggErrorCode ?? error.name}`
+          : error instanceof Error
+            ? error.name
+            : "unknown error",
+      );
     }
+  }
+  // On non-CA surface the cause in the skip reason instead of guessing a status.
+  if (errors.length > 0) {
+    ctx.skip(`${marketplace()}: order status discovery errors: ${[...new Set(errors)].join(", ")}`);
   }
   return "shipped";
 }
@@ -80,7 +95,7 @@ describe.skipIf(!liveEnabled)("live (read-only): item / order / RMA list reports
     },
   );
 
-  it("order list: fetches a page of orders (shape only)", { timeout: TEST_TIMEOUT }, async () => {
+  it("order list: fetches a page of orders (shape only)", { timeout: TEST_TIMEOUT }, async (ctx) => {
     const client = makeLiveClient();
     const existing = env.NEWEGG_LIVE_REPORT_ORDER_LIST_ID;
     try {
@@ -88,7 +103,7 @@ describe.skipIf(!liveEnabled)("live (read-only): item / order / RMA list reports
       const collected = existing
         ? await client.reports.orderList.waitForRequest(existing, options)
         : await client.reports.orderList.waitForResult(
-            { status: await discoverOrderStatus(), dateFrom: "2020-01-01", dateTo: dayOffset(0) },
+            { status: await discoverOrderStatus(ctx), dateFrom: "2020-01-01", dateTo: dayOffset(0) },
             options,
           );
       expect(collected.marketplace).toBe(marketplace());
