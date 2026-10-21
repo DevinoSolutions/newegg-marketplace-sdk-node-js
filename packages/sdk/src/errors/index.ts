@@ -1,5 +1,5 @@
 import type { NeweggMarketplace, RateLimitInfo } from "../types.js";
-import { redactUrlCredentials, sanitizeRaw } from "./redact.js";
+import { redactUrlCredentials, sanitizeCause, sanitizeRaw } from "./redact.js";
 
 /** Machine-readable category shared by every SDK error. */
 export type NeweggErrorCode =
@@ -30,6 +30,7 @@ export interface NeweggErrorInit {
   retryable?: boolean;
   /** JSON-safe. URL credentials are redacted by the constructor. */
   details?: unknown;
+  /** Underlying error. URL credentials in its message, stack and properties are redacted. */
   cause?: unknown;
 }
 
@@ -51,7 +52,7 @@ export class NeweggError extends Error {
   constructor(code: NeweggErrorCode, message: string, init: NeweggErrorInit = {}) {
     super(
       redactUrlCredentials(message),
-      init.cause !== undefined ? { cause: init.cause } : undefined,
+      init.cause !== undefined ? { cause: sanitizeCause(init.cause) } : undefined,
     );
     this.name = "NeweggError";
     this.code = code;
