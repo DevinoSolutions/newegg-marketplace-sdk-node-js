@@ -412,6 +412,18 @@ describe("the HTTP transport needs a bearer token when writes are enabled (T-621
     expect(anonymous.status).toBe(401);
   });
 
+  it("fails closed when a JS caller omits writesEnabled, loopback included", async () => {
+    const omitted = {
+      http: httpConfigWith(unauthenticated),
+      createServer: () => createNeweggMcpServer({ config, client: makeMockClient([]).client }),
+      logger: () => undefined,
+      serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
+    };
+    await expect(startHttpServer(omitted as unknown as StartHttpServerOptions)).rejects.toThrow(
+      /NEWEGG_MCP_HTTP_BEARER_TOKEN/,
+    );
+  });
+
   it("still allows a read-only loopback start without a token", async () => {
     const { handle: started } = await start(httpConfigWith(unauthenticated), {
       writesEnabled: false,

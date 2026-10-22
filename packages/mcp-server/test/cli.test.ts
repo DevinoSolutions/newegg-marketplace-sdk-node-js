@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { parseCliArgs } from "../src/cli.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { main, parseCliArgs } from "../src/cli.js";
 import { loadMcpConfigFromEnv, McpConfigError } from "../src/index.js";
 import { callTool, makeEnv, SENTINELS, serviceStatusRoute, startHarness } from "./helpers.js";
 
@@ -155,5 +155,48 @@ describe("env-driven boot smoke", () => {
     } finally {
       await harness.close();
     }
+  });
+});
+
+describe("main --transport http refuses to start cleanly (T-6211)", () => {
+  const originalExitCode = process.exitCode;
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    process.exitCode = originalExitCode;
+  });
+
+  async function runHttpMain(env: Record<string, string | undefined>): Promise<string[]> {
+    for (const [key, value] of Object.entries(makeEnv(env))) {
+      if (value !== undefined) {
+        vi.stubEnv(key, value);
+      }
+    }
+    vi.stubEnv("NEWEGG_MCP_HTTP_BEARER_TOKEN", env["NEWEGG_MCP_HTTP_BEARER_TOKEN"] ?? "");
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    await main(["--transport", "http"]);
+    return lines;
+  }
+
+  it("logs a structured error and sets exit code 1 when writes are on without a token", async () => {
+    const lines = await runHttpMain({ NEWEGG_MCP_ALLOW_WRITES: "true" });
+    expect(process.exitCode).toBe(1);
+    const entry = lines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((parsed) => parsed["event"] === "http_start_refused");
+    expect(entry?.["level"]).toBe("error");
+    expect(String(entry?.["message"])).toContain("NEWEGG_MCP_HTTP_BEARER_TOKEN");
+    for (const secret of Object.values(SENTINELS)) {
+      expect(lines.join(" ")).not.toContain(secret);
+    }
+  });
+
+  it("does the same for a non-loopback bind without a token", async () => {
+    const lines = await runHttpMain({ NEWEGG_MCP_HTTP_HOST: "0.0.0.0" });
+    expect(process.exitCode).toBe(1);
+    expect(lines.some((line) => line.includes('"http_start_refused"'))).toBe(true);
   });
 });

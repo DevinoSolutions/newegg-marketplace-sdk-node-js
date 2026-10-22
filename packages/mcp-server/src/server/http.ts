@@ -210,7 +210,9 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
         "NEWEGG_MCP_HTTP_BEARER_TOKEN configured.",
     );
   }
-  if (writesEnabled && httpConfig.bearerToken === undefined) {
+  // `!== false`, not truthiness: a JS caller that omits the option (undefined) is treated as
+  // writes-on, so the guard fails closed instead of open.
+  if (writesEnabled !== false && httpConfig.bearerToken === undefined) {
     // Loopback is not a trust boundary: any local user or process could open its own session and
     // spend money (label purchases, price and listing writes). There is deliberately no opt-out.
     throw new Error(
