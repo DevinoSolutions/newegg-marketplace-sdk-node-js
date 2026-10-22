@@ -273,8 +273,10 @@ structured events. The SDK emits these `event` names:
 `indeterminate_submission`.
 
 `fields` always include `correlationId`, `operation`, and `marketplace`, plus `durationMs`
-where relevant and `sellerIdHash` — a sha-256 prefix of the seller ID, **never the raw
-seller ID**.
+where relevant and `sellerIdHash` — a keyed (HMAC-SHA-256, random per-process key) 12-hex
+token for the seller ID, **never the raw seller ID**. It is stable within one process, so log
+lines can be correlated, but it changes on every restart and cannot be reversed by
+enumerating seller IDs.
 
 Redaction is guaranteed (behavioural requirement 7): `Authorization`/`SecretKey` header
 values, `apiKey`, and `secretKey` never appear in errors, logs, `raw` payloads, or any
