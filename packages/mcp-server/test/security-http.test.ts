@@ -44,6 +44,7 @@ async function start(
   const logged: Logged[] = [];
   handle = await startHttpServer({
     http,
+    writesEnabled: false,
     createServer: () => createNeweggMcpServer({ config, client: makeMockClient([]).client }),
     logger: (level, event, fields) => logged.push({ level, event, fields }),
     serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
@@ -359,5 +360,82 @@ describe("plaintext non-loopback binding is flagged (T-5672 / L8)", () => {
     expect(loopback.logged.filter((line) => line.event === "http_plaintext_non_loopback")).toEqual(
       [],
     );
+  });
+});
+
+describe("the HTTP transport needs a bearer token when writes are enabled (T-6211)", () => {
+  const unauthenticated = { bearerToken: undefined };
+
+  it("refuses to start on loopback with writes enabled and no token", async () => {
+    const error = await start(httpConfigWith(unauthenticated), { writesEnabled: true }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain("NEWEGG_MCP_HTTP_BEARER_TOKEN");
+    expect(message).toContain("NEWEGG_MCP_ALLOW_WRITES");
+    expect(message).toContain("openssl rand -hex 32");
+  });
+
+  it("refuses a blank-token loopback start with writes enabled on every loopback form", async () => {
+    for (const host of ["localhost", "::1", "127.0.0.2"]) {
+      await expect(
+        start(httpConfigWith({ ...unauthenticated, host }), { writesEnabled: true }),
+      ).rejects.toThrow(/NEWEGG_MCP_HTTP_BEARER_TOKEN/);
+    }
+  });
+
+  it("starts on loopback with writes enabled and a token, and then enforces it", async () => {
+    const { handle: started } = await start(httpConfigWith(), { writesEnabled: true });
+    const initialize = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-03-26",
+        capabilities: {},
+        clientInfo: { name: "t-6211", version: "0.0.0" },
+      },
+    });
+    const headers = {
+      host: `127.0.0.1:${started.port}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    };
+    const anonymous = await rawRequest({
+      port: started.port,
+      method: "POST",
+      path: "/mcp",
+      headers,
+      body: initialize,
+    });
+    expect(anonymous.status).toBe(401);
+  });
+
+  it("still allows a read-only loopback start without a token", async () => {
+    const { handle: started } = await start(httpConfigWith(unauthenticated), {
+      writesEnabled: false,
+    });
+    expect(started.port).toBeGreaterThan(0);
+  });
+
+  it("does not affect stdio: writes without any HTTP token still load and build a server", () => {
+    const writesConfig = loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "true" }));
+    expect(writesConfig.allowWrites).toBe(true);
+    expect(writesConfig.http.bearerToken).toBeUndefined();
+    expect(() =>
+      createNeweggMcpServer({ config: writesConfig, client: makeMockClient([]).client }),
+    ).not.toThrow();
+  });
+
+  it("names the variables and prints no secret values in the refusal", async () => {
+    const error = await start(httpConfigWith(unauthenticated), { writesEnabled: true }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    for (const secret of Object.values(SENTINELS)) {
+      expect(message).not.toContain(secret);
+    }
   });
 });

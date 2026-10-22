@@ -88,6 +88,8 @@ async function runHttp(config: McpServerConfig, logger: Logger): Promise<void> {
   const previewStore = new InMemoryPreviewStore();
   const handle = await startHttpServer({
     http: config.http,
+    // Writes need a bearer token even on loopback; startHttpServer refuses to start otherwise.
+    writesEnabled: config.allowWrites,
     // Each HTTP session gets its own sessionId, so its previews cannot be applied from another one.
     createServer: (sessionId) => createNeweggMcpServer({ config, previewStore, logger, sessionId }),
     logger,

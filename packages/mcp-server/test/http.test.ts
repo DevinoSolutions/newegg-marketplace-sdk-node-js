@@ -28,6 +28,7 @@ function httpConfigWith(overrides: Partial<McpHttpConfig>): McpHttpConfig {
 function start(http: McpHttpConfig): Promise<HttpServerHandle> {
   return startHttpServer({
     http,
+    writesEnabled: false,
     createServer: () => createNeweggMcpServer({ config, client: makeMockClient([]).client }),
     logger: () => undefined,
     serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
