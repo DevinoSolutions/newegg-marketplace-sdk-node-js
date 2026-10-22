@@ -110,7 +110,7 @@ function redactVisible(text: string): string {
 }
 
 /**
- * Replaces the `user:password@` part of any URL inside `text` with `***@`, whatever its spelling:
+ * Replaces the `user:password@` part of a URL inside `text` with `***@` for the spellings listed here:
  * `scheme://`, `scheme:///`, backslashes, scheme-relative `//`, schemeless on a Newegg FTP host,
  * JSON-escaped, and (after a delimiter-decoding pass) percent-encoded, HTML-entity or
  * fullwidth-`@` forms. Never throws.

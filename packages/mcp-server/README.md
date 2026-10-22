@@ -66,7 +66,7 @@ newegg-marketplace-mcp --transport http
 ```
 
 - Binds `127.0.0.1:3919` by default and **refuses to bind a non-loopback host unless
-  `NEWEGG_MCP_HTTP_BEARER_TOKEN` is set** (at least 32 characters). It speaks plain HTTP: front it with a
+  `NEWEGG_MCP_HTTP_BEARER_TOKEN` is set** (at least 32 characters, 8 different). It speaks plain HTTP: front it with a
   TLS-terminating proxy and set `NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY=true`, or a non-loopback bind logs a warning.
   Sessions are capped and expire when idle, failed bearer attempts are throttled per client address,
   and a preview can only be applied from the session that created it.
@@ -183,9 +183,9 @@ is not surfaced in the tool's output.
 
 ## Environment variables
 
-> **Breaking (0.1.x, T-5665 to T-5675): security hardening.** The report file download requires explicit
+> **Breaking (0.1.x, T-5665 to T-5675): security hardening.** The report file download connects only to URL port 21
 > (opt-in FTPS: `NEWEGG_MCP_REPORT_FTPS=true` + `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`; the default stays plain FTP on port 21);
-> `NEWEGG_MCP_HTTP_BEARER_TOKEN` must be at least 32 characters or the server refuses to start; RMA
+> `NEWEGG_MCP_HTTP_BEARER_TOKEN` must be at least 32 characters, with at least 8 different ones, or the server refuses to start; RMA
 > `imageUrls` must be `https` without `user:password@`; a preview can only be applied from the MCP session
 > that created it; the HTTP transport caps sessions and throttles failed bearer attempts. Details in the
 > [repository README](../../README.md) and `docs/mcp-security.md`.
@@ -229,7 +229,7 @@ is not surfaced in the tool's output.
 | `NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY`             | unset (`false`)          | Exactly `true` confirms a TLS proxy fronts the plain-HTTP listener; otherwise a non-loopback bind logs a warning.                                                                                                                                                                                                           |
 | `NEWEGG_MCP_REPORT_FTPS`                       | unset (`false`)          | Exactly `true` makes the report file download use explicit FTPS (no fallback to clear text).                                                                                                                                                                                                                                |
 | `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`           | empty                    | SHA-256 fingerprint of the server certificate to trust for FTPS (Newegg's is self-signed).                                                                                                                                                                                                                                  |
-| `NEWEGG_MCP_HTTP_BEARER_TOKEN`                 | empty                    | Bearer token, at least 32 characters; required to bind a non-loopback host.                                                                                                                                                                                                                                                 |
+| `NEWEGG_MCP_HTTP_BEARER_TOKEN`                 | empty                    | Bearer token, at least 32 characters (8 different); required to bind a non-loopback host.                                                                                                                                                                                                                                   |
 | `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`              | empty = same-origin only | Comma-separated allowed `Origin` values.                                                                                                                                                                                                                                                                                    |
 | `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`                | empty                    | Comma-separated allowed `Host` values; loopback always allowed.                                                                                                                                                                                                                                                             |
 

@@ -52,7 +52,7 @@ export interface NeweggClientConfig {
   maxQuantity?: number;
   /** Replaces the built-in FTP downloader of the file reports (Daily Inventory / Daily Price). Receives a credential-bearing URL: a secret. */
   reportFileDownloader?: ReportFileDownloader;
-  /** Transport settings of the built-in FTP downloader (ignored when reportFileDownloader is set). FTPS by default. */
+  /** Transport settings of the built-in FTP downloader (ignored when reportFileDownloader is set). Plain FTP by default; FTPS is opt-in. */
   reportFileFtp?: ReportFileFtpOptions;
 }
 
@@ -860,7 +860,8 @@ export type ReportFileDownloader = (
 
 // Built-in downloader: plain FTP by default; URL port 21 only, *.newegg.com only, control channel capped at
 // 64 KiB/line and 256 KiB/reply. ftps opts in to explicit FTPS (AUTH TLS before USER/PASS, PROT P, no fallback to
-// clear text); Newegg's certificate is self-signed, so pin it (contracts §17.5).
+// clear text; the transfer must also be length-checked with SIZE); Newegg's certificate is Serv-U's stock
+// self-signed one, so pin it (contracts §17.5: the pin stops passive eavesdropping, probably not an active MITM).
 export interface ReportFileFtpOptions {
   ftps?: boolean; // opt in to explicit FTPS; off by default
   tlsPinnedCertSha256?: string; // SHA-256 fingerprint (hex) to trust instead of a CA chain

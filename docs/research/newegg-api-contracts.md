@@ -2138,20 +2138,39 @@ connection.` (credential-free probe), so the server offers explicit FTPS (RFC 42
 - With the certificate **pinned by fingerprint**, one real Item Basic Information report was downloaded over
   FTPS end to end (`AUTH TLS`, `PBSZ 0`, `PROT P`, `PASV` data channel over TLS, `RETR`; 87 rows parsed). The
   data channel resumes the control session (`isSessionReused()`), which presents no certificate; the pin is
-  therefore checked on the control connection.
+  therefore checked on the control connection. After the review fixes (SIZE check, data-channel error
+  wrapping) the same pinned download was repeated once, read-only, and again returned 87 rows.
+- **What the pin proves.** The certificate is Serv-U's stock self-signed certificate (`CN=ftp.Serv-U.com`),
+  not one Newegg issued for its host. **ASSUMPTION (not verified): the private key of that stock certificate
+  is shared by other Serv-U installs.** If so, anyone running Serv-U can present the same certificate, so the
+  pin cannot tell Newegg's server from theirs. The pin then protects against a passive eavesdropper (the
+  traffic is encrypted) but **not against an active man-in-the-middle**. A certificate issued for Newegg's
+  own host name, or a Newegg-provided fingerprint, would be needed for that; ask Newegg.
 
 Because default verification cannot succeed, **plain FTP stays the default** and FTPS is opt-in
 (`NeweggClientConfig.reportFileFtp = { ftps: true, tlsPinnedCertSha256: "<hex>" }`; MCP
 `NEWEGG_MCP_REPORT_FTPS=true` + `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`). With `ftps` there is no fallback: a server
-that does not answer `234` fails the download with nothing sent (`details.stage = "TLS upgrade"`), and a
-certificate that is neither trusted (`tlsCa` / default store) nor the pinned one fails it before `USER`/`PASS`
-(`details.stage = "TLS handshake"`, `details.tlsError`). The fingerprint has to be obtained out of band; a
+that does not answer `234` fails the download with nothing sent (`details.stage = "TLS upgrade (server does
+not offer FTPS, nothing was sent)"`), and a certificate that is neither trusted (`tlsCa` / default store) nor
+the pinned one fails it before `USER`/`PASS` (`details.stage = "TLS handshake (certificate or protocol
+error)"`, `details.tlsError`). A failed data-channel handshake or pin check is a `NeweggApiError` with
+`details.stage = "data channel TLS (certificate or protocol error)"`, and a data channel that ends before
+its handshake completed is `"data channel TLS (closed before the handshake completed)"`. The fingerprint has to be obtained out of band; a
 certificate Newegg rotates (this one expires 2031) fails closed until the pin is updated. The downloader also:
 
 - connects only to URL port 21 (`reportFileFtp.allowedPorts` widens it), because the port comes from the
   Newegg response and a hostile response must not aim the client at another TCP port on a `*.newegg.com` host;
-- caps one control line at 64 KiB and one (multi-line) reply at 256 KiB, destroying the socket and failing the
-  download on overflow, so a hostile or intercepted server cannot grow memory without bound.
+- caps one control line at 64 KiB and one (multi-line) reply at 256 KiB, and holds at most 64 complete
+  replies that no command asked for (single-line and multi-line alike), destroying the socket and failing the
+  download (also while the transfer is running) on overflow, so a hostile or intercepted server cannot grow
+  memory without bound;
+- compares the received byte count with `SIZE <file>` (RFC 3659, sent after `TYPE I`): a shorter or longer
+  transfer fails with `details.stage = "transfer (truncated: received N of M bytes)"`, and a `SIZE` above the
+  size cap fails before `RETR`. This is the only truncation check there is: Node's TLS layer does not report a
+  data channel dropped without `close_notify` (verified: abrupt close and clean close both end with a plain
+  `end`), so **over FTPS a server that cannot answer `SIZE` is refused**
+  (`"transfer setup (server cannot report the file size, ...)"`); plain FTP proceeds without it. Serv-U
+  answers `SIZE` (the live runs above).
 
 Status: the FTPS half of T-5668 is therefore PARTIAL by design (opt-in with a pin, not default); the port pin
 and the bounded control channel are complete. Other hosts (`ftp03.newegg.com` does not resolve) were not
