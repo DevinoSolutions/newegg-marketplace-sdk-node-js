@@ -4,6 +4,29 @@ import type { NeweggMarketplace, RequestOptions } from "./common.js";
 import type { RmaCurrency } from "./rma.js";
 import type { RateLimitInfo } from "./runtime.js";
 
+/**
+ * An earlier label create for the same order that blocks a new one (T-6212): dispatched with an
+ * unknown outcome (`submitting`) or confirmed bought (`submitted`). Kept per (marketplace, order)
+ * in the client's `OperationStore` for 24 hours.
+ */
+export interface LabelCreateAttempt {
+  state: "submitting" | "submitted";
+  /** Pass this as `acknowledgePriorAttemptId` once the order is verified to hold no label. */
+  attemptId: string;
+  /** When the attempt was last recorded (ISO 8601). */
+  atIso: string;
+}
+
+/** Options of {@link ShippingLabelsApi.previewCreate} / `create`. */
+export interface ShippingLabelCreateOptions extends RequestOptions {
+  /**
+   * The `attemptId` of the prior create attempt, passed back after the caller verified that the
+   * order holds no label. It clears ONLY that attempt, and only while the order lists no package;
+   * a newer attempt blocks again.
+   */
+  acknowledgePriorAttemptId?: string;
+}
+
 // ----------------------------------------------------------------------------
 // shipping labels (contracts §23)
 // ----------------------------------------------------------------------------
@@ -74,6 +97,8 @@ export interface ShippingLabelPreview<N> {
   /** Things worth a human look; they do not stop the write. */
   warnings: string[];
   correlationId: string;
+  /** Set by `previewCreate` when an earlier create for this order blocks (or was acknowledged for) this one. */
+  priorAttempt?: LabelCreateAttempt;
 }
 
 /** The carrier charge Newegg quotes (estimate) or bills (create) for one package. */
@@ -172,10 +197,17 @@ export interface ShippingLabelsApi {
   /** Read-only plan for {@link ShippingLabelsApi.create}; nothing is bought. */
   previewCreate(
     input: ShippingLabelInput,
-    options?: RequestOptions,
+    options?: ShippingLabelCreateOptions,
   ): Promise<ShippingLabelPreview<ShippingLabelInput>>;
-  /** WRITE: Shipping Label Request (1,000 req/hr). Buys the label(s) and ships the order. */
-  create(input: ShippingLabelInput, options?: RequestOptions): Promise<ShippingLabelResult>;
+  /**
+   * WRITE: Shipping Label Request (1,000 req/hr). Buys the label(s) and ships the order. Refuses
+   * with `LabelCreateGuardError` (nothing sent) while an earlier create for the same order was
+   * dispatched with an unknown outcome or succeeded; see {@link ShippingLabelCreateOptions}.
+   */
+  create(
+    input: ShippingLabelInput,
+    options?: ShippingLabelCreateOptions,
+  ): Promise<ShippingLabelResult>;
   /** Read-only plan for {@link ShippingLabelsApi.reprint}; nothing is requested. */
   previewReprint(
     orderNumber: string | number,

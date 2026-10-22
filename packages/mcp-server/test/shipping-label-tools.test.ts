@@ -480,13 +480,15 @@ describe("previewId misuse is rejected", () => {
 
       const preview = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
       const id = preview.json.previewId as string;
+      // Made before the purchase below: once it succeeds the order's create ledger (T-6212) blocks
+      // any further create preview, so an expiry check needs a preview that already exists.
+      const stale = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
       const first = await callTool(harness.mcp, TOOLS.applyCreate, { previewId: id });
       expect(first.isError).toBe(false);
       const replay = await callTool(harness.mcp, TOOLS.applyCreate, { previewId: id });
       expect(replay.json.errorCode).toBe("preview_already_used");
       expect(posts(harness)).toHaveLength(1);
 
-      const stale = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
       nowMs += 601_000;
       const expired = await callTool(harness.mcp, TOOLS.applyCreate, {
         previewId: stale.json.previewId as string,

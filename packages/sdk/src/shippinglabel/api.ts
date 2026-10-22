@@ -1,7 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   OrdersApi,
   RequestOptions,
+  LabelCreateAttempt,
+  ShippingLabelCreateOptions,
   ShippingLabelEstimate,
   ShippingLabelInput,
   ShippingLabelPreview,
@@ -13,7 +15,12 @@ import type {
 } from "../types.js";
 import type { RequestSpec } from "../platform/index.js";
 import type { NeweggHttpClient, RequestContext } from "../client/http.js";
-import { NeweggApiError, NeweggValidationError } from "../errors/index.js";
+import {
+  IndeterminateOrderWriteError,
+  NeweggApiError,
+  NeweggError,
+  NeweggValidationError,
+} from "../errors/index.js";
 import { Operation } from "../client/operations.js";
 import { getShippingLabelPlatform } from "../platform/shipping-label.js";
 import { rateLimitKey } from "../rate-limit/index.js";
@@ -28,6 +35,8 @@ import {
   newLabelFindings,
   type LabelFindings,
 } from "./checks.js";
+import { LabelCreateGuardError, priorAttemptMessage } from "./guard-error.js";
+import { isMarkedNotBought, LabelCreateLedger, markNotBought } from "./ledger.js";
 import { indeterminateLabelWrite, sendLabelWrite } from "./send.js";
 import { normalizeReprintInput, normalizeShippingLabelInput } from "./validate.js";
 import {
@@ -38,6 +47,36 @@ import {
   parseEstimateLabelResponse,
   parseReprintLabelResponse,
 } from "./wire.js";
+
+/**
+ * Why a supplied acknowledgement does not clear `attempt`, or undefined when none was supplied or
+ * it names exactly this attempt.
+ */
+function rejectedAcknowledgement(
+  options: ShippingLabelCreateOptions,
+  attempt: LabelCreateAttempt,
+): string | undefined {
+  const given = options.acknowledgePriorAttemptId;
+  if (given === undefined || given === attempt.attemptId) return undefined;
+  return "The acknowledgement names a different attempt than the latest one, so it was not accepted.";
+}
+
+/**
+ * True when the failure proves no label was bought: the request never left (marked in `send.ts`),
+ * Newegg refused every package, or it answered with an HTTP 4xx. Anything else, an indeterminate
+ * outcome above all, keeps blocking.
+ */
+function isDefinitelyNotBought(error: unknown): boolean {
+  if (error instanceof IndeterminateOrderWriteError) return false;
+  if (isMarkedNotBought(error)) return true;
+  return (
+    error instanceof NeweggError &&
+    error.httpStatus !== undefined &&
+    error.httpStatus >= 400 &&
+    error.httpStatus <= 499 &&
+    error.httpStatus !== 408
+  );
+}
 
 /** Longest Newegg error text echoed into an SDK error message. */
 const MAX_ERROR_TEXT = 300;
@@ -50,15 +89,20 @@ function clip(text: string): string {
  * Newegg Shipping Label Service (contracts §23). `estimate` is a quote. `create` and `reprint` are
  * NON-idempotent POSTs routed through {@link sendLabelWrite}, which never resends once the request
  * may have been dispatched (ADR 0004); each has a read-only `preview*` twin and re-runs the same
- * checks, refusing on any blocker. Nothing here is verified live: no label may be bought to test it.
+ * checks, refusing on any blocker. A `create` is also recorded per order in a ledger (see
+ * `ledger.ts`, built on the client's OperationStore) and a second one is refused while the first
+ * is indeterminate or succeeded (T-6212). Nothing here is verified live: no label may be bought to
+ * test it.
  */
 export class ShippingLabelsApiImpl implements ShippingLabelsApi {
   readonly #http: NeweggHttpClient;
   readonly #orders: OrdersApi;
+  readonly #ledger: LabelCreateLedger;
 
   constructor(http: NeweggHttpClient, orders: OrdersApi) {
     this.#http = http;
     this.#orders = orders;
+    this.#ledger = new LabelCreateLedger(http.config.operationStore);
   }
 
   async estimate(
@@ -104,20 +148,32 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
 
   async previewCreate(
     input: ShippingLabelInput,
-    options: RequestOptions = {},
+    options: ShippingLabelCreateOptions = {},
   ): Promise<ShippingLabelPreview<ShippingLabelInput>> {
-    return this.#planCreate(input, options);
+    return (await this.#planCreate(input, options)).preview;
   }
 
   async create(
     input: ShippingLabelInput,
-    options: RequestOptions = {},
+    options: ShippingLabelCreateOptions = {},
   ): Promise<ShippingLabelResult> {
     const { marketplace, sellerId } = this.#http.config;
-    const plan = await this.#planCreate(input, options);
-    this.#assertNoBlockers("The shipping label purchase", plan.blockers);
+    const {
+      preview: plan,
+      attempt,
+      acknowledged,
+      guardMessage,
+    } = await this.#planCreate(input, options);
     const { normalized, correlationId } = plan;
     const orderNumber = String(normalized.orderNumber);
+    if (attempt !== undefined && !acknowledged) {
+      throw new LabelCreateGuardError(
+        guardMessage ?? priorAttemptMessage(orderNumber, attempt, undefined),
+        orderNumber,
+        attempt,
+      );
+    }
+    this.#assertNoBlockers("The shipping label purchase", plan.blockers);
     const spec: RequestSpec = {
       method: "POST",
       path: `${this.#http.adapter.prefix}${SHIPPING_LABEL_CREATE_PATH}`,
@@ -125,6 +181,56 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
     };
     const ctx = this.#context(Operation.ShippingLabelCreate, correlationId, options);
     const meta = { operation: Operation.ShippingLabelCreate, orderNumber };
+
+    // Record the attempt BEFORE dispatch, with nothing awaited between the check and the record:
+    // a concurrent create of the same order is refused here, and a record that cannot be written
+    // stops the purchase (nothing is sent without its trace).
+    const ledgerKey = LabelCreateLedger.key(marketplace, orderNumber);
+    const attemptId = randomUUID();
+    const claim = this.#ledger.claim(
+      ledgerKey,
+      attemptId,
+      createHash("sha256").update(JSON.stringify(spec.body), "utf8").digest("hex"),
+      acknowledged ? attempt?.attemptId : undefined,
+    );
+    if ("refused" in claim) {
+      throw new LabelCreateGuardError(
+        priorAttemptMessage(orderNumber, claim.refused, undefined),
+        orderNumber,
+        claim.refused,
+      );
+    }
+    try {
+      await this.#ledger.persist(ledgerKey, claim.op);
+    } catch (cause) {
+      this.#ledger.rollback(ledgerKey, claim);
+      throw new NeweggApiError(
+        "The label attempt could not be recorded in the operation store, so nothing was sent.",
+        { correlationId, retryable: false, cause },
+      );
+    }
+    try {
+      const created = await this.#dispatchCreate(spec, ctx, meta, plan.currency, options);
+      await this.#ledger.settle(ledgerKey, attemptId, "submitted");
+      return created;
+    } catch (error) {
+      // Only a request that provably bought nothing frees the order for a new create; an
+      // indeterminate or unrecognised failure leaves the record at `submitting`.
+      if (isDefinitelyNotBought(error)) await this.#ledger.settle(ledgerKey, attemptId, "failed");
+      throw error;
+    }
+  }
+
+  async #dispatchCreate(
+    spec: RequestSpec,
+    ctx: RequestContext,
+    meta: { operation: string; orderNumber: string },
+    currency: ShippingLabelResult["currency"],
+    options: RequestOptions,
+  ): Promise<ShippingLabelResult> {
+    const { marketplace } = this.#http.config;
+    const { correlationId } = ctx;
+    const { orderNumber } = meta;
     const { result, submittedAtIso } = await sendLabelWrite(this.#http, spec, ctx, meta);
     const parsed = parseCreateLabelResponse(result.json, correlationId);
     const succeeded = parsed.packages.filter((pkg) => pkg.succeeded);
@@ -154,9 +260,11 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
         .map((pkg) => pkg.errorMessage)
         .filter((message): message is string => message !== undefined)
         .map(clip);
-      throw new NeweggApiError(
-        `Newegg refused every package of the label request${reasons.length > 0 ? `: ${reasons.join("; ")}` : "."}`,
-        { correlationId, retryable: false },
+      throw markNotBought(
+        new NeweggApiError(
+          `Newegg refused every package of the label request${reasons.length > 0 ? `: ${reasons.join("; ")}` : "."}`,
+          { correlationId, retryable: false },
+        ),
       );
     }
     return {
@@ -164,7 +272,7 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
       operation: "shippingLabels.create",
       orderNumber: parsed.orderNumber || orderNumber,
       shipDate: parsed.shipDate,
-      currency: plan.currency,
+      currency,
       packages: parsed.packages,
       succeededCount: succeeded.length,
       failedCount: failed.length,
@@ -276,18 +384,67 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
     };
   }
 
+  /**
+   * The create plan: the order checks plus the ledger. `attempt` is the earlier create that blocks
+   * (or, when `acknowledged`, was explicitly cleared by the caller for this one).
+   */
   async #planCreate(
     input: ShippingLabelInput,
-    options: RequestOptions,
-  ): Promise<ShippingLabelPreview<ShippingLabelInput>> {
-    const platform = getShippingLabelPlatform(this.#http.config.marketplace);
+    options: ShippingLabelCreateOptions,
+  ): Promise<{
+    preview: ShippingLabelPreview<ShippingLabelInput>;
+    attempt: LabelCreateAttempt | undefined;
+    acknowledged: boolean;
+    /** The ledger blocker text when `attempt` blocks. */
+    guardMessage: string | undefined;
+  }> {
+    const { marketplace } = this.#http.config;
+    const platform = getShippingLabelPlatform(marketplace);
     const normalized = normalizeShippingLabelInput(input, platform);
     const correlationId = options.correlationId ?? randomUUID();
     const orderNumber = String(normalized.orderNumber);
     const findings = newLabelFindings();
     const order = await this.#readOrder(orderNumber, { ...options, correlationId }, findings);
     checkCreateAgainstOrder(order, normalized, platform, findings);
-    return this.#preview("shippingLabels.create", normalized, orderNumber, findings, correlationId);
+
+    const attempt = await this.#ledger.read(LabelCreateLedger.key(marketplace, orderNumber));
+    let acknowledged = false;
+    let guardMessage: string | undefined;
+    if (attempt !== undefined) {
+      const rejected = rejectedAcknowledgement(options, attempt);
+      const listed = order?.packages.length ?? 0;
+      if (rejected !== undefined) {
+        guardMessage = priorAttemptMessage(orderNumber, attempt, rejected);
+      } else if (options.acknowledgePriorAttemptId !== undefined && listed > 0) {
+        guardMessage = priorAttemptMessage(
+          orderNumber,
+          attempt,
+          `The acknowledgement was not accepted because the order already lists ${listed} package(s).`,
+        );
+      } else if (options.acknowledgePriorAttemptId !== undefined) {
+        acknowledged = true;
+        findings.warnings.push(
+          `Prior label create attempt ${attempt.attemptId} (${attempt.state}) was acknowledged by the caller: ` +
+            "the order shows no package, so this create may buy a SECOND label if the earlier one did land.",
+        );
+      } else {
+        guardMessage = priorAttemptMessage(orderNumber, attempt, undefined);
+      }
+      if (guardMessage !== undefined) findings.blockers.push(guardMessage);
+    }
+    const preview = this.#preview(
+      "shippingLabels.create",
+      normalized,
+      orderNumber,
+      findings,
+      correlationId,
+    );
+    return {
+      preview: attempt === undefined ? preview : { ...preview, priorAttempt: attempt },
+      attempt,
+      acknowledged,
+      guardMessage,
+    };
   }
 
   async #planReprint(

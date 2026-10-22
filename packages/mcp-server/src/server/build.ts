@@ -11,6 +11,7 @@ import type {
   NeweggClient,
   NeweggClientConfig,
   NeweggLogger,
+  OperationStore,
 } from "@devino/newegg-marketplace-sdk";
 import type { McpServerConfig } from "../config/index.js";
 import {
@@ -18,6 +19,7 @@ import {
   InMemoryPreviewStore,
   type PreviewStore,
 } from "../preview-store/index.js";
+import { operationStoreFor } from "./operation-store.js";
 import { SERVER_NAME, SERVER_VERSION } from "../version.js";
 import { redactLogFields } from "../tools/log-redact.js";
 import { buildCapabilities, buildPublicConfiguration } from "../resources/index.js";
@@ -152,7 +154,11 @@ function adaptLogger(logger: Logger): NeweggLogger {
  * skips the credential binding and a key pair from another marketplace would silently serve its own
  * account (T-5911, ADR 0006). `loadMcpConfigFromEnv` always sets it.
  */
-function createClientFromConfig(config: McpServerConfig, logger: Logger): NeweggClient {
+function createClientFromConfig(
+  config: McpServerConfig,
+  logger: Logger,
+  operationStore: OperationStore,
+): NeweggClient {
   if ((config.credentialMarketplace as string | undefined) === undefined) {
     throw new NeweggConfigurationError(
       "McpServerConfig.credentialMarketplace is required: the credentials must be bound to the " +
@@ -166,6 +172,7 @@ function createClientFromConfig(config: McpServerConfig, logger: Logger): Newegg
     marketplace: config.marketplace,
     credentialMarketplace: config.credentialMarketplace,
     logger: adaptLogger(logger),
+    operationStore,
   };
   if (
     config.reportFtps !== true &&
@@ -497,8 +504,9 @@ export function createNeweggMcpServer(options: CreateNeweggMcpServerOptions): Ne
   const { config } = options;
   const logger = options.logger ?? defaultLogger;
   const now = options.now ?? (() => new Date());
-  const client = options.client ?? createClientFromConfig(config, logger);
   const previewStore = options.previewStore ?? new InMemoryPreviewStore(now);
+  const client =
+    options.client ?? createClientFromConfig(config, logger, operationStoreFor(previewStore));
   const server = buildMcpServer({
     config,
     client,

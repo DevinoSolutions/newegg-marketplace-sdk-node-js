@@ -122,6 +122,11 @@ export type ShippingLabelPreviewRecord = {
      * hash so it cannot be edited in the store.
      */
     readonly costCents?: number;
+    /**
+     * Create only: the `attemptId` of the earlier label create the operator acknowledged when
+     * previewing (T-6212). Part of the hash; the SDK re-checks it at apply.
+     */
+    readonly acknowledgedAttemptId?: string;
   };
 }[ShippingLabelKind];
 

@@ -3,7 +3,8 @@
  * money and ships the order, so the request is never resent once it may have been dispatched
  * (ADR 0004): only a provably-unsent transport failure is retried, and an ambiguous failure (a
  * timeout or reset after dispatch, a caller abort after dispatch, a 408 or any 5xx) throws
- * {@link IndeterminateOrderWriteError} with label-specific guidance.
+ * {@link IndeterminateOrderWriteError} with label-specific guidance. An error thrown before dispatch
+ * is marked with {@link markNotBought} so the create ledger can tell "provably unsent" from "unknown".
  */
 import type { RequestSpec } from "../platform/index.js";
 import type { HttpResult, NeweggHttpClient, RequestContext } from "../client/http.js";
@@ -11,6 +12,7 @@ import { IndeterminateOrderWriteError, NeweggApiError, NeweggError } from "../er
 import { fullJitterDelay } from "../client/retry.js";
 import { TransportError } from "../client/transport.js";
 import { delay, isAbortError } from "../util.js";
+import { markNotBought } from "./ledger.js";
 
 const LABEL_GUIDANCE =
   "A shipping label may have been bought. Check the order (orders.get / orders.getStatus: a " +
@@ -51,7 +53,11 @@ export async function sendLabelWrite(
 ): Promise<{ result: HttpResult; submittedAtIso: string }> {
   const { retry } = http.config;
   const submittedAtIso = new Date().toISOString();
-  await http.acquireRateLimit(ctx);
+  try {
+    await http.acquireRateLimit(ctx);
+  } catch (err) {
+    throw markNotBought(err);
+  }
   let attempt = 0;
   for (;;) {
     // fetch() rejects without sending when its signal is already aborted; an abort during the
@@ -61,7 +67,7 @@ export async function sendLabelWrite(
       return { result: await http.executeOnce(spec, ctx), submittedAtIso };
     } catch (err) {
       if (isAbortError(err)) {
-        if (abortedBeforeSend) throw err;
+        if (abortedBeforeSend) throw markNotBought(err);
         throw indeterminateLabelWrite(
           http,
           ctx,
@@ -96,13 +102,12 @@ export async function sendLabelWrite(
         );
       }
       if (err instanceof TransportError) {
-        throw new NeweggApiError(
-          "The shipping label write failed before dispatch and was not sent.",
-          {
+        throw markNotBought(
+          new NeweggApiError("The shipping label write failed before dispatch and was not sent.", {
             correlationId: ctx.correlationId,
             retryable: false,
             cause: err.cause,
-          },
+          }),
         );
       }
       throw err;
