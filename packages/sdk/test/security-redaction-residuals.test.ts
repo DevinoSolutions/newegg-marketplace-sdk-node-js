@@ -101,6 +101,42 @@ describe("URLSearchParams and Headers (T-6111 item 1)", () => {
   });
 });
 
+describe("keys and own properties of the rebuilt objects (T-6111 review)", () => {
+  it("redacts a URLSearchParams KEY as well as its values", () => {
+    const params = new URLSearchParams([[URL_WITH_SECRET, "1"]]);
+    expectNoSecret(render(params));
+    const sanitized = causeOf(params) as URLSearchParams;
+    expect([...sanitized.keys()].join(",")).not.toContain(PASS);
+    expect(sanitized.get("x")).toBeNull();
+    expect([...params.keys()]).toEqual([URL_WITH_SECRET]);
+  });
+
+  it("redacts own enumerable properties of URLSearchParams and Headers, and keeps them readable", () => {
+    const params = Object.assign(new URLSearchParams({ page: "2" }), { link: URL_WITH_SECRET });
+    const headers = Object.assign(new Headers({ accept: "text/plain" }), { link: URL_WITH_SECRET });
+    for (const original of [params, headers]) {
+      const sanitized = causeOf(original) as typeof original & { link: string };
+      expect(sanitized.link).toContain("***@");
+      expectNoSecret(JSON.stringify(sanitized));
+      expectNoSecret(render(original));
+    }
+    expect((causeOf(headers) as Headers).get("accept")).toBe("text/plain");
+    expect((causeOf(params) as URLSearchParams).get("page")).toBe("2");
+  });
+
+  it("does not leave a secret property on a Response or Request that is kept or replaced", () => {
+    for (const original of [
+      Object.assign(new Response("body"), { link: URL_WITH_SECRET }),
+      Object.assign(new Request("https://example.com/y"), { link: URL_WITH_SECRET }),
+    ]) {
+      const sanitized = causeOf(original);
+      expectNoSecret(JSON.stringify(sanitized));
+      expectNoSecret(typeof sanitized === "string" ? sanitized : render(sanitized));
+      expect((sanitized as { link?: string }).link ?? "").not.toContain(PASS);
+    }
+  });
+});
+
 describe("objects whose clone would break (T-6111 item 2)", () => {
   class WithPrivate {
     readonly link = URL_WITH_SECRET;
@@ -259,34 +295,49 @@ function bestOf(runs: number, work: () => void): number {
 }
 
 describe("lifted limits stay linear (T-6111 item 5, CodeQL js/polynomial-redos)", () => {
+  /** `unit` repeated until it is at least `size` characters long. */
+  const repeated = (unit: string) => (size: number) => unit.repeat(Math.ceil(size / unit.length));
   const shapes: Array<[string, (size: number) => string]> = [
-    ["password region shared by many candidates", (size) => `${"u:,".repeat(size / 3)}@${HOST}`],
-    ["schemeless candidates, one far @", (size) => `${"a:b ".repeat(size / 4)}@${HOST}`],
+    ["password region shared by many candidates", (size) => `${repeated("u:,")(size)}@${HOST}`],
+    ["schemeless candidates, one far @", (size) => `${repeated("a:b ")(size)}@${HOST}`],
     ["schemeless @ runs", (size) => `x:${"@".repeat(size)}`],
-    ["scheme candidates, one far @", (size) => `${"a://x".repeat(size / 5)}@${HOST}`],
-    ["scheme candidates with spaces", (size) => `${"a:// ".repeat(size / 5)}@${HOST}`],
-    ["reserved password candidates", (size) => `${"ftp://a/b ".repeat(size / 10)}@${HOST}`],
-    ["single-slash candidates", (size) => `${"a:/b:".repeat(size / 5)}@${HOST}`],
-    ["scheme-relative candidates", (size) => `${"//u:".repeat(size / 4)}@${HOST}`],
-    ["long host runs behind many @", (size) => `x:${`@${"a.".repeat(40)}`.repeat(size / 81)}`],
-    ["@ followed by newegg hosts", (size) => `x:${`@a.${HOST}`.repeat(size / 20)}`],
-    ["one long userinfo run", (size) => `ftp://${"u:".repeat(size / 2)}`],
+    ["scheme candidates, one far @", (size) => `${repeated("a://x")(size)}@${HOST}`],
+    ["scheme candidates with spaces", (size) => `${repeated("a:// ")(size)}@${HOST}`],
+    ["reserved password candidates", (size) => `${repeated("ftp://a/b ")(size)}@${HOST}`],
+    ["single-slash candidates", (size) => `${repeated("a:/b:")(size)}@${HOST}`],
+    ["scheme-relative candidates", (size) => `${repeated("//u:")(size)}@${HOST}`],
+    ["long host runs behind many @", (size) => `x:${repeated(`@${"a.".repeat(40)}`)(size)}`],
+    ["@ followed by newegg hosts", (size) => `x:${repeated(`@a.${HOST}`)(size)}`],
+    ["one long userinfo run", (size) => `ftp://${repeated("u:")(size)}`],
     ["one long schemeless password", (size) => `u:${"p".repeat(size)}`],
+    // No whitespace anywhere: the whole input is ONE run for the reserved-password pass.
+    [
+      "no-whitespace run, a Newegg host after each @",
+      (size) => repeated(`a://p/w@x.${HOST},`)(size),
+    ],
+    ["no-whitespace run, @ then ? and a host", (size) => repeated(`ftp://?@x.${HOST}@,:`)(size)],
+    ["no-whitespace run, doubled @ and a quote", (size) => repeated(`p@@ftp.${HOST}"a:\\`)(size)],
+    ["no-whitespace run, no host at all", (size) => repeated("a://p/w@x.example,")(size)],
   ];
 
-  it("takes time proportional to the input, not its square", { timeout: 120_000 }, () => {
+  const SMALL = 200_000;
+  const LARGE = 1_600_000;
+
+  it("takes time proportional to the input, not its square", { timeout: 300_000 }, () => {
     for (const [name, make] of shapes) {
       redactUrlCredentials(make(20_000)); // warm up
-      const small = make(100_000);
-      const large = make(800_000);
+      const small = make(SMALL);
+      const large = make(LARGE);
+      // At least 2 ms, so a sub-millisecond reading cannot make the cap meaningless.
       const smallMs = Math.max(
-        bestOf(3, () => redactUrlCredentials(small)),
-        5,
+        bestOf(5, () => redactUrlCredentials(small)),
+        2,
       );
-      const largeMs = bestOf(3, () => redactUrlCredentials(large));
-      // 8x the input: linear is about 8x; a quadratic scan would be 64x.
-      expect(largeMs, name).toBeLessThan(smallMs * 24);
-      expect(largeMs, name).toBeLessThan(10_000);
+      const largeMs = bestOf(5, () => redactUrlCredentials(large));
+      // 8x the input: linear is about 8x (cap 24x); a quadratic scan is about 64x.
+      expect(largeMs, `${name}: ratio`).toBeLessThan(smallMs * 24);
+      // A backstop for the ratio: linear takes well under a second at 1.6M characters.
+      expect(largeMs, `${name}: absolute`).toBeLessThan(3000);
     }
   });
 });

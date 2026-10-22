@@ -240,7 +240,9 @@ const reservedPasswordHit = (): ((
   colon: number,
   notBefore: number,
 ) => Hit | undefined) => {
-  // The last measurement: it answers every start in `[from, found >= 0 ? found : end]`.
+  // The last measurement of a whitespace-free run `[from, end)`: `found` is the first qualifying `@`
+  // at or after `from` (or -1 for none). A start inside the run reuses `end`; a start past
+  // `found` only rescans forward from itself, so no position is looked at twice.
   let from = -1;
   let end = -1;
   let found = -1;
@@ -251,9 +253,10 @@ const reservedPasswordHit = (): ((
     while (slashes < MAX_SLASHES && isSlash(text.charAt(colon + 1 + slashes))) slashes += 1;
     if (slashes < 2) return undefined;
     const begin = colon + 1 + slashes;
-    if (from < 0 || begin < from || begin > (found >= 0 ? found : end)) {
+    const sameRun = from >= 0 && begin >= from && begin <= end;
+    if (!sameRun || (found >= 0 && begin > found)) {
+      if (!sameRun) end = runEnd(RESERVED_PASSWORD_END, text, begin);
       from = begin;
-      end = runEnd(RESERVED_PASSWORD_END, text, begin);
       found = -1;
       for (let at = begin; at < end; at += 1) {
         if (
@@ -521,6 +524,24 @@ function isOpaqueRequestOrResponse(value: object): boolean {
   );
 }
 
+/** `target` with the own properties of `source` copied onto it, `changed` ones in their redacted form. */
+function withOwnProperties<T extends object>(
+  target: T,
+  source: object,
+  changed: Map<string | symbol, PropertyDescriptor>,
+): T {
+  for (const key of Reflect.ownKeys(source)) {
+    const descriptor = changed.get(key) ?? Object.getOwnPropertyDescriptor(source, key);
+    if (descriptor === undefined) continue;
+    try {
+      Object.defineProperty(target, key, descriptor);
+    } catch {
+      // A property the fresh object has and cannot redefine.
+    }
+  }
+  return target;
+}
+
 /**
  * A callable keeps its identity unless an own property (a static member, an attached `url`) is
  * changed; then a forwarding wrapper with the same name, length, prototype and (redacted)
@@ -602,11 +623,14 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
       let changed = false;
       const pairs: Array<[string, string]> = [];
       for (const [name, item] of value) {
+        const cleanedName = redactUrlCredentials(name);
         const cleaned = redactUrlCredentials(item);
-        if (cleaned !== item) changed = true;
-        pairs.push([name, cleaned]);
+        if (cleanedName !== name || cleaned !== item) changed = true;
+        pairs.push([cleanedName, cleaned]);
       }
-      return changed ? new URLSearchParams(pairs) : value;
+      const props = changedOwnProperties(value, next, walk);
+      if (!changed && props.size === 0) return value;
+      return withOwnProperties(new URLSearchParams(pairs), value, props);
     }
     if (value instanceof Headers) {
       let changed = false;
@@ -616,14 +640,18 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
         if (cleaned !== item) changed = true;
         rebuilt.append(name, cleaned);
       }
-      return changed ? rebuilt : value;
+      const props = changedOwnProperties(value, next, walk);
+      if (!changed && props.size === 0) return value;
+      return withOwnProperties(rebuilt, value, props);
     }
     // A Response or Request keeps its status text, URL and headers in internal slots; a copy made
     // from its prototype would throw on first use. Read the text form instead.
     if (isOpaqueRequestOrResponse(value)) {
       const text = textSummary(value);
       const redacted = redactUrlCredentials(text);
-      return redacted === text ? value : redacted;
+      // An own property (`response.link`) holding a secret also forces the text form.
+      const props = changedOwnProperties(value, next, walk);
+      return redacted === text && props.size === 0 ? value : redacted;
     }
     if (value instanceof String) {
       // The boxed text itself is what util.inspect prints, so it is redacted too.
