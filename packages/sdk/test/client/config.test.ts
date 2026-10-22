@@ -124,10 +124,95 @@ describe("resolveConfig baseUrl", () => {
     },
   );
 
-  it("accepts a custom https base URL", () => {
-    expect(resolveConfig(base({ baseUrl: "https://example.test/api/" })).baseUrl.pathname).toBe(
-      "/api/",
+  it("accepts a custom https base URL only with allowCustomBaseUrl", () => {
+    expect(
+      resolveConfig(base({ baseUrl: "https://example.test/api/", allowCustomBaseUrl: true }))
+        .baseUrl.pathname,
+    ).toBe("/api/");
+  });
+});
+
+describe("resolveConfig baseUrl allowlist (T-6217)", () => {
+  it.each([
+    "https://api.newegg.com/marketplace/",
+    "https://api.newegg.com/ec-mkp/",
+    "https://newegg.com/marketplace/",
+    "https://sandbox.api.newegg.com/marketplace/",
+  ])("accepts the Newegg host by default (%s)", (baseUrl) => {
+    expect(resolveConfig(base({ baseUrl })).baseUrl.toString()).toBe(baseUrl);
+  });
+
+  it.each([
+    "https://evil.example/",
+    "https://attacker.example/marketplace/",
+    "https://evilnewegg.com/marketplace/",
+    "https://newegg.com.evil.example/marketplace/",
+    "https://newegg.com@evil.example/marketplace/",
+    "https://api.newegg.com:pw@evil.example/marketplace/",
+    "https://evil.example/api.newegg.com/",
+    "https://evil.example/?h=api.newegg.com/",
+  ])("refuses a non-Newegg host by default (%s)", (baseUrl) => {
+    const error = configError(base({ baseUrl }));
+    expect(error.message).toContain("allowCustomBaseUrl");
+    const serialized = JSON.stringify(error) + error.message;
+    expect(serialized).not.toContain("key-abc");
+    expect(serialized).not.toContain("secret-xyz");
+    expect(serialized).not.toContain("A006");
+  });
+
+  it("still allows a custom https host with allowCustomBaseUrl: true", () => {
+    const resolved = resolveConfig(
+      base({ baseUrl: "https://evil.example/marketplace/", allowCustomBaseUrl: true }),
     );
+    expect(resolved.baseUrl.hostname).toBe("evil.example");
+  });
+
+  it("warns once, naming only the host, when a custom base URL is accepted", () => {
+    const warnings: Array<{ event: string; fields?: Record<string, unknown> }> = [];
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      error: () => undefined,
+      warn: (event: string, fields?: Record<string, unknown>) => {
+        warnings.push({ event, fields });
+      },
+    };
+    resolveConfig(
+      base({
+        baseUrl: "https://user:pw@proxy.example/secret-path/",
+        allowCustomBaseUrl: true,
+        logger,
+      }),
+    );
+    expect(warnings).toHaveLength(1);
+    const serialized = JSON.stringify(warnings[0]);
+    expect(serialized).toContain("proxy.example");
+    for (const leaked of ["secret-path", "pw@", "user"]) {
+      expect(serialized).not.toContain(leaked);
+    }
+  });
+
+  it("does not warn for the default host or for loopback", () => {
+    const warn: string[] = [];
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      error: () => undefined,
+      warn: (event: string) => warn.push(event),
+    };
+    resolveConfig(base({ logger }));
+    resolveConfig(base({ baseUrl: "http://127.0.0.1:8080/", logger }));
+    expect(warn).toEqual([]);
+  });
+
+  it("allows loopback without the flag", () => {
+    expect(resolveConfig(base({ baseUrl: "http://[::1]:3000/" })).baseUrl.protocol).toBe("http:");
+  });
+
+  it("refuses non-loopback http even with allowCustomBaseUrl", () => {
+    expect(
+      configError(base({ baseUrl: "http://example.test/", allowCustomBaseUrl: true })).message,
+    ).toContain("https");
   });
 });
 

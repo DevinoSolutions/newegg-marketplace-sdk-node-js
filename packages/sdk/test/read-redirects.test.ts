@@ -313,6 +313,7 @@ describe("read redirects with a stubbed fetch", () => {
       secretKey: TEST_SECRET_KEY,
       marketplace: "us",
       baseUrl: "https://api.example.test/marketplace/",
+      allowCustomBaseUrl: true,
       fetch: fetchImpl,
       retry: { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 },
     });
@@ -397,6 +398,7 @@ describe("read redirects with a stubbed fetch", () => {
       secretKey: TEST_SECRET_KEY,
       marketplace: "us",
       baseUrl: "https://api.example.test/marketplace/",
+      allowCustomBaseUrl: true,
       timeoutMs: 100,
       retry: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 },
       fetch: (_target, init) => {
