@@ -17,7 +17,7 @@ import type {
   NeweggLogger,
   OperationStore,
 } from "@devino/newegg-marketplace-sdk";
-import { McpConfigError, type McpServerConfig } from "../config/index.js";
+import { McpConfigError, weakBearerTokenReason, type McpServerConfig } from "../config/index.js";
 import {
   bindPreviewStoreToSession,
   InMemoryPreviewStore,
@@ -519,6 +519,15 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
  */
 export function createNeweggMcpServer(options: CreateNeweggMcpServerOptions): NeweggMcpServer {
   const { config } = options;
+  // loadMcpConfigFromEnv already enforces this; a hand-built config gets the same rule. Names the
+  // variable and the rule only, never the key.
+  const hmacKey = config.previewIntegrity?.hmacKey;
+  const keyWeakness = hmacKey === undefined ? undefined : weakBearerTokenReason(hmacKey);
+  if (keyWeakness !== undefined) {
+    throw new McpConfigError(
+      `NEWEGG_MCP_PREVIEW_HMAC_KEY (previewIntegrity.hmacKey) ${keyWeakness}.`,
+    );
+  }
   const logger = options.logger ?? defaultLogger;
   const now = options.now ?? (() => new Date());
   const previewStore = options.previewStore ?? new InMemoryPreviewStore(now);

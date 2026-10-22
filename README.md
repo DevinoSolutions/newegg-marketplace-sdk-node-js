@@ -529,9 +529,9 @@ Seller ID or a key from another platform is the usual cause), see
 > `reportFileFtp: { ftps: true, tlsCa, tlsPinnedCertSha256 }` (SDK) or `NEWEGG_MCP_REPORT_FTPS=true` +
 > `NEWEGG_MCP_REPORT_FTPS_CA_FILE` + `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256` (MCP). It is opt-in because Newegg's server certificate is
 > self-signed; the default stays plain FTP. (2) `NEWEGG_MCP_HTTP_BEARER_TOKEN`
-> must be **at least 32 characters with at least 12 different ones**; a weaker token makes the server refuse to
-> start (generate one with
-> `openssl rand -hex 32`). (3) RMA evidence `imageUrls` must be `https` and carry no `user:password@`.
+> and `NEWEGG_MCP_PREVIEW_HMAC_KEY` must be **at least 32 characters and not patterned** (no repeated, sequential or
+> keyboard-row runs, not just a few characters repeated); a weaker one makes the server refuse to start. Generate
+> one with `newegg-marketplace-mcp --generate-token` (prints one random secret and exits) or `openssl rand -hex 32`. (3) RMA evidence `imageUrls` must be `https` and carry no `user:password@`.
 > (4) A preview can only be applied from the MCP session that created it; `startHttpServer`'s
 > `createServer` callback now receives the `sessionId` (pass it to `createNeweggMcpServer`), and a custom
 > `PreviewStore` should honour the new optional `PreviewScope` argument of `get` / `consume`. (5) The HTTP
@@ -593,7 +593,7 @@ Seller ID or a key from another platform is the usual cause), see
 | `NEWEGG_MCP_REPORT_FTPS`                    | unset (`false`)          | Exactly `true` makes the report file download use explicit FTPS (no fallback to clear text).                                                                                                                                                                                                                                |
 | `NEWEGG_MCP_REPORT_FTPS_CA_FILE`            | empty                    | Path to the PEM of the server certificate to trust for FTPS (Newegg's is self-signed; contracts §17.5).                                                                                                                                                                                                                     |
 | `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`        | empty                    | SHA-256 fingerprint the FTPS server certificate must have (needs the CA file).                                                                                                                                                                                                                                              |
-| `NEWEGG_MCP_HTTP_BEARER_TOKEN`              | empty                    | Bearer token, **at least 32 characters, 12 different**; **required** before binding a non-loopback host, and whenever `NEWEGG_MCP_ALLOW_WRITES=true` over HTTP (even on loopback).                                                                                                                                          |
+| `NEWEGG_MCP_HTTP_BEARER_TOKEN`              | empty                    | Bearer token, **at least 32 characters, not patterned** (generate with `--generate-token`); **required** before binding a non-loopback host, and whenever `NEWEGG_MCP_ALLOW_WRITES=true` over HTTP (even on loopback).                                                                                                      |
 | `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`           | empty = same-origin only | Comma-separated allowed browser `Origin` values (`null` and `*` are rejected at startup).                                                                                                                                                                                                                                   |
 | `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`             | empty                    | Comma-separated allowed `Host` values (`host[:port]`); loopback always allowed.                                                                                                                                                                                                                                             |
 
