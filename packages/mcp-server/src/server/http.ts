@@ -30,6 +30,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import {
   extractBearerToken,
+  isFetchSiteAllowed,
   isHostAllowed,
   isLoopbackHostname,
   isOriginAllowed,
@@ -417,6 +418,20 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
       return;
     }
     const origin = firstHeader(req, "origin");
+    const secFetchSite = firstHeader(req, "sec-fetch-site");
+
+    if (req.method === "OPTIONS" || (pathname === "/healthz" && req.method === "GET")) {
+      // Answered before the /mcp guards, so they get the Host and fetch-metadata checks here: a
+      // DNS-rebinding page must not read the server name/version or probe preflights.
+      if (!isHostAllowed(hostHeader, httpConfig.allowedHosts)) {
+        sendJson(res, 403, jsonRpcError(null, -32600, "Host not allowed."));
+        return;
+      }
+      if (!isFetchSiteAllowed(origin, secFetchSite)) {
+        sendJson(res, 403, jsonRpcError(null, -32600, "Cross-site request not allowed."));
+        return;
+      }
+    }
 
     if (req.method === "OPTIONS") {
       if (origin !== undefined && isOriginAllowed(origin, httpConfig.allowedOrigins)) {
@@ -443,6 +458,10 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
 
     if (!isOriginAllowed(origin, httpConfig.allowedOrigins)) {
       sendJson(res, 403, jsonRpcError(null, -32600, "Origin not allowed."));
+      return;
+    }
+    if (!isFetchSiteAllowed(origin, secFetchSite)) {
+      sendJson(res, 403, jsonRpcError(null, -32600, "Cross-site request not allowed."));
       return;
     }
     if (origin !== undefined) {

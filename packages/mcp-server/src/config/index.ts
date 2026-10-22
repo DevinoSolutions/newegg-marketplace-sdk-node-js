@@ -331,6 +331,27 @@ function csvEnv(opts: { uppercase?: boolean } = {}) {
     );
 }
 
+/**
+ * Optional CSV of browser origins. `null` (sandboxed iframes, file:, redirects) and `*` can never
+ * identify a trusted origin, so they are refused at startup instead of silently allowlisted.
+ */
+function originsCsvEnv(name: string) {
+  return z
+    .string()
+    .optional()
+    .transform((raw, ctx) => {
+      const out = splitCsv(raw);
+      if (out.some((entry) => entry === "*" || entry.toLowerCase() === "null")) {
+        ctx.addIssue({
+          code: "custom",
+          message: `${name} must list concrete origins; "null" and "*" are never accepted.`,
+        });
+        return z.NEVER;
+      }
+      return out;
+    });
+}
+
 /** Optional CSV of marketplace tokens; each normalized + validated. */
 function marketplaceCsvEnv(name: string) {
   return z
@@ -495,7 +516,7 @@ const envSchema = z.object({
     }),
   NEWEGG_MCP_HTTP_PORT: strictCountEnv("NEWEGG_MCP_HTTP_PORT", 3919, 65_535),
   NEWEGG_MCP_HTTP_BEARER_TOKEN: bearerTokenEnv("NEWEGG_MCP_HTTP_BEARER_TOKEN"),
-  NEWEGG_MCP_HTTP_ALLOWED_ORIGINS: csvEnv(),
+  NEWEGG_MCP_HTTP_ALLOWED_ORIGINS: originsCsvEnv("NEWEGG_MCP_HTTP_ALLOWED_ORIGINS"),
   NEWEGG_MCP_HTTP_ALLOWED_HOSTS: csvEnv(),
   NEWEGG_MCP_HTTP_MAX_SESSIONS: strictCountEnv(
     "NEWEGG_MCP_HTTP_MAX_SESSIONS",

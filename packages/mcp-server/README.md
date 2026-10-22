@@ -73,9 +73,9 @@ newegg-marketplace-mcp --transport http
   and a preview can only be applied from the session that created it.
 - MCP requests are served at **`POST /mcp`** (Streamable HTTP; the session id is returned in
   the `Mcp-Session-Id` response header and must be echoed on subsequent `GET`/`DELETE`).
-- Guards run in order on `/mcp`: `Origin` allowlist → `Host` allowlist → bearer token. CORS is
+- Guards run in order on `/mcp`: `Origin` allowlist → cross-site check (no `Origin` but `Sec-Fetch-Site` other than `none` / `same-origin` → `403`) → `Host` allowlist → bearer token. CORS is
   never treated as authentication.
-- `GET /healthz` is an unauthenticated liveness probe that reveals no secrets:
+- `GET /healthz` is a liveness probe that needs no bearer token and reveals no secrets; it gets the same `Host` and cross-site checks (a disallowed `Host` is answered `403`):
 
 ```bash
 curl -s http://127.0.0.1:3919/healthz
@@ -240,7 +240,7 @@ is not surfaced in the tool's output.
 | `NEWEGG_MCP_REPORT_FTPS_CA_FILE`               | empty                    | Path to the PEM of the server certificate to trust for FTPS (Newegg's is self-signed).                                                                                                                                                                                                                                      |
 | `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`           | empty                    | SHA-256 fingerprint the FTPS server certificate must have (needs the CA file).                                                                                                                                                                                                                                              |
 | `NEWEGG_MCP_HTTP_BEARER_TOKEN`                 | empty                    | Bearer token, at least 32 characters (12 different); required to bind a non-loopback host, and whenever `NEWEGG_MCP_ALLOW_WRITES=true` over HTTP (even on loopback).                                                                                                                                                        |
-| `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`              | empty = same-origin only | Comma-separated allowed `Origin` values.                                                                                                                                                                                                                                                                                    |
+| `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`              | empty = same-origin only | Comma-separated allowed `Origin` values (`null` and `*` are rejected at startup).                                                                                                                                                                                                                                           |
 | `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`                | empty                    | Comma-separated allowed `Host` values; loopback always allowed.                                                                                                                                                                                                                                                             |
 
 ## Security

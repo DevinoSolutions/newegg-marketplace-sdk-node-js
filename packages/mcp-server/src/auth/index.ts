@@ -94,3 +94,21 @@ export function isOriginAllowed(origin: string | undefined, allowedOrigins: stri
   const allowed = new Set(allowedOrigins.map((value) => value.trim().toLowerCase()));
   return allowed.has(origin.trim().toLowerCase());
 }
+
+/**
+ * Fetch-metadata guard for requests that carry no `Origin`. A browser always sends
+ * `Sec-Fetch-Site`; real MCP clients (Node, Python, curl, Claude Code, Cursor) send neither header.
+ * With no `Origin`, a present `Sec-Fetch-Site` other than `none` / `same-origin` is a cross-site
+ * (e.g. `no-cors`) browser probe and is refused. A present `Origin` is judged by
+ * {@link isOriginAllowed} instead.
+ */
+export function isFetchSiteAllowed(
+  origin: string | undefined,
+  secFetchSite: string | undefined,
+): boolean {
+  if (origin !== undefined || secFetchSite === undefined) {
+    return true;
+  }
+  const site = secFetchSite.trim().toLowerCase();
+  return site === "none" || site === "same-origin";
+}

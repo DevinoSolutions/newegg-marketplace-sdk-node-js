@@ -485,13 +485,15 @@ spend money), and validates `Host` and `Origin` headers (CORS is never treated a
 MCP clients connect to the Streamable HTTP endpoint at **`POST http://127.0.0.1:3919/mcp`**;
 the session id is returned in the `Mcp-Session-Id` response header and must be echoed on
 subsequent `GET`/`DELETE` requests. Guards run in order on `/mcp`: `Origin` allowlist →
+cross-site check (no `Origin` but `Sec-Fetch-Site` other than `none` / `same-origin` → `403`) →
 `Host` allowlist → bearer token. When a bearer token is configured, clients must present it:
 
 ```
 Authorization: Bearer ${NEWEGG_MCP_HTTP_BEARER_TOKEN}
 ```
 
-`GET /healthz` is a separate, unauthenticated liveness probe that reveals no secrets:
+`GET /healthz` is a separate liveness probe that needs no bearer token and reveals no secrets. It
+gets the same `Host` and cross-site checks (a disallowed `Host` is answered `403`):
 
 ```bash
 curl -s http://127.0.0.1:3919/healthz
@@ -592,7 +594,7 @@ Seller ID or a key from another platform is the usual cause), see
 | `NEWEGG_MCP_REPORT_FTPS_CA_FILE`            | empty                    | Path to the PEM of the server certificate to trust for FTPS (Newegg's is self-signed; contracts §17.5).                                                                                                                                                                                                                     |
 | `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`        | empty                    | SHA-256 fingerprint the FTPS server certificate must have (needs the CA file).                                                                                                                                                                                                                                              |
 | `NEWEGG_MCP_HTTP_BEARER_TOKEN`              | empty                    | Bearer token, **at least 32 characters, 12 different**; **required** before binding a non-loopback host, and whenever `NEWEGG_MCP_ALLOW_WRITES=true` over HTTP (even on loopback).                                                                                                                                          |
-| `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`           | empty = same-origin only | Comma-separated allowed browser `Origin` values.                                                                                                                                                                                                                                                                            |
+| `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`           | empty = same-origin only | Comma-separated allowed browser `Origin` values (`null` and `*` are rejected at startup).                                                                                                                                                                                                                                   |
 | `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`             | empty                    | Comma-separated allowed `Host` values (`host[:port]`); loopback always allowed.                                                                                                                                                                                                                                             |
 
 ### Live tests (opt-in; never in CI)
