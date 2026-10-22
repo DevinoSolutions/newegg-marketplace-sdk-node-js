@@ -203,26 +203,6 @@ function marketplaceEnv(name: string) {
     });
 }
 
-const isPositiveInt = (n: number): boolean => Number.isInteger(n) && n > 0;
-const isPort = (n: number): boolean => Number.isInteger(n) && n >= 1 && n <= 65535;
-
-/** Optional integer with a default; the parsed number must satisfy `check`. */
-function intEnv(name: string, fallback: number, check: (n: number) => boolean, hint: string) {
-  return z
-    .string()
-    .optional()
-    .transform((raw, ctx) => {
-      const trimmed = raw?.trim();
-      if (trimmed === undefined || trimmed === "") return fallback;
-      const parsed = Number(trimmed);
-      if (!check(parsed)) {
-        ctx.addIssue({ code: "custom", message: `${name} must be ${hint}.` });
-        return z.NEVER;
-      }
-      return parsed;
-    });
-}
-
 /**
  * Strict plain-decimal money: no sign, exponent, hex/binary/octal prefix, leading zeros, bare
  * leading/trailing dot or inner whitespace (`Number()` accepts all of those), at most 5 integer
@@ -455,18 +435,12 @@ const envSchema = z.object({
       return trimmed;
     }),
   NEWEGG_MCP_ALLOWED_MARKETPLACES: marketplaceCsvEnv("NEWEGG_MCP_ALLOWED_MARKETPLACES"),
-  NEWEGG_MCP_MAX_ITEMS_PER_OPERATION: intEnv(
+  NEWEGG_MCP_MAX_ITEMS_PER_OPERATION: strictCountEnv(
     "NEWEGG_MCP_MAX_ITEMS_PER_OPERATION",
     500,
-    isPositiveInt,
-    "a positive integer",
+    10_000,
   ),
-  NEWEGG_MCP_PREVIEW_TTL_SECONDS: intEnv(
-    "NEWEGG_MCP_PREVIEW_TTL_SECONDS",
-    600,
-    isPositiveInt,
-    "a positive integer",
-  ),
+  NEWEGG_MCP_PREVIEW_TTL_SECONDS: strictCountEnv("NEWEGG_MCP_PREVIEW_TTL_SECONDS", 600, 86_400),
   NEWEGG_MCP_ALLOW_ZERO_QUANTITY: boolEnv("NEWEGG_MCP_ALLOW_ZERO_QUANTITY", true),
   NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT: strictNumberEnv(
     "NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT",
@@ -509,12 +483,7 @@ const envSchema = z.object({
       const trimmed = (raw ?? "").trim();
       return trimmed.length > 0 ? trimmed : "127.0.0.1";
     }),
-  NEWEGG_MCP_HTTP_PORT: intEnv(
-    "NEWEGG_MCP_HTTP_PORT",
-    3919,
-    isPort,
-    "an integer between 1 and 65535",
-  ),
+  NEWEGG_MCP_HTTP_PORT: strictCountEnv("NEWEGG_MCP_HTTP_PORT", 3919, 65_535),
   NEWEGG_MCP_HTTP_BEARER_TOKEN: bearerTokenEnv("NEWEGG_MCP_HTTP_BEARER_TOKEN"),
   NEWEGG_MCP_HTTP_ALLOWED_ORIGINS: csvEnv(),
   NEWEGG_MCP_HTTP_ALLOWED_HOSTS: csvEnv(),
