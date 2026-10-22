@@ -18,16 +18,25 @@
  * credentials are never logged or placed in messages in the first place.
  */
 
+/*
+ * How the patterns below are applied. Every regular expression is anchored with `^` and run on a
+ * short slice that starts at a candidate position found by a plain scan (a `:` followed by a
+ * slash, a `//`, a token boundary). A pattern therefore has exactly one place to start per
+ * candidate and never restarts inside a long run of text, so the work is linear in the input: the
+ * candidates are visited once, in order, and each costs at most its slice length.
+ */
+
 /**
  * `scheme://` (also `scheme:///`, `scheme:\\` and the JSON-escaped `scheme:\/\/`) followed by the
  * userinfo run up to the LAST `@` of the authority. The authority ends at `/`, `\`, `?`, `#`,
  * whitespace or a quote, so `https://host/a@b` and `https://host?email=a@b` are left alone, while
- * a password that itself contains `@` is fully covered. The scheme length is capped to keep the
- * scan linear, and there is deliberately no leading word boundary, so `link_ftp://u:p@h` is
- * redacted too.
+ * a password that itself contains `@` is fully covered. There is deliberately no leading word
+ * boundary, so `link_ftp://u:p@h` is redacted too. Anchored at the scheme start.
  */
 const URL_WITH_CREDENTIALS =
-  /([a-z][a-z0-9+.-]{0,31}):([\\/]{2,6}|[\\/](?=[^\s/\\@?#"'<>]{0,256}:))[^\s/\\?#"'<>]{0,2048}@/gi;
+  /^([a-z][a-z0-9+.-]{0,31}):([\\/]{2,6}|[\\/](?=[^\s/\\@?#"'<>]{0,256}:))[^\s/\\?#"'<>]{0,2048}@/i;
+/** Longest text {@link URL_WITH_CREDENTIALS} can match. */
+const URL_WITH_CREDENTIALS_WINDOW = 2200;
 
 /** A host at or under `newegg.com`; used only as a lookahead anchor for the looser patterns. */
 const NEWEGG_HOST = String.raw`(?:[a-z0-9-]{1,63}\.){0,8}newegg\.com(?![\w-])`;
@@ -35,26 +44,39 @@ const NEWEGG_HOST = String.raw`(?:[a-z0-9-]{1,63}\.){0,8}newegg\.com(?![\w-])`;
 /**
  * A password holding a literal `/ ? # "`, which ends the pattern above early. When a `newegg.com`
  * host follows, scan lazily (at most 256 characters) to the FIRST `@` that introduces it, so text
- * after the URL is not swallowed.
+ * after the URL is not swallowed. Anchored at the scheme start.
  */
 const URL_WITH_RESERVED_CHARS_IN_PASSWORD = new RegExp(
-  String.raw`([a-z][a-z0-9+.-]{0,31}):([\\/]{2,6})[^\s'<>]{0,256}?@(?=${NEWEGG_HOST})`,
-  "gi",
+  String.raw`^([a-z][a-z0-9+.-]{0,31}):([\\/]{2,6})[^\s'<>]{0,256}?@(?=${NEWEGG_HOST})`,
+  "i",
 );
+const URL_WITH_RESERVED_CHARS_WINDOW = 1000;
 
-/** Scheme-relative `//user:password@host`. A `user:` part is required, so `//a@b` is untouched. */
-const SCHEME_RELATIVE_CREDENTIALS =
-  /(?<![\w:/\\.%-])(\/\/)[^\s:/\\?#"'<>@]{1,256}:[^\s/\\?#"'<>]{0,2048}@/g;
+/**
+ * Scheme-relative `//user:password@host`. A `user:` part is required, so `//a@b` is untouched.
+ * Anchored at the `//`; the caller checks that no word character, `:`, `/`, `\`, `.`, `%` or `-`
+ * precedes it.
+ */
+const SCHEME_RELATIVE_CREDENTIALS = /^(\/\/)[^\s:/\\?#"'<>@]{1,256}:[^\s/\\?#"'<>]{0,2048}@/;
+const SCHEME_RELATIVE_WINDOW = 2400;
+const BEFORE_SCHEME_RELATIVE = /[\w:/\\.%-]/;
 
 /**
  * Schemeless `user:password@ftp03.newegg.com`. Restricted to Newegg's FTP report hosts and to a
- * token start, so ordinary `label:value@host` text and e-mail addresses keep their meaning; user
- * and password lengths are capped to keep the scan linear.
+ * token start (the caller only tries it after whitespace, a quote, a bracket, `,;=|` or at the
+ * start), so ordinary `label:value@host` text and e-mail addresses keep their meaning. The
+ * lookahead captures the host labels before `.newegg.com`; the caller requires `ftp` in them.
  */
 const SCHEMELESS_CREDENTIALS = new RegExp(
-  String.raw`(?<![^\s"'<>(\[{,;=|])[^\s:/\\@?#"'<>=,;()\[\]{}|]{1,128}:[^\s/\\"'<>]{0,256}@(?=([\w.-]{0,255})\.newegg\.com(?![\w-]))`,
-  "gi",
+  String.raw`^[^\s:/\\@?#"'<>=,;()\[\]{}|]{1,128}:[^\s/\\"'<>]{0,256}@(?=([\w.-]{0,255})\.newegg\.com(?![\w-]))`,
+  "i",
 );
+const SCHEMELESS_WINDOW = 700;
+/** The characters a schemeless credential may follow. */
+const TOKEN_BOUNDARY = /[\s"'<>(\[{,;=|]/g;
+
+const SCHEME_CHAR = /[a-z0-9+.-]/i;
+const SCHEME_LETTER = /[a-z]/i;
 
 /** Cheap pre-check: is there any percent / HTML-entity / fullwidth spelling worth decoding? */
 const ENCODED_DELIMITER_HINT = /%(?:3a|2f|5c|40|ef|25)|&(?:#|colon;|sol;|bsol;|commat;)|\uFF20/i;
@@ -102,17 +124,115 @@ function decodeDelimiters(text: string): string {
   return current;
 }
 
+interface Hit {
+  /** Where the match starts in the original text. */
+  readonly start: number;
+  /** Where it ends (exclusive). */
+  readonly end: number;
+  readonly replacement: string;
+}
+
+/**
+ * One left-to-right pass: `nextCandidate` finds the next place a pattern could start, `tryAt` runs
+ * the anchored pattern there. A hit replaces its span and the scan resumes after it (as a global
+ * `String.replace` would); a miss moves one position on.
+ */
+function replacePass(
+  text: string,
+  nextCandidate: (text: string, from: number) => number,
+  tryAt: (text: string, at: number, notBefore: number) => Hit | undefined,
+): string {
+  let out = "";
+  let copied = 0;
+  let from = 0;
+  for (;;) {
+    const at = nextCandidate(text, from);
+    if (at < 0) break;
+    const hit = tryAt(text, at, copied);
+    if (hit === undefined) {
+      from = at + 1;
+      continue;
+    }
+    out += text.slice(copied, hit.start) + hit.replacement;
+    copied = hit.end;
+    from = Math.max(hit.end, at + 1);
+  }
+  return out + text.slice(copied);
+}
+
+/** The next `:` that is directly followed by `/` or `\`. */
+function nextSchemeColon(text: string, from: number): number {
+  let at = text.indexOf(":", from);
+  while (at >= 0) {
+    const next = text.charAt(at + 1);
+    if (next === "/" || next === "\\") return at;
+    at = text.indexOf(":", at + 1);
+  }
+  return -1;
+}
+
+/**
+ * The start of the scheme that ends at the colon `colon`: the first letter of the (at most 32
+ * characters long) run of scheme characters before it, never before `notBefore`.
+ */
+function schemeStart(text: string, colon: number, notBefore: number): number {
+  let begin = colon;
+  while (begin > notBefore && colon - begin < 32 && SCHEME_CHAR.test(text.charAt(begin - 1))) {
+    begin -= 1;
+  }
+  while (begin < colon && !SCHEME_LETTER.test(text.charAt(begin))) begin += 1;
+  return begin < colon ? begin : -1;
+}
+
+const schemeHit =
+  (pattern: RegExp, window: number) =>
+  (text: string, colon: number, notBefore: number): Hit | undefined => {
+    const start = schemeStart(text, colon, notBefore);
+    if (start < 0) return undefined;
+    const match = pattern.exec(text.slice(start, start + window));
+    if (match === null) return undefined;
+    return { start, end: start + match[0].length, replacement: `${match[1]}:${match[2]}***@` };
+  };
+
+const nextSlashPair = (text: string, from: number): number => text.indexOf("//", from);
+
+const relativeHit = (text: string, at: number): Hit | undefined => {
+  if (at > 0 && BEFORE_SCHEME_RELATIVE.test(text.charAt(at - 1))) return undefined;
+  const match = SCHEME_RELATIVE_CREDENTIALS.exec(text.slice(at, at + SCHEME_RELATIVE_WINDOW));
+  if (match === null) return undefined;
+  return { start: at, end: at + match[0].length, replacement: "//***@" };
+};
+
+/** The next place a token can start: the start of the text, or the position after a boundary. */
+function nextTokenStart(text: string, from: number): number {
+  if (from === 0) return 0;
+  TOKEN_BOUNDARY.lastIndex = from - 1;
+  const boundary = TOKEN_BOUNDARY.exec(text);
+  return boundary === null || boundary.index + 1 >= text.length ? -1 : boundary.index + 1;
+}
+
+const schemelessHit = (text: string, at: number): Hit | undefined => {
+  const match = SCHEMELESS_CREDENTIALS.exec(text.slice(at, at + SCHEMELESS_WINDOW));
+  // The lookahead captured the host labels before `.newegg.com`; only FTP hosts qualify.
+  if (match === null || !/ftp/i.test(match[1] ?? "")) return undefined;
+  return { start: at, end: at + match[0].length, replacement: "***@" };
+};
+
 function redactVisible(text: string): string {
   // Every pattern ends in a literal `@`, so text without one is returned without scanning it.
   if (!text.includes("@")) return text;
-  return text
-    .replace(URL_WITH_CREDENTIALS, "$1:$2***@")
-    .replace(URL_WITH_RESERVED_CHARS_IN_PASSWORD, "$1:$2***@")
-    .replace(SCHEME_RELATIVE_CREDENTIALS, "$1***@")
-    .replace(SCHEMELESS_CREDENTIALS, (match: string, host: string) =>
-      // The lookahead captured the host label run before `.newegg.com`; only FTP hosts qualify.
-      /ftp/i.test(host) ? "***@" : match,
-    );
+  let result = replacePass(
+    text,
+    nextSchemeColon,
+    schemeHit(URL_WITH_CREDENTIALS, URL_WITH_CREDENTIALS_WINDOW),
+  );
+  result = replacePass(
+    result,
+    nextSchemeColon,
+    schemeHit(URL_WITH_RESERVED_CHARS_IN_PASSWORD, URL_WITH_RESERVED_CHARS_WINDOW),
+  );
+  result = replacePass(result, nextSlashPair, relativeHit);
+  return replacePass(result, nextTokenStart, schemelessHit);
 }
 
 /**
