@@ -27,10 +27,10 @@
  * redacted too.
  */
 const URL_WITH_CREDENTIALS =
-  /([a-z][a-z0-9+.-]{0,31}):([\\/]{2,6}|[\\/](?=[^\s/\\@?#"'<>]*:))[^\s/\\?#"'<>]*@/gi;
+  /([a-z][a-z0-9+.-]{0,31}):([\\/]{2,6}|[\\/](?=[^\s/\\@?#"'<>]{0,256}:))[^\s/\\?#"'<>]{0,2048}@/gi;
 
 /** A host at or under `newegg.com`; used only as a lookahead anchor for the looser patterns. */
-const NEWEGG_HOST = String.raw`(?:[a-z0-9-]+\.)*newegg\.com(?![\w-])`;
+const NEWEGG_HOST = String.raw`(?:[a-z0-9-]{1,63}\.){0,8}newegg\.com(?![\w-])`;
 
 /**
  * A password holding a literal `/ ? # "`, which ends the pattern above early. When a `newegg.com`
@@ -43,7 +43,8 @@ const URL_WITH_RESERVED_CHARS_IN_PASSWORD = new RegExp(
 );
 
 /** Scheme-relative `//user:password@host`. A `user:` part is required, so `//a@b` is untouched. */
-const SCHEME_RELATIVE_CREDENTIALS = /(?<![\w:/\\.%-])(\/\/)[^\s:/\\?#"'<>@]+:[^\s/\\?#"'<>]*@/g;
+const SCHEME_RELATIVE_CREDENTIALS =
+  /(?<![\w:/\\.%-])(\/\/)[^\s:/\\?#"'<>@]{1,256}:[^\s/\\?#"'<>]{0,2048}@/g;
 
 /**
  * Schemeless `user:password@ftp03.newegg.com`. Restricted to Newegg's FTP report hosts and to a
@@ -51,7 +52,7 @@ const SCHEME_RELATIVE_CREDENTIALS = /(?<![\w:/\\.%-])(\/\/)[^\s:/\\?#"'<>@]+:[^\
  * and password lengths are capped to keep the scan linear.
  */
 const SCHEMELESS_CREDENTIALS = new RegExp(
-  String.raw`(?<![^\s"'<>(\[{,;=|])[^\s:/\\@?#"'<>=,;()\[\]{}|]{1,128}:[^\s/\\"'<>]{0,256}@(?=[\w.-]*ftp[\w.-]*\.newegg\.com(?![\w-]))`,
+  String.raw`(?<![^\s"'<>(\[{,;=|])[^\s:/\\@?#"'<>=,;()\[\]{}|]{1,128}:[^\s/\\"'<>]{0,256}@(?=([\w.-]{0,255})\.newegg\.com(?![\w-]))`,
   "gi",
 );
 
@@ -102,11 +103,16 @@ function decodeDelimiters(text: string): string {
 }
 
 function redactVisible(text: string): string {
+  // Every pattern ends in a literal `@`, so text without one is returned without scanning it.
+  if (!text.includes("@")) return text;
   return text
     .replace(URL_WITH_CREDENTIALS, "$1:$2***@")
     .replace(URL_WITH_RESERVED_CHARS_IN_PASSWORD, "$1:$2***@")
     .replace(SCHEME_RELATIVE_CREDENTIALS, "$1***@")
-    .replace(SCHEMELESS_CREDENTIALS, "***@");
+    .replace(SCHEMELESS_CREDENTIALS, (match: string, host: string) =>
+      // The lookahead captured the host label run before `.newegg.com`; only FTP hosts qualify.
+      /ftp/i.test(host) ? "***@" : match,
+    );
 }
 
 /**

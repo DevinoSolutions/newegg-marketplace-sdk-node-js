@@ -6,12 +6,46 @@
  */
 import { redactUrlCredentials } from "@devino/newegg-marketplace-sdk";
 
-/** `http(s)://host/path?query#frag` -> `http(s)://host/path?[redacted]#frag`. */
-const URL_QUERY = /(\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s?#"'<>]*)\?[^\s#"'<>]*/gi;
+/** Ends the part of a URL before its query: whitespace, another `?`, a fragment, a quote or a bracket. */
+const URL_PART_END = /[\s?#"'<>]/;
+/** Ends a query string. */
+const QUERY_END = /[\s#"'<>]/;
+/** Longest scheme-to-`?` run still treated as one URL. */
+const MAX_URL_RUN = 8192;
+
+/**
+ * `http(s)://host/path?query#frag` -> `http(s)://host/path?[redacted]#frag`. One forward pass with
+ * `indexOf` (no backtracking regex), so a pathological input such as `a://` repeated cannot make
+ * it quadratic: each scanned stretch starts where the previous one ended.
+ */
+function redactQueryStrings(text: string): string {
+  if (!text.includes("?")) return text;
+  let out = "";
+  let copied = 0;
+  let from = 0;
+  for (;;) {
+    const separator = text.indexOf("://", from);
+    if (separator < 0) break;
+    const start = separator + 3;
+    const limit = Math.min(text.length, start + MAX_URL_RUN);
+    let end = start;
+    while (end < limit && !URL_PART_END.test(text.charAt(end))) end += 1;
+    if (end < limit && text.charAt(end) === "?") {
+      let queryEnd = end + 1;
+      while (queryEnd < text.length && !QUERY_END.test(text.charAt(queryEnd))) queryEnd += 1;
+      out += `${text.slice(copied, end + 1)}[redacted]`;
+      copied = queryEnd;
+      from = queryEnd;
+    } else {
+      from = end;
+    }
+  }
+  return out + text.slice(copied);
+}
 
 /** Removes URL credentials and URL query strings from `text`. Never throws. */
 export function redactLogText(text: string): string {
-  return redactUrlCredentials(text).replace(URL_QUERY, "$1?[redacted]");
+  return redactQueryStrings(redactUrlCredentials(text));
 }
 
 const MAX_DEPTH = 6;

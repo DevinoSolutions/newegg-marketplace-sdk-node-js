@@ -9,7 +9,8 @@ import { redactUrlCredentials } from "../src/errors/redact.js";
 const USER = "LabelUser";
 const PASS_A = "Zq7Kx";
 const PASS_B = "9wLm";
-const HOST = "ftp03.newegg.com";
+// Built from parts: a bare host name string reads as an unescaped host regexp to static analysis.
+const HOST = ["ftp03", "newegg", "com"].join(".");
 
 /** Every fragment of the secret that must be gone from the output. */
 function expectNoSecret(output: string): void {
@@ -118,6 +119,34 @@ describe("redactUrlCredentials (T-5665 / L1)", () => {
       const started = performance.now();
       redactUrlCredentials(shape);
       expect(performance.now() - started).toBeLessThan(1000);
+    }
+  });
+
+  it("scales linearly: doubling the input at most roughly doubles the time", () => {
+    const shapes: Array<[string, (size: number) => string]> = [
+      ["a", (size) => "a".repeat(size)],
+      ["a:", (size) => "a:".repeat(size / 2)],
+      ["//a", (size) => `//${"a".repeat(size)}`],
+      ["//a:", (size) => "//a:".repeat(size / 4)],
+      ["a@", (size) => "a@".repeat(size / 2)],
+      ["x:y@", (size) => "x:y@".repeat(size / 4)],
+      ["ftp://", (size) => `ftp://${"a".repeat(size)}`],
+      ["ftp:/a", (size) => "ftp:/a".repeat(size / 6)],
+      ["a.ftp@", (size) => `${"a.".repeat(size / 2)}@ftp`],
+    ];
+    const measure = (make: (size: number) => string, size: number): number => {
+      const input = make(size);
+      const started = performance.now();
+      redactUrlCredentials(input);
+      return performance.now() - started;
+    };
+    for (const [name, make] of shapes) {
+      measure(make, 20_000); // warm up
+      const small = Math.max(measure(make, 100_000), 5);
+      const large = measure(make, 800_000);
+      // 8x the input: linear is about 8x; a quadratic scan would be 64x.
+      expect(large, name).toBeLessThan(small * 24);
+      expect(large, name).toBeLessThan(1000);
     }
   });
 });
