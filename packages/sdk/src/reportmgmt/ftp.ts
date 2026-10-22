@@ -94,6 +94,14 @@ class ControlChannel {
   #multilineBytes = 0;
   #waiter: { resolve: (reply: Reply) => void; reject: (error: unknown) => void } | undefined;
   #error: unknown;
+  #rejectOverflow: (error: unknown) => void = () => undefined;
+  /**
+   * Rejects when the server breaks a size limit of this channel. Nothing awaits a control reply
+   * while a transfer runs, so the transfer waits on this too and ends with the same error.
+   */
+  readonly overflowed = new Promise<never>((_, reject) => {
+    this.#rejectOverflow = reject;
+  });
   readonly #onData = (chunk: string): void => this.#handleData(chunk);
   readonly #onError = (error: unknown): void => this.#fail(error);
   readonly #onClose = (): void => this.#fail(new Error("control connection closed"));
@@ -104,6 +112,7 @@ class ControlChannel {
     socket.on("data", this.#onData);
     socket.on("error", this.#onError);
     socket.on("close", this.#onClose);
+    this.overflowed.catch(() => undefined);
   }
 
   /**
@@ -129,7 +138,9 @@ class ControlChannel {
 
   #overflow(): void {
     this.#buffer = "";
-    this.#fail(fail("control channel (reply exceeds the size limit)"));
+    const error = fail("control channel (reply exceeds the size limit)");
+    this.#fail(error);
+    this.#rejectOverflow(error);
     this.#socket.destroy();
   }
 
@@ -161,9 +172,9 @@ class ControlChannel {
       if (this.#multilineBytes > MAX_CONTROL_REPLY_BYTES) return false;
       // Inside a multi-line reply only "<code><space>" terminates it.
       if (match && match[1] === this.#multiline && match[2] === " ") {
-        this.#deliver({ code: Number(match[1]), text: line.slice(4) });
         this.#multiline = undefined;
         this.#multilineBytes = 0;
+        return this.#deliver({ code: Number(match[1]), text: line.slice(4) });
       }
       return true;
     }
@@ -173,18 +184,19 @@ class ControlChannel {
       this.#multilineBytes = line.length + 1;
       return true;
     }
-    this.#deliver({ code: Number(match[1]), text: line.slice(4) });
-    return this.#pending.length <= MAX_PENDING_REPLIES;
+    return this.#deliver({ code: Number(match[1]), text: line.slice(4) });
   }
 
-  #deliver(reply: Reply): void {
+  /** Hands a complete reply to the waiting command or queues it; false once too many are queued. */
+  #deliver(reply: Reply): boolean {
     const waiter = this.#waiter;
     if (waiter) {
       this.#waiter = undefined;
       waiter.resolve(reply);
-    } else {
-      this.#pending.push(reply);
+      return true;
     }
+    this.#pending.push(reply);
+    return this.#pending.length <= MAX_PENDING_REPLIES;
   }
 
   reply(): Promise<Reply> {
@@ -454,7 +466,7 @@ export async function downloadViaFtp(
 
     control.send(`RETR ${path}`);
     await expect(control, "file retrieval", (code) => code === 125 || code === 150);
-    const bytes = await transfer;
+    const bytes = await Promise.race([transfer, control.overflowed]);
     await expect(control, "transfer completion", (code) => code === 226 || code === 250);
     control.send("QUIT");
     return bytes;

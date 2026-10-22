@@ -373,4 +373,77 @@ describe("FTP control channel is bounded (T-5669 / L5)", () => {
     expect(Date.now() - started).toBeLessThan(2500);
     await flood.closedByClient;
   });
+
+  it.each([
+    ["single-line", "199 x\r\n"],
+    ["completed multi-line", "199-\r\n199 \r\n"],
+  ])("hangs up on a flood of unsolicited %s replies after RETR", async (_name, unit) => {
+    const dataServer = net.createServer((socket) => socket.on("error", () => undefined));
+    await new Promise<void>((resolve) => dataServer.listen(0, "127.0.0.1", resolve));
+    const dataPort = (dataServer.address() as net.AddressInfo).port;
+    let sentUnits = 0;
+    let markClosed: () => void = () => undefined;
+    const closedByClient = new Promise<void>((resolve) => {
+      markClosed = resolve;
+    });
+    let timer: NodeJS.Timeout | undefined;
+    const sockets = new Set<net.Socket>();
+    const control = net.createServer((socket) => {
+      sockets.add(socket);
+      socket.on("error", () => undefined);
+      socket.on("close", () => {
+        clearInterval(timer);
+        markClosed();
+      });
+      socket.write("220 hi\r\n");
+      let buffer = "";
+      socket.on("data", (chunk) => {
+        buffer += chunk.toString("latin1");
+        let end = buffer.indexOf("\r\n");
+        while (end >= 0) {
+          const line = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          if (line.startsWith("USER")) socket.write("230 in\r\n");
+          else if (line.startsWith("TYPE")) socket.write("200 ok\r\n");
+          else if (line.startsWith("PASV")) {
+            socket.write(`227 x (127,0,0,1,${dataPort >> 8},${dataPort & 255})\r\n`);
+          } else if (line.startsWith("RETR")) {
+            socket.write("150 go\r\n");
+            const burst = unit.repeat(5000);
+            timer = setInterval(() => {
+              if (socket.destroyed) return;
+              socket.write(burst);
+              sentUnits += 5000;
+            }, 5);
+          }
+          end = buffer.indexOf("\r\n");
+        }
+      });
+    });
+    await new Promise<void>((resolve) => control.listen(0, "127.0.0.1", resolve));
+    closers.push(
+      () =>
+        new Promise<void>((resolve) => {
+          clearInterval(timer);
+          for (const socket of sockets) socket.destroy();
+          dataServer.close();
+          control.close(() => resolve());
+        }),
+    );
+    const controlPort = (control.address() as net.AddressInfo).port;
+
+    const started = Date.now();
+    const error = await downloadViaFtp(`ftp://u:p@127.0.0.1:${controlPort}/x.csv`, {
+      maxBytes: 1000,
+      timeoutMs: 4000,
+      allowedHost: ANY_HOST,
+      allowedPorts: [controlPort],
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect((error as Error).message).toMatch(/size limit/);
+    expect(Date.now() - started).toBeLessThan(2500);
+    await closedByClient;
+    // The client stopped reading almost at once instead of buffering the flood until the timeout.
+    expect(sentUnits).toBeLessThan(500_000);
+  });
 });
