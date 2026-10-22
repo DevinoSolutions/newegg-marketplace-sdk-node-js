@@ -71,6 +71,9 @@ export const WRITE_METHOD_NAMES: ReadonlySet<string> = new Set([
   "reprint",
   "previewReprint",
   "estimate",
+  // The create guard's local ledger check (T-6212) makes no request, but it belongs to the label
+  // namespace, which a live file may not touch at all; naming it stays forbidden.
+  "assertCreateNotBlocked",
   // Sponsored Ads writes (contracts §25) - not implemented, reserved so a future method of this
   // name forces a classification (and a live file may never name one). Every Sponsored Ads
   // create / add / update / change-status spends money or changes a campaign.
