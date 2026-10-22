@@ -217,6 +217,18 @@ describe("clientTypeProblems", () => {
       ],
       ["a class extends clause", `${NAMED}export class K extends NeweggClient { rogue() {} }\n`],
       [
+        "an alias declared before the import it depends on",
+        `import V = C;\nimport type { NeweggClient as C } from "./types/client.js";\nexport interface X extends V { rogue(): void }\n`,
+      ],
+      [
+        "aliases inside a nested declare module block",
+        `declare module "./other.js" {\n  import type { NeweggClient as C } from "./types/client.js";\n  interface X extends C { rogue(): void }\n}\nexport {};\n`,
+      ],
+      [
+        "an import-equals alias inside a namespace block",
+        `${T_NS}namespace N {\n  import U = T.NeweggClient;\n  export interface X extends U { rogue(): void }\n}\nexport {};\n`,
+      ],
+      [
         "a generic heritage clause",
         `${NAMED}export interface X extends NeweggClient<string> { rogue(): void }\nexport class K implements NeweggClient<string> { marketplace = "us"; }\n`,
       ],
@@ -233,6 +245,9 @@ describe("clientTypeProblems", () => {
     it.todo("fails on an intersection alias that includes NeweggClient");
     it.todo("fails on a parenthesised heritage expression");
     it.todo("fails on a class expression that implements NeweggClient");
+    it.todo("fails on a cross-file re-export of NeweggClient under a new name");
+    it.todo("fails on a namespace-import alias from another file (R.Alias)");
+    it.todo("fails on Omit / Pick<NeweggClient, ...> heritage");
   });
 
   it("does not flag an unrelated qualified heritage clause", () => {
