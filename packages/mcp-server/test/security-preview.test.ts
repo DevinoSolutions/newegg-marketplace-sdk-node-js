@@ -82,6 +82,7 @@ function first<T>(list: T[]): T {
 /** The parts of a stored record the tamper cases reach into. */
 interface Stored {
   normalizedUpdates: Array<Record<string, unknown>>;
+  previewedCurrentPrices: Array<number | null>;
   items: Array<Record<string, unknown> & { tiers: Array<Record<string, unknown>> }>;
 }
 
@@ -132,6 +133,21 @@ const CASES: TamperCase[] = [
     apply: "newegg_pricing_apply_update",
     tamper: (stored) => {
       first(stored.normalizedUpdates).sellingPrice = 1;
+    },
+    isWrite: (call) => call.method === "PUT",
+  },
+  {
+    // The previewed live price is part of the hash: rewriting it would let a drifted price pass
+    // the apply-time drift check (T-6219).
+    name: "pricing (previewed current price)",
+    routes: priceRoutes,
+    preview: [
+      "newegg_pricing_preview_update",
+      { updates: [{ identifier: { type: "sellerPartNumber", value: "SKU-1" }, sellingPrice: 18 }] },
+    ],
+    apply: "newegg_pricing_apply_update",
+    tamper: (stored) => {
+      stored.previewedCurrentPrices[0] = 999;
     },
     isWrite: (call) => call.method === "PUT",
   },
