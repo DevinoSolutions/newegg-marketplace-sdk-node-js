@@ -13,8 +13,13 @@ import type {
   NeweggLogger,
 } from "@devino/newegg-marketplace-sdk";
 import type { McpServerConfig } from "../config/index.js";
-import { InMemoryPreviewStore, type PreviewStore } from "../preview-store/index.js";
+import {
+  bindPreviewStoreToSession,
+  InMemoryPreviewStore,
+  type PreviewStore,
+} from "../preview-store/index.js";
 import { SERVER_NAME, SERVER_VERSION } from "../version.js";
+import { redactLogFields } from "../tools/log-redact.js";
 import { buildCapabilities, buildPublicConfiguration } from "../resources/index.js";
 import {
   TOOL_NAMES,
@@ -86,13 +91,16 @@ import {
   type ToolResult,
 } from "../tools/index.js";
 
-/** Default structured logger: JSON lines on stderr (never stdout). */
+/**
+ * Default structured logger: JSON lines on stderr (never stdout). Every string field is redacted
+ * (URL credentials and query strings), so no call site can leak them by accident.
+ */
 export const defaultLogger: Logger = (level, event, fields) => {
   const entry: Record<string, unknown> = { level, event, time: new Date().toISOString() };
   if (fields !== undefined) {
     for (const [key, value] of Object.entries(fields)) {
       if (value !== undefined) {
-        entry[key] = value;
+        entry[key] = redactLogFields(value);
       }
     }
   }
@@ -106,6 +114,12 @@ export interface CreateNeweggMcpServerOptions {
   readonly previewStore?: PreviewStore;
   readonly logger?: Logger;
   readonly now?: () => Date;
+  /**
+   * The MCP session this server instance serves (the HTTP transport passes one per session).
+   * Previews it creates can only be applied from the same session; leave unset on stdio, which has
+   * a single implicit session.
+   */
+  readonly sessionId?: string;
 }
 
 export interface NeweggMcpServer {
@@ -120,6 +134,7 @@ export interface ServerDeps {
   readonly previewStore: PreviewStore;
   readonly logger: Logger;
   readonly now: () => Date;
+  readonly sessionId?: string;
 }
 
 function adaptLogger(logger: Logger): NeweggLogger {
@@ -152,6 +167,9 @@ function createClientFromConfig(config: McpServerConfig, logger: Logger): Newegg
     credentialMarketplace: config.credentialMarketplace,
     logger: adaptLogger(logger),
   };
+  if (config.allowPlaintextReportFtp === true) {
+    clientConfig.reportFileFtp = { allowPlaintext: true };
+  }
   if (config.baseUrl !== undefined) {
     clientConfig.baseUrl = config.baseUrl;
   }
@@ -366,9 +384,12 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   const ctx: ToolContext = {
     client: deps.client,
     config,
-    previewStore: deps.previewStore,
+    // Every handler sees the store through its session: records are stamped on put and only
+    // this session's records can be read or consumed (T-5675).
+    previewStore: bindPreviewStoreToSession(deps.previewStore, deps.sessionId),
     logger: deps.logger,
     now: deps.now,
+    sessionId: deps.sessionId,
   };
 
   registerToolDefinition(server, inventoryGetTool, ctx);
@@ -460,7 +481,14 @@ export function createNeweggMcpServer(options: CreateNeweggMcpServerOptions): Ne
   const now = options.now ?? (() => new Date());
   const client = options.client ?? createClientFromConfig(config, logger);
   const previewStore = options.previewStore ?? new InMemoryPreviewStore(now);
-  const server = buildMcpServer({ config, client, previewStore, logger, now });
+  const server = buildMcpServer({
+    config,
+    client,
+    previewStore,
+    logger,
+    now,
+    sessionId: options.sessionId,
+  });
   return {
     server,
     close: () => server.close(),

@@ -34,11 +34,13 @@ export {
 export {
   InMemoryPreviewStore,
   type ConsumeResult,
+  type InMemoryPreviewStoreOptions,
   type InventoryPreviewRecord,
   type ListingPreviewRecord,
   type PricePreviewRecord,
   type PreviewRecord,
   type PreviewRecordBase,
+  type PreviewScope,
   type PreviewStore,
   type ServiceWriteInputs,
   type ServiceWriteKind,

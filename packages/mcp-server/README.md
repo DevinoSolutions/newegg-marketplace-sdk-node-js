@@ -66,7 +66,10 @@ newegg-marketplace-mcp --transport http
 ```
 
 - Binds `127.0.0.1:3919` by default and **refuses to bind a non-loopback host unless
-  `NEWEGG_MCP_HTTP_BEARER_TOKEN` is set**.
+  `NEWEGG_MCP_HTTP_BEARER_TOKEN` is set** (at least 32 characters). It speaks plain HTTP: front it with a
+  TLS-terminating proxy and set `NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY=true`, or a non-loopback bind logs a warning.
+  Sessions are capped and expire when idle, failed bearer attempts are throttled per client address,
+  and a preview can only be applied from the session that created it.
 - MCP requests are served at **`POST /mcp`** (Streamable HTTP; the session id is returned in
   the `Mcp-Session-Id` response header and must be echoed on subsequent `GET`/`DELETE`).
 - Guards run in order on `/mcp`: `Origin` allowlist → `Host` allowlist → bearer token. CORS is
@@ -180,6 +183,13 @@ is not surfaced in the tool's output.
 
 ## Environment variables
 
+> **Breaking (0.1.x, T-5665 to T-5675): security hardening.** The report file download requires explicit
+> FTPS (set `NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP=true` only if you must accept clear text);
+> `NEWEGG_MCP_HTTP_BEARER_TOKEN` must be at least 32 characters or the server refuses to start; RMA
+> `imageUrls` must be `https` without `user:password@`; a preview can only be applied from the MCP session
+> that created it; the HTTP transport caps sessions and throttles failed bearer attempts. Details in the
+> [repository README](../../README.md) and `docs/mcp-security.md`.
+
 > **Breaking change in 0.1.0 (T-5911): credentials are now bound to a marketplace.** Newegg
 > authenticates on `sellerid` + API key + secret key only and ignores the URL prefix, so keys issued
 > for one marketplace's seller account (for example Newegg.ca) used with `NEWEGG_MARKETPLACE=us|b2b`
@@ -214,7 +224,11 @@ is not surfaced in the tool's output.
 | `NEWEGG_MCP_ALLOWED_MARKETPLACES`              | empty = all              | Comma-separated marketplace allowlist. If set, `NEWEGG_MARKETPLACE` must be included or the server refuses to start.                                                                                                                                                                                                        |
 | `NEWEGG_MCP_HTTP_HOST`                         | `127.0.0.1`              | HTTP bind host.                                                                                                                                                                                                                                                                                                             |
 | `NEWEGG_MCP_HTTP_PORT`                         | `3919`                   | HTTP bind port.                                                                                                                                                                                                                                                                                                             |
-| `NEWEGG_MCP_HTTP_BEARER_TOKEN`                 | empty                    | Bearer token; required to bind a non-loopback host.                                                                                                                                                                                                                                                                         |
+| `NEWEGG_MCP_HTTP_MAX_SESSIONS`                 | `32`                     | Concurrent HTTP sessions; the next `initialize` gets 503.                                                                                                                                                                                                                                                                   |
+| `NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS`         | `1800`                   | A session idle this long is closed.                                                                                                                                                                                                                                                                                         |
+| `NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY`             | unset (`false`)          | Exactly `true` confirms a TLS proxy fronts the plain-HTTP listener; otherwise a non-loopback bind logs a warning.                                                                                                                                                                                                           |
+| `NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP`        | unset (`false`)          | Exactly `true` lets the report file download fall back to clear-text FTP (default: FTPS only).                                                                                                                                                                                                                              |
+| `NEWEGG_MCP_HTTP_BEARER_TOKEN`                 | empty                    | Bearer token, at least 32 characters; required to bind a non-loopback host.                                                                                                                                                                                                                                                 |
 | `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`              | empty = same-origin only | Comma-separated allowed `Origin` values.                                                                                                                                                                                                                                                                                    |
 | `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`                | empty                    | Comma-separated allowed `Host` values; loopback always allowed.                                                                                                                                                                                                                                                             |
 

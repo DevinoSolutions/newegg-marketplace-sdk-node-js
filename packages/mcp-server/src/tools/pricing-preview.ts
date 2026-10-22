@@ -7,7 +7,7 @@
  * above MSRP, over the change limit, unreadable current price) are reported and never stored,
  * so `newegg_pricing_apply_update` cannot apply them. Registered only when writes are enabled.
  */
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { PriceChange, PriceUpdate } from "@devino/newegg-marketplace-sdk";
 import type { McpServerConfig } from "../config/index.js";
@@ -24,6 +24,7 @@ import {
 } from "./shared.js";
 import { identifierOutput, pricingOperationResultSchema } from "./pricing-result.js";
 import { TOOL_NAMES } from "./names.js";
+import { hashPricePreview } from "./preview-hash.js";
 
 /** SDK per-call ceiling for price updates (one request each). */
 const SDK_MAX_PRICE_UPDATES = 100;
@@ -64,24 +65,6 @@ function makeInputSchema(maxItems: number) {
 
 type PreviewInputSchema = ReturnType<typeof makeInputSchema>;
 type PreviewInput = z.infer<PreviewInputSchema>;
-
-function hashPayload(marketplace: string, updates: PriceUpdateWithIndex[]): string {
-  const canonical = JSON.stringify({
-    marketplace,
-    updates: updates.map((update) => ({
-      inputIndex: update.inputIndex,
-      type: update.identifier.type,
-      value: update.identifier.value,
-      condition: update.identifier.type === "upc" ? (update.identifier.condition ?? null) : null,
-      sellingPrice: update.sellingPrice,
-      countryCode: update.countryCode ?? null,
-      currency: update.currency ?? null,
-    })),
-  });
-  return createHash("sha256").update(canonical, "utf8").digest("hex");
-}
-
-type PriceUpdateWithIndex = PriceUpdate & { inputIndex: number };
 
 function itemOutput(change: PriceChange) {
   return {
@@ -157,7 +140,7 @@ async function handler(input: PreviewInput, ctx: ToolContext): Promise<ToolResul
     const record: PricePreviewRecord = {
       previewId,
       kind: "priceUpdate",
-      hash: hashPayload(preview.marketplace, eligible),
+      hash: hashPricePreview(preview.marketplace, eligible),
       marketplace: preview.marketplace,
       normalizedUpdates: eligible,
       createdAt,

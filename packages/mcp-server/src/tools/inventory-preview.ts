@@ -8,13 +8,9 @@
  * The input array's max length is bound to the configured max-items limit at registration time,
  * so an oversized request is rejected by the tool's own input schema.
  */
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
-import type {
-  InventoryUpdate,
-  InventoryUpdateStrategy,
-  NormalizedInventoryUpdate,
-} from "@devino/newegg-marketplace-sdk";
+import type { InventoryUpdate, InventoryUpdateStrategy } from "@devino/newegg-marketplace-sdk";
 import type { McpServerConfig } from "../config/index.js";
 import type { PreviewRecord } from "../preview-store/index.js";
 import {
@@ -30,6 +26,7 @@ import {
 } from "./shared.js";
 import { inventoryOperationResultSchema } from "./operation-result.js";
 import { TOOL_NAMES } from "./names.js";
+import { hashInventoryPreview } from "./preview-hash.js";
 
 const updateSchema = z
   .strictObject({
@@ -72,31 +69,6 @@ function makeInputSchema(maxItems: number) {
 
 type PreviewInputSchema = ReturnType<typeof makeInputSchema>;
 type PreviewInput = z.infer<PreviewInputSchema>;
-
-function canonicalUpdate(update: NormalizedInventoryUpdate): Record<string, unknown> {
-  return {
-    inputIndex: update.inputIndex,
-    type: update.identifier.type,
-    value: update.identifier.value,
-    condition: update.identifier.type === "upc" ? (update.identifier.condition ?? null) : null,
-    quantity: update.quantity,
-    warehouseLocation: update.warehouseLocation ?? null,
-    fulfillmentOption: update.fulfillmentOption ?? null,
-  };
-}
-
-function hashPayload(
-  marketplace: string,
-  strategy: InventoryUpdateStrategy,
-  updates: NormalizedInventoryUpdate[],
-): string {
-  const canonical = JSON.stringify({
-    marketplace,
-    strategy,
-    updates: updates.map(canonicalUpdate),
-  });
-  return createHash("sha256").update(canonical, "utf8").digest("hex");
-}
 
 async function handler(input: PreviewInput, ctx: ToolContext): Promise<ToolResult> {
   const { limits } = ctx.config;
@@ -192,7 +164,7 @@ async function handler(input: PreviewInput, ctx: ToolContext): Promise<ToolResul
   const record: PreviewRecord = {
     previewId,
     kind: "inventoryUpdate",
-    hash: hashPayload(preview.marketplace, requestedStrategy, preview.normalizedUpdates),
+    hash: hashInventoryPreview(preview.marketplace, requestedStrategy, preview.normalizedUpdates),
     marketplace: preview.marketplace,
     strategy: requestedStrategy,
     normalizedUpdates: preview.normalizedUpdates,

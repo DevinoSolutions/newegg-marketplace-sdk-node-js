@@ -21,6 +21,23 @@ import {
 import { serializeRateLimit } from "./shared.js";
 import { TOOL_NAMES } from "./names.js";
 
+/**
+ * Evidence image URL: Newegg fetches it, so https only and no `user:password@` (the SDK enforces
+ * the same rule; checking here rejects it at the tool boundary, with a message that never echoes
+ * the value).
+ */
+const httpsImageUrl = z
+  .string()
+  .max(2048)
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && url.username === "" && url.password === "";
+    } catch {
+      return false;
+    }
+  }, "must be an https URL without embedded credentials (user:password@)");
+
 /** SDK per-call ceiling for lines on one RMA. */
 const SDK_MAX_RMA_ITEMS = 50;
 
@@ -69,11 +86,13 @@ const writeItemSchema = z
       ),
     unopened: z.boolean().optional().describe("Whether the item was returned unopened."),
     imageUrls: z
-      .array(z.string().max(2048))
+      .array(httpsImageUrl)
       .min(1)
       .max(5)
       .optional()
-      .describe("1-5 evidence image URLs (Newegg.com and Newegg.ca only)."),
+      .describe(
+        "1-5 evidence image URLs (Newegg.com and Newegg.ca only): https only, no user:password@.",
+      ),
     memo: z
       .string()
       .min(1)
@@ -357,7 +376,7 @@ const rejectInputSchema = z
       .max(1000)
       .optional()
       .describe("Rejection memo (required for some reasons)."),
-    imageUrls: z.array(z.string().max(2048)).min(1).max(5).optional(),
+    imageUrls: z.array(httpsImageUrl).min(1).max(5).optional(),
   })
   .describe("The RMA rejection to plan.");
 

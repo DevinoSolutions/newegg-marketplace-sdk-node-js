@@ -86,7 +86,8 @@ async function runHttp(config: McpServerConfig, logger: Logger): Promise<void> {
   const previewStore = new InMemoryPreviewStore();
   const handle = await startHttpServer({
     http: config.http,
-    createServer: () => createNeweggMcpServer({ config, previewStore, logger }),
+    // Each HTTP session gets its own sessionId, so its previews cannot be applied from another one.
+    createServer: (sessionId) => createNeweggMcpServer({ config, previewStore, logger, sessionId }),
     logger,
     serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
   });

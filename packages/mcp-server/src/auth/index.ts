@@ -39,6 +39,22 @@ export function extractBearerToken(authorization: string | undefined): string | 
   return match ? match[1] : undefined;
 }
 
+/** Syntax of a `Host` header: a registered name / IPv4 (unreserved characters) or a bracketed IPv6 literal, then an optional port. */
+const HOST_HEADER_SYNTAX = /^(?:\[[0-9a-f:.]+\]|[a-z0-9._~%-]+)(?::(\d{1,5}))?$/i;
+
+/**
+ * True when `value` is a syntactically valid `Host` header (RFC 9110 §7.2: `host [ ":" port ]`,
+ * port 0-65535). Checked BEFORE the value is used for anything, so a hostile header can neither
+ * throw inside URL parsing nor reach a log line.
+ */
+export function isWellFormedHostHeader(value: string): boolean {
+  const match = HOST_HEADER_SYNTAX.exec(value);
+  if (match === null) {
+    return false;
+  }
+  return match[1] === undefined || Number(match[1]) <= 65535;
+}
+
 /** Returns the hostname portion (without port) of a `Host` header value, lower-cased. */
 function hostnameOf(hostHeader: string): string {
   const h = hostHeader.trim();

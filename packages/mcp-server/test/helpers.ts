@@ -26,7 +26,7 @@ export const SENTINELS = {
   sellerId: "TEST-SELLER-SENTINEL",
   apiKey: "TEST-APIKEY-SENTINEL-32CHARS-XXXX",
   secretKey: "TEST-SECRET-SENTINEL",
-  bearer: "TEST-BEARER-SENTINEL-TOKEN-XYZ",
+  bearer: "TEST-BEARER-SENTINEL-TOKEN-XYZ-0123456789",
 } as const;
 
 export type FakeEnv = Record<string, string | undefined>;
@@ -70,6 +70,8 @@ export interface HarnessOptions {
   previewStore?: PreviewStore;
   now?: () => Date;
   logger?: Logger;
+  /** Binds the server's previews to this MCP session id (HTTP sessions; stdio has none). */
+  sessionId?: string;
 }
 
 export interface Harness {
@@ -91,6 +93,7 @@ export async function startHarness(opts: HarnessOptions = {}): Promise<Harness> 
     previewStore,
     now: opts.now,
     logger: opts.logger,
+    sessionId: opts.sessionId,
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const mcp = new Client({ name: "test-client", version: "0.0.0" });

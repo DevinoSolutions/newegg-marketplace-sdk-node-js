@@ -77,10 +77,26 @@ export interface McpLimits {
 export interface McpHttpConfig {
   readonly host: string;
   readonly port: number;
+  /** At least 32 characters when set (T-5672). */
   readonly bearerToken?: string;
   readonly allowedOrigins: string[];
   readonly allowedHosts: string[];
+  /** Concurrent MCP sessions accepted (default 32); the next initialize gets 503. */
+  readonly maxSessions?: number;
+  /** A session with no request for this many seconds is closed (default 1800). */
+  readonly sessionIdleTtlSeconds?: number;
+  /**
+   * Operator declaration that a TLS-terminating proxy fronts this listener. The transport itself is
+   * plain HTTP: without this flag a non-loopback bind logs a warning at startup.
+   */
+  readonly behindTlsProxy?: boolean;
 }
+
+/** Shortest accepted `NEWEGG_MCP_HTTP_BEARER_TOKEN` (e.g. `openssl rand -hex 16`). */
+export const MIN_BEARER_TOKEN_LENGTH = 32;
+/** Defaults for the HTTP session bounds (T-5670). */
+export const DEFAULT_MAX_HTTP_SESSIONS = 32;
+export const DEFAULT_SESSION_IDLE_TTL_SECONDS = 1800;
 
 export interface McpServerConfig {
   readonly marketplace: NeweggMarketplace;
@@ -93,6 +109,12 @@ export interface McpServerConfig {
   /** Trusted-config-only base URL override; never exposed through MCP tools/resources. */
   readonly baseUrl?: string;
   readonly allowWrites: boolean;
+  /**
+   * Escape hatch (`NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP=true`, exact literal): lets the built-in
+   * report file download fall back to clear-text FTP. By default it speaks explicit FTPS only, so
+   * credentials and report contents never cross the network unencrypted (T-5668).
+   */
+  readonly allowPlaintextReportFtp?: boolean;
   readonly credentials: McpCredentials;
   readonly limits: McpLimits;
   readonly http: McpHttpConfig;
@@ -336,14 +358,26 @@ function urlEnv(name: string) {
     });
 }
 
-/** Optional trimmed string, or undefined when unset/blank (used for the HTTP bearer token). */
-function optionalTrimmedEnv() {
+/**
+ * Optional HTTP bearer token: undefined when unset/blank, otherwise at least
+ * `MIN_BEARER_TOKEN_LENGTH` characters. The message names the variable and the minimum only:
+ * a rejected token is never echoed back.
+ */
+function bearerTokenEnv(name: string) {
   return z
     .string()
     .optional()
-    .transform((raw) => {
+    .transform((raw, ctx) => {
       const trimmed = raw?.trim();
-      return trimmed !== undefined && trimmed.length > 0 ? trimmed : undefined;
+      if (trimmed === undefined || trimmed.length === 0) return undefined;
+      if (trimmed.length < MIN_BEARER_TOKEN_LENGTH) {
+        ctx.addIssue({
+          code: "custom",
+          message: `${name} must be at least ${MIN_BEARER_TOKEN_LENGTH} characters (generate one with \`openssl rand -hex 32\`).`,
+        });
+        return z.NEVER;
+      }
+      return trimmed;
     });
 }
 
@@ -354,6 +388,11 @@ const envSchema = z.object({
   // SECURITY gate: only the EXACT literal "true" enables writes. "1"/"TRUE"/" true "/unset all
   // stay false. Kept as a raw `=== "true"` (no trim/lowercase) so the surface can't widen by accident.
   NEWEGG_MCP_ALLOW_WRITES: z
+    .string()
+    .optional()
+    .transform((raw) => raw === "true"),
+  // SECURITY gate, same exact-literal rule as NEWEGG_MCP_ALLOW_WRITES: only "true" opts in.
+  NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP: z
     .string()
     .optional()
     .transform((raw) => raw === "true"),
@@ -418,9 +457,24 @@ const envSchema = z.object({
     isPort,
     "an integer between 1 and 65535",
   ),
-  NEWEGG_MCP_HTTP_BEARER_TOKEN: optionalTrimmedEnv(),
+  NEWEGG_MCP_HTTP_BEARER_TOKEN: bearerTokenEnv("NEWEGG_MCP_HTTP_BEARER_TOKEN"),
   NEWEGG_MCP_HTTP_ALLOWED_ORIGINS: csvEnv(),
   NEWEGG_MCP_HTTP_ALLOWED_HOSTS: csvEnv(),
+  NEWEGG_MCP_HTTP_MAX_SESSIONS: strictCountEnv(
+    "NEWEGG_MCP_HTTP_MAX_SESSIONS",
+    DEFAULT_MAX_HTTP_SESSIONS,
+    10000,
+  ),
+  NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS: strictCountEnv(
+    "NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS",
+    DEFAULT_SESSION_IDLE_TTL_SECONDS,
+    86400,
+  ),
+  // Exact-literal opt-in, like the write gates: only "true" declares a TLS proxy in front.
+  NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY: z
+    .string()
+    .optional()
+    .transform((raw) => raw === "true"),
 });
 
 const CREDENTIAL_FIELDS = ["SELLER_ID", "API_KEY", "SECRET_KEY"] as const;
@@ -593,6 +647,9 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     bearerToken: parsed.NEWEGG_MCP_HTTP_BEARER_TOKEN,
     allowedOrigins: parsed.NEWEGG_MCP_HTTP_ALLOWED_ORIGINS,
     allowedHosts: parsed.NEWEGG_MCP_HTTP_ALLOWED_HOSTS,
+    maxSessions: parsed.NEWEGG_MCP_HTTP_MAX_SESSIONS,
+    sessionIdleTtlSeconds: parsed.NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS,
+    behindTlsProxy: parsed.NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY,
   };
 
   return {
@@ -600,6 +657,7 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     credentialMarketplace: parsed.NEWEGG_MARKETPLACE,
     baseUrl: parsed.NEWEGG_API_BASE_URL,
     allowWrites: parsed.NEWEGG_MCP_ALLOW_WRITES,
+    allowPlaintextReportFtp: parsed.NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP,
     credentials,
     limits,
     http,

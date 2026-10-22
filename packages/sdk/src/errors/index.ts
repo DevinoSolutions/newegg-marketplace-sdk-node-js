@@ -1,6 +1,8 @@
 import type { NeweggMarketplace, RateLimitInfo } from "../types.js";
 import { redactUrlCredentials, sanitizeCause, sanitizeRaw } from "./redact.js";
 
+export { redactUrlCredentials };
+
 /** Machine-readable category shared by every SDK error. */
 export type NeweggErrorCode =
   | "configuration"
