@@ -5,7 +5,7 @@
  * with a per-session `createServer` factory that shares one preview store. The server listens on
  * `config.http.host:port` (default 127.0.0.1:3919), serves MCP at `POST /mcp`, and exposes an
  * unauthenticated `GET /healthz`. Binding a non-loopback host requires
- * `NEWEGG_MCP_HTTP_BEARER_TOKEN`; `Origin` and `Host` headers are validated on `/mcp`.
+ * `NEWEGG_MCP_HTTP_BEARER_TOKEN`, and so does enabling writes (even on loopback); `Origin` and `Host` headers are validated on `/mcp`.
  *
  * READ-ONLY BY DEFAULT: `newegg_inventory_apply_update` is registered only when
  * NEWEGG_MCP_ALLOW_WRITES=true, and applying a preview through it writes to a REAL Newegg account.
@@ -48,6 +48,8 @@ async function main(): Promise<void> {
   const previewStore = new InMemoryPreviewStore();
   const handle = await startHttpServer({
     http: config.http,
+    // With writes enabled startHttpServer requires a bearer token, even on loopback.
+    writesEnabled: config.allowWrites,
     createServer: () => createNeweggMcpServer({ config, previewStore, logger }),
     logger,
     serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
