@@ -1781,7 +1781,11 @@ computes the change percent plus blockers (unknown item, currency mismatch, pric
 warnings (inactive, promotion lock, below MAP, no-op). MCP: `newegg_pricing_preview_update` →
 `newegg_pricing_apply_update`, both registered only with `NEWEGG_MCP_ALLOW_WRITES=true`; the
 preview additionally blocks a change larger than `NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT` (default 50)
-and stores only the eligible updates under the single-use `previewId` (ADR 0005).
+and stores only the eligible updates (with the live price each was assessed against, covered by the
+preview hash) under the single-use `previewId` (ADR 0005). Apply re-reads every live price (reads
+only) and re-runs the percent cap plus the MSRP / currency blockers; it aborts with `preview_stale`
+(preview consumed, nothing sent) if any blocker trips or a live price differs from the previewed
+one, even when the stored target would still pass the cap (T-6219).
 
 **ASSUMPTIONs to retire when a write is ever authorized and run:** US omission semantics (§16.1),
 the US write response shape, `CT029` on the B2B/CAN endpoint, and whether the B2B/CAN echoed

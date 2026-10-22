@@ -47,11 +47,12 @@ export function hashInventoryPreview(
 export function hashPricePreview(
   marketplace: string,
   updates: PricePreviewRecord["normalizedUpdates"],
+  previewedCurrentPrices: PricePreviewRecord["previewedCurrentPrices"],
 ): string {
   return sha256(
     JSON.stringify({
       marketplace,
-      updates: updates.map((update) => ({
+      updates: updates.map((update, position) => ({
         inputIndex: update.inputIndex,
         type: update.identifier.type,
         value: update.identifier.value,
@@ -59,6 +60,7 @@ export function hashPricePreview(
         sellingPrice: update.sellingPrice,
         countryCode: update.countryCode ?? null,
         currency: update.currency ?? null,
+        previewedCurrentPrice: previewedCurrentPrices[position] ?? null,
       })),
     }),
   );
@@ -84,7 +86,13 @@ export function previewHashMatches(record: PreviewRecord): boolean {
         record.hash
       );
     case "priceUpdate":
-      return hashPricePreview(record.marketplace, record.normalizedUpdates) === record.hash;
+      return (
+        hashPricePreview(
+          record.marketplace,
+          record.normalizedUpdates,
+          record.previewedCurrentPrices,
+        ) === record.hash
+      );
     case "listingCreate":
     case "volumeDiscountUpdate":
       return hashItemsPreview(record.marketplace, record.items) === record.hash;

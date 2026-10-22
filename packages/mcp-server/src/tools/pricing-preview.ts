@@ -5,7 +5,9 @@
  * (`NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT`), and stores ONLY the eligible updates under a
  * cryptographically random previewId. Blocked updates (unknown item, currency mismatch, price
  * above MSRP, over the change limit, unreadable current price) are reported and never stored,
- * so `newegg_pricing_apply_update` cannot apply them. Registered only when writes are enabled.
+ * so `newegg_pricing_apply_update` cannot apply them. The previewed current price of each stored
+ * update is kept (and hashed) so apply can detect drift (T-6219). Registered only when writes
+ * are enabled.
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -25,6 +27,7 @@ import {
 import { identifierOutput, pricingOperationResultSchema } from "./pricing-result.js";
 import { TOOL_NAMES } from "./names.js";
 import { hashPricePreview } from "./preview-hash.js";
+import { enforceChangeLimit, previewedPrice } from "./pricing-guards.js";
 
 /** SDK per-call ceiling for price updates (one request each). */
 const SDK_MAX_PRICE_UPDATES = 100;
@@ -103,16 +106,7 @@ async function handler(input: PreviewInput, ctx: ToolContext): Promise<ToolResul
 
   // Server-side policy, enforced in code (not in descriptions): the fat-finger change limit.
   for (const change of preview.changes) {
-    if (
-      change.changePercent !== undefined &&
-      Math.abs(change.changePercent) > limits.maxPriceChangePercent
-    ) {
-      change.blockers.push(
-        `The change of ${change.changePercent}% exceeds the server limit of ` +
-          `${limits.maxPriceChangePercent}% (NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT).`,
-      );
-      change.status = "blocked";
-    }
+    enforceChangeLimit(change, limits.maxPriceChangePercent);
   }
 
   const eligible = preview.normalizedUpdates.filter((update) => {
@@ -137,12 +131,20 @@ async function handler(input: PreviewInput, ctx: ToolContext): Promise<ToolResul
     const expiresAt = new Date(createdAt.getTime() + limits.previewTtlSeconds * 1000);
     previewId = randomBytes(32).toString("base64url");
     previewExpiresAt = expiresAt.toISOString();
+    // The live price each eligible update was assessed against; apply re-reads and compares.
+    const previewedCurrentPrices = eligible.map((update) => {
+      const change = preview.changes.find(
+        (candidate) => candidate.inputIndex === update.inputIndex,
+      );
+      return change === undefined ? null : previewedPrice(change);
+    });
     const record: PricePreviewRecord = {
       previewId,
       kind: "priceUpdate",
-      hash: hashPricePreview(preview.marketplace, eligible),
+      hash: hashPricePreview(preview.marketplace, eligible, previewedCurrentPrices),
       marketplace: preview.marketplace,
       normalizedUpdates: eligible,
+      previewedCurrentPrices,
       createdAt,
       expiresAt,
     };
@@ -182,8 +184,10 @@ export function createPricingPreviewTool(
       `${config.limits.maxPriceChangePercent}%) and WARNINGS (inactive item - Newegg ignores its ` +
       "price updates while reporting success; promotion lock; below MAP; no-op). Only eligible " +
       "(non-blocked) updates get a single-use previewId that newegg_pricing_apply_update " +
-      "executes exactly. Only the selling price is ever set - never MAP, MSRP, shipping or " +
-      "activation. US updates need countryCode and currency. No Newegg mutation happens here.",
+      "executes exactly, after re-reading live prices and refusing (preview_stale) if any " +
+      "price moved or a blocker now trips. Only the selling price is ever set - never MAP, " +
+      "MSRP, shipping or activation. US updates need countryCode and currency. No Newegg " +
+      "mutation happens here.",
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: makeInputSchema(config.limits.maxItemsPerOperation),
     outputSchema: pricingOperationResultSchema,

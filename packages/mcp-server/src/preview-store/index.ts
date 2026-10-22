@@ -66,6 +66,11 @@ export interface VolumeDiscountPreviewRecord extends PreviewRecordBase {
 export interface PricePreviewRecord extends PreviewRecordBase {
   readonly kind: "priceUpdate";
   readonly normalizedUpdates: NormalizedPriceUpdate[];
+  /**
+   * The live selling price each update was assessed against, aligned with `normalizedUpdates`
+   * (`null` = not readable). Apply re-reads the price and refuses when it differs (T-6219).
+   */
+  readonly previewedCurrentPrices: ReadonlyArray<number | null>;
 }
 
 /** Stored input of each RMA / courtesy-refund write (contracts §20), by record `kind`. */

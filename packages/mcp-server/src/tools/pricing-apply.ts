@@ -3,11 +3,15 @@
  * accepts ONLY a previewId (prices can never be supplied here), atomically consumes the stored
  * preview (single use; replay and expiry rejected distinctly), and executes exactly the stored
  * eligible updates through the SDK's `pricing.update`, reading every price back to verify it.
- * The preview is consumed once even if the downstream call fails. Registered only when writes
+ * Just before sending, every item's live price is re-read (reads only) and the percent cap and
+ * MSRP/currency blockers are re-run against it; the apply is refused with `preview_stale` (nothing
+ * sent) when any blocker trips or a live price differs from the one the preview was assessed
+ * against (T-6219). The preview is consumed once even if the downstream call fails. Registered only when writes
  * are enabled.
  */
 import { z } from "zod";
 import {
+  businessError,
   errorResult,
   mapErrorToPayload,
   okResult,
@@ -19,6 +23,10 @@ import {
 import { appendConsumedNote, consumeTypedPreview } from "./preview-apply-core.js";
 import { identifierOutput, pricingOperationResultSchema } from "./pricing-result.js";
 import { TOOL_NAMES } from "./names.js";
+import { enforceChangeLimit, previewedPrice, priceDrifted } from "./pricing-guards.js";
+
+const formatPrice = (price: number | null): string =>
+  price === null ? "unknown" : price.toFixed(2);
 
 const applyInputSchema = z
   .strictObject({
@@ -39,6 +47,43 @@ async function handler(
   }
 
   const record = outcome.record;
+
+  // Re-assess against the LIVE prices (reads only): the percent cap and MSRP / currency blockers
+  // were computed at preview time against a price that may have moved since. Any blocker, or any
+  // difference between the live and the previewed price, aborts before a single write.
+  const problems: string[] = [];
+  try {
+    const fresh = await ctx.client.pricing.previewUpdate(record.normalizedUpdates, {
+      includeCurrentPrice: true,
+    });
+    if (fresh.changes.length !== record.normalizedUpdates.length) {
+      problems.push("The set of updates could not be re-assessed.");
+    }
+    fresh.changes.forEach((change, position) => {
+      enforceChangeLimit(change, ctx.config.limits.maxPriceChangePercent);
+      const label = `Update ${record.normalizedUpdates[position]?.inputIndex ?? position}`;
+      for (const blocker of change.blockers) problems.push(`${label}: ${blocker}`);
+      const previewed = record.previewedCurrentPrices[position] ?? null;
+      const observed = previewedPrice(change);
+      if (priceDrifted(previewed, observed)) {
+        problems.push(
+          `${label}: the current selling price changed since the preview (previewed ` +
+            `${formatPrice(previewed)}, now ${formatPrice(observed)}).`,
+        );
+      }
+    });
+  } catch (error) {
+    return errorResult(appendConsumedNote(mapErrorToPayload(error, ctx.logger)));
+  }
+  if (problems.length > 0) {
+    return errorResult(
+      businessError(
+        "preview_stale",
+        `Nothing was sent: ${problems.join(" ")} The preview has been consumed; create a new preview and review it.`,
+      ),
+    );
+  }
+
   try {
     // Exactly the stored, normalized updates; the SDK re-validates them and reads each price
     // back (verify defaults to true).
