@@ -206,3 +206,59 @@ describe("HTTP bearer token strength (T-5672 / L8)", () => {
     expect(loadWithToken("   ").http.bearerToken).toBeUndefined();
   });
 });
+
+// T-6216: the preview TTL, item cap and HTTP port parse as strict plain decimals with upper bounds
+// (`Number()` accepted "1e9" = a 31.7 year preview, "1e300" = an Invalid Date, "0x10", "+5").
+describe("strict numeric env limits (T-6216)", () => {
+  const cases = [
+    {
+      name: "NEWEGG_MCP_PREVIEW_TTL_SECONDS",
+      bad: ["1e9", "0x10", "86401", "+5", "-1", "1.5", " 1 2 ", "0", "007"],
+      good: "86400",
+      read: (c: ReturnType<typeof loadMcpConfigFromEnv>) => c.limits.previewTtlSeconds,
+      fallback: 600,
+    },
+    {
+      name: "NEWEGG_MCP_MAX_ITEMS_PER_OPERATION",
+      bad: ["1e9", "0x10", "10001", "+5", "-1", "1.5", "1 2", "0", "007"],
+      good: "10000",
+      read: (c: ReturnType<typeof loadMcpConfigFromEnv>) => c.limits.maxItemsPerOperation,
+      fallback: 500,
+    },
+    {
+      name: "NEWEGG_MCP_HTTP_PORT",
+      bad: ["0x50", "8e3", "65536", "0", "+80", "-1", "80.5", "8 0", "08080"],
+      good: "65535",
+      read: (c: ReturnType<typeof loadMcpConfigFromEnv>) => c.http.port,
+      fallback: 3919,
+    },
+  ];
+
+  for (const { name, bad, good, read, fallback } of cases) {
+    describe(name, () => {
+      for (const value of bad) {
+        it(`rejects ${JSON.stringify(value)} naming the variable and range`, () => {
+          let error: unknown;
+          try {
+            loadMcpConfigFromEnv(makeEnv({ [name]: value }));
+          } catch (e) {
+            error = e;
+          }
+          expect(error).toBeInstanceOf(McpConfigError);
+          expect(String((error as Error).message)).toContain(name);
+        });
+      }
+
+      it("rejects 1e300 without throwing a RangeError later", () => {
+        expect(() => loadMcpConfigFromEnv(makeEnv({ [name]: "1e300" }))).toThrow(McpConfigError);
+      });
+
+      it("accepts the upper bound, trims whitespace, and keeps the default when unset or empty", () => {
+        expect(read(loadMcpConfigFromEnv(makeEnv({ [name]: good })))).toBe(Number(good));
+        expect(read(loadMcpConfigFromEnv(makeEnv({ [name]: ` ${good} ` })))).toBe(Number(good));
+        expect(read(loadMcpConfigFromEnv(makeEnv()))).toBe(fallback);
+        expect(read(loadMcpConfigFromEnv(makeEnv({ [name]: "" })))).toBe(fallback);
+      });
+    });
+  }
+});
