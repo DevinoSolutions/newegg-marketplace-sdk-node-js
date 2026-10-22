@@ -12,8 +12,10 @@
  * can make the scan backtrack catastrophically (see the 500k-character performance test).
  *
  * Known limits: a password containing whitespace (a space ends a URL), a schemeless
- * `user:password@host` on a host other than a Newegg FTP report host, and encodings nested more
- * than twice are not recognized.
+ * `user:password@host` on a host other than a Newegg FTP report host, a URL whose delimiters are
+ * spelled in some way not listed here, and encodings nested deeper than the decoder's bound are not
+ * recognized. This is best-effort pattern matching, not a guarantee: the primary defence is that
+ * credentials are never logged or placed in messages in the first place.
  */
 
 /**
@@ -24,7 +26,8 @@
  * scan linear, and there is deliberately no leading word boundary, so `link_ftp://u:p@h` is
  * redacted too.
  */
-const URL_WITH_CREDENTIALS = /([a-z][a-z0-9+.-]{0,31}):([\\/]{2,6})[^\s/\\?#"'<>]*@/gi;
+const URL_WITH_CREDENTIALS =
+  /([a-z][a-z0-9+.-]{0,31}):([\\/]{2,6}|[\\/](?=[^\s/\\@?#"'<>]*:))[^\s/\\?#"'<>]*@/gi;
 
 /** A host at or under `newegg.com`; used only as a lookahead anchor for the looser patterns. */
 const NEWEGG_HOST = String.raw`(?:[a-z0-9-]+\.)*newegg\.com(?![\w-])`;
@@ -53,33 +56,45 @@ const SCHEMELESS_CREDENTIALS = new RegExp(
 );
 
 /** Cheap pre-check: is there any percent / HTML-entity / fullwidth spelling worth decoding? */
-const ENCODED_DELIMITER_HINT = /%(?:3a|2f|5c|40|ef|25)|&#x?0*(?:64|40);|\uFF20/i;
+const ENCODED_DELIMITER_HINT = /%(?:3a|2f|5c|40|ef|25)|&(?:#|colon;|sol;|bsol;|commat;)|\uFF20/i;
+
+/** One encoded delimiter: percent, numeric or named HTML entity, or the fullwidth commercial at. */
+const ENCODED_DELIMITER =
+  /%(?:3a|2f|5c|40)|%ef%bc%a0|&#0*(?:58|47|92|64);|&#x0*(?:3a|2f|5c|40);|&(?:colon|sol|bsol|commat);|\uFF20|%25(?=[0-9a-f]{2})/gi;
+
+const DELIMITER_BY_SPELLING: Readonly<Record<string, string>> = {
+  "%3a": ":",
+  "&colon;": ":",
+  "&#58;": ":",
+  "&#x3a;": ":",
+  "%2f": "/",
+  "&sol;": "/",
+  "&#47;": "/",
+  "&#x2f;": "/",
+  "%5c": "\\",
+  "&bsol;": "\\",
+  "&#92;": "\\",
+  "&#x5c;": "\\",
+  "%25": "%",
+};
+
+/** Most decoding rounds; each peels one layer of nesting (`%2540`, `%252540`, ...). */
+const MAX_DECODE_ROUNDS = 8;
 
 /**
  * Decodes ONLY the URL delimiters (`: / \ @`, in their percent, HTML-entity and fullwidth
  * spellings) so an encoded URL such as `ftp%3A%2F%2Fu%3Ap%40h` becomes visible to the patterns
- * above. Run twice, which also unwraps one level of double encoding (`%2540`).
+ * above. Repeats until nothing changes (bounded by {@link MAX_DECODE_ROUNDS}), which unwraps
+ * nested percent encoding (`%2540`, `%252540`, ...). Each round is linear.
  */
 function decodeDelimiters(text: string): string {
   let current = text;
-  for (let pass = 0; pass < 2; pass += 1) {
-    const next = current.replace(
-      /%(?:3a|2f|5c|40)|%ef%bc%a0|&#0*64;|&#x0*40;|\uFF20|%25(?=[0-9a-f]{2})/gi,
-      (match) => {
-        switch (match.toLowerCase()) {
-          case "%3a":
-            return ":";
-          case "%2f":
-            return "/";
-          case "%5c":
-            return "\\";
-          case "%25":
-            return "%";
-          default:
-            return "@";
-        }
-      },
-    );
+  for (let round = 0; round < MAX_DECODE_ROUNDS; round += 1) {
+    const next = current.replace(ENCODED_DELIMITER, (match) => {
+      const key = match.toLowerCase().replace(/^(&#x?)0+(?=[0-9a-f])/, "$1");
+      // Anything not in the table is a spelling of `@`.
+      return DELIMITER_BY_SPELLING[key] ?? "@";
+    });
     if (next === current) break;
     current = next;
   }
@@ -145,42 +160,124 @@ export function sanitizeRaw(value: unknown): unknown {
   return sanitize(value, new WeakSet(), 0);
 }
 
-const MAX_CAUSE_DEPTH = 8;
+const MAX_CAUSE_DEPTH = 12;
+/** Most objects visited per cause, so a huge or hostile object graph cannot make the scan slow. */
+const MAX_CAUSE_NODES = 2000;
+/** Object tags (`Object.prototype.toString`) that are walked; Date, RegExp, Promise etc. are not data. */
+const WALKED_TAGS = new Set(["[object Object]", "[object Error]", "[object Arguments]"]);
 
-function sanitizeCauseValue(value: unknown, path: readonly object[]): unknown {
-  if (typeof value === "string") return redactUrlCredentials(value);
-  if (typeof value !== "object" || value === null) return value;
-  if (path.includes(value)) return "[Circular]";
-  if (path.length >= MAX_CAUSE_DEPTH) return "[Truncated]";
-  if (value instanceof Error) {
-    // An Error keeps its identity unless a redaction actually changes one of its own properties
-    // (message, stack, a string field, a nested cause); then a same-class copy replaces it.
-    const next = [...path, value];
-    const changed = new Map<string | symbol, PropertyDescriptor>();
-    for (const key of Reflect.ownKeys(value)) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (descriptor === undefined || !("value" in descriptor)) continue;
-      const cleaned = sanitizeCauseValue(descriptor.value, next);
-      if (cleaned !== descriptor.value) changed.set(key, { ...descriptor, value: cleaned });
-    }
-    if (changed.size === 0) return value;
-    const clone = Object.create(Object.getPrototypeOf(value) as object | null) as Error;
-    for (const key of Reflect.ownKeys(value)) {
-      const descriptor = changed.get(key) ?? Object.getOwnPropertyDescriptor(value, key);
-      if (descriptor !== undefined) Object.defineProperty(clone, key, descriptor);
-    }
-    return clone;
-  }
-  if (Array.isArray(value) || isPlainObject(value)) return sanitizeRaw(value);
-  return value;
+interface CauseWalk {
+  nodes: number;
 }
 
 /**
- * Returns `cause` with URL credentials removed from its message, stack, string properties and
- * nested causes, so `console.log(error)` / `util.inspect(error)` (which print the whole cause
- * chain) cannot leak them. An `Error` with nothing to redact is returned as-is (same identity);
- * otherwise a same-class copy is returned and the original is never mutated.
+ * The own properties of `value` whose cleaned value differs from the current one, as data
+ * descriptors. Accessors are read once (a getter that throws is left alone); this is what covers
+ * the `stack` of a V8 error, which is an own accessor that embeds the message text.
+ */
+function changedOwnProperties(
+  value: object,
+  path: readonly object[],
+  walk: CauseWalk,
+): Map<string | symbol, PropertyDescriptor> {
+  const changed = new Map<string | symbol, PropertyDescriptor>();
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined) continue;
+    let current: unknown;
+    if ("value" in descriptor) {
+      current = descriptor.value;
+    } else if (descriptor.get !== undefined) {
+      try {
+        current = descriptor.get.call(value);
+      } catch {
+        continue;
+      }
+    } else {
+      continue;
+    }
+    const cleaned = cleanCauseValue(current, path, walk);
+    if (cleaned !== current) {
+      changed.set(key, {
+        value: cleaned,
+        writable: true,
+        enumerable: descriptor.enumerable === true,
+        configurable: true,
+      });
+    }
+  }
+  return changed;
+}
+
+/** A copy of `value` (same prototype, same own properties) with `changed` applied over them. */
+function cloneWith(value: object, changed: Map<string | symbol, PropertyDescriptor>): object {
+  const clone = Object.create(Object.getPrototypeOf(value) as object | null) as object;
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = changed.get(key) ?? Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor !== undefined) Object.defineProperty(clone, key, descriptor);
+  }
+  return clone;
+}
+
+function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWalk): unknown {
+  if (typeof value === "string") return redactUrlCredentials(value);
+  if (typeof value !== "object" || value === null) return value;
+  if (path.includes(value)) return "[Circular]";
+  walk.nodes += 1;
+  if (path.length >= MAX_CAUSE_DEPTH || walk.nodes > MAX_CAUSE_NODES) return "[Truncated]";
+  const next = [...path, value];
+  try {
+    if (Array.isArray(value)) {
+      const items = (value as unknown[]).map((item) => cleanCauseValue(item, next, walk));
+      return items.some((item, index) => item !== (value as unknown[])[index]) ? items : value;
+    }
+    if (value instanceof URL) {
+      const cleaned = redactUrlCredentials(value.href);
+      return cleaned === value.href ? value : cleaned;
+    }
+    if (value instanceof Map) {
+      let changed = false;
+      const entries: Array<[unknown, unknown]> = [];
+      for (const [key, item] of value as Map<unknown, unknown>) {
+        const cleanedKey = cleanCauseValue(key, next, walk);
+        const cleanedItem = cleanCauseValue(item, next, walk);
+        if (cleanedKey !== key || cleanedItem !== item) changed = true;
+        entries.push([cleanedKey, cleanedItem]);
+      }
+      return changed ? new Map(entries) : value;
+    }
+    if (value instanceof Set) {
+      const members = [...(value as Set<unknown>)];
+      const cleaned = members.map((item) => cleanCauseValue(item, next, walk));
+      return cleaned.some((item, index) => item !== members[index]) ? new Set(cleaned) : value;
+    }
+    if (value instanceof Uint8Array) {
+      // Buffers print as hex bytes, which still spell the URL.
+      const text = Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("latin1");
+      const cleaned = redactUrlCredentials(text);
+      return cleaned === text ? value : Buffer.from(cleaned, "latin1");
+    }
+    if (!WALKED_TAGS.has(Object.prototype.toString.call(value))) return value;
+    // Errors, plain objects and class instances: every own property, accessors included. An object
+    // keeps its identity unless a redaction changes one of its properties; then a same-prototype
+    // copy replaces it and the original is never mutated.
+    const changed = changedOwnProperties(value, next, walk);
+    return changed.size === 0 ? value : cloneWith(value, changed);
+  } catch {
+    return "[Unreadable]";
+  }
+}
+
+/**
+ * Returns `cause` with URL credentials removed from every string it can reach: the message and the
+ * stack of an error (even when `stack` is an accessor), its own string properties and nested
+ * `cause`, `AggregateError.errors`, arrays, plain objects, class instances, `Map` / `Set` entries,
+ * buffers, and a `URL` (reduced to a redacted string). So `console.log(error)` / `util.inspect`
+ * (which print the whole cause chain) cannot leak them. A value with nothing to redact is returned
+ * as-is (same identity); otherwise a same-prototype copy is returned and the original is never
+ * mutated. Depth and node count are bounded, and a value that cannot be read becomes
+ * `"[Unreadable]"` rather than throwing.
  */
 export function sanitizeCause(cause: unknown): unknown {
-  return sanitizeCauseValue(cause, []);
+  return cleanCauseValue(cause, [], { nodes: 0 });
 }

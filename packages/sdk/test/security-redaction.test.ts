@@ -39,6 +39,25 @@ const LEAKING_FORMS: Array<[string, string]> = [
   ["password containing ?", `ftp://${USER}:${PASS_A}?${PASS_B}@${HOST}/x.pdf`],
   ["password containing #", `ftp://${USER}:${PASS_A}#${PASS_B}@${HOST}/x.pdf`],
   ["password containing a double-quote", `ftp://${USER}:${PASS_A}"${PASS_B}@${HOST}/x.pdf`],
+  ["single slash after the scheme", `ftp:/${USER}:${PASS_A}${PASS_B}@${HOST}/x.pdf`],
+  ["single backslash after the scheme", `ftp:\\${USER}:${PASS_A}${PASS_B}@${HOST}\\x.pdf`],
+  [
+    "named entities (&colon; &sol; &commat;)",
+    `ftp&colon;&sol;&sol;${USER}&colon;${PASS_A}${PASS_B}&commat;${HOST}/x.pdf`,
+  ],
+  ["&commat; terminator only", `ftp://${USER}:${PASS_A}${PASS_B}&commat;${HOST}/x.pdf`],
+  [
+    "numeric entities for the scheme separator (&#58; &#47;)",
+    `ftp&#58;&#47;&#47;${USER}&#58;${PASS_A}${PASS_B}&#64;${HOST}/x.pdf`,
+  ],
+  ["padded numeric entity (&#058;)", `ftp&#058;//${USER}:${PASS_A}${PASS_B}@${HOST}/x.pdf`],
+  ["double-encoded @ (%2540)", `ftp://${USER}:${PASS_A}${PASS_B}%2540${HOST}/x.pdf`],
+  ["triple-encoded @ (%252540)", `ftp://${USER}:${PASS_A}${PASS_B}%252540${HOST}/x.pdf`],
+  ["quintuple-encoded @ (%2525252540)", `ftp://${USER}:${PASS_A}${PASS_B}%2525252540${HOST}/x.pdf`],
+  [
+    "fully triple-encoded URL",
+    `ftp%25253A%25252F%25252F${USER}%25253A${PASS_A}${PASS_B}%252540${HOST}%25252Fx.pdf`,
+  ],
 ];
 
 const COVERED_FORMS: Array<[string, string]> = [
@@ -146,5 +165,110 @@ describe("NeweggError.cause (T-5666 / L2)", () => {
     const error = new NeweggError("api", "failed", { cause: new RangeError(secretUrl) });
     expect(error.cause).toBeInstanceOf(RangeError);
     expect((error.cause as Error).message).toContain("***@");
+  });
+});
+
+describe("NeweggError.cause covers every shape a cause can take (T-5666 review)", () => {
+  const url = `ftp://${USER}:${PASS_A}${PASS_B}@${HOST}/x`;
+  const leaks = (cause: unknown): string =>
+    inspect(new NeweggError("api", "failed", { cause }), { depth: 12, showHidden: true });
+
+  it("redacts the stack of a freshly built error, whose stack is an own accessor", () => {
+    const cause = new Error(`boom ${url}`);
+    expect(cause.stack).toContain(PASS_A);
+    const sanitized = new NeweggError("api", "failed", { cause }).cause as Error;
+    expectNoSecret(sanitized.stack ?? "");
+    expectNoSecret(sanitized.message);
+    // The clone keeps a (redacted) stack with its frames instead of silently losing it.
+    expect(sanitized.stack).toContain("***@");
+    expect(sanitized.stack).toMatch(/\n\s+at /);
+    expectNoSecret(leaks(cause));
+  });
+
+  it("redacts a stack that was assigned as a plain string", () => {
+    const cause = new Error("a");
+    cause.stack = `Error: a\n    at ${url}`;
+    expectNoSecret(leaks(cause));
+  });
+
+  it("recurses into the errors of an AggregateError", () => {
+    const cause = new AggregateError([new Error(url), new TypeError(`again ${url}`)], `many ${url}`);
+    const out = new NeweggError("api", "failed", { cause }).cause as AggregateError;
+    expect(out).toBeInstanceOf(AggregateError);
+    expect(out.errors).toHaveLength(2);
+    expect(out.errors[1]).toBeInstanceOf(TypeError);
+    expectNoSecret(leaks(cause));
+  });
+
+  it("recurses into arrays and plain objects that hold errors", () => {
+    expectNoSecret(leaks([new Error(url), { deeper: [new Error(url)] }]));
+    expectNoSecret(leaks({ err: new Error(url), meta: { link: url } }));
+  });
+
+  it("recurses into errors held by an error's own properties", () => {
+    const cause = Object.assign(new Error("outer"), {
+      errors: [new Error(url)],
+      response: { request: { url } },
+    });
+    expectNoSecret(leaks(cause));
+  });
+
+  it("redacts a URL object, a Map, a Set and a Buffer", () => {
+    expectNoSecret(leaks(new URL(url)));
+    expectNoSecret(leaks(new Map([["u", url]])));
+    expectNoSecret(leaks(new Map([[url, 1]])));
+    expectNoSecret(leaks(new Set([url])));
+    expectNoSecret(leaks(Buffer.from(url)));
+  });
+
+  it("redacts a class instance and the class instances an error points at", () => {
+    class Holder {
+      readonly link = url;
+    }
+    class Request {
+      readonly path = url;
+    }
+    expectNoSecret(leaks(new Holder()));
+    const cause = Object.assign(new Error("hi"), { response: { request: new Request() } });
+    expectNoSecret(leaks(cause));
+    expect(new NeweggError("api", "failed", { cause: new Holder() }).cause).toBeInstanceOf(Holder);
+  });
+
+  it("redacts accessor properties, non-enumerable properties and symbol keys", () => {
+    const withGetter = new Error("m");
+    Object.defineProperty(withGetter, "acc", { get: () => url, enumerable: true });
+    Object.defineProperty(withGetter, "hidden", { value: url, enumerable: false });
+    Object.defineProperty(withGetter, Symbol("s"), { value: url, enumerable: true });
+    expectNoSecret(leaks(withGetter));
+  });
+
+  it("redacts the message of an Error subclass and keeps its class", () => {
+    class MyError extends Error {
+      constructor() {
+        super(`bad ${url}`);
+        this.name = "MyError";
+      }
+    }
+    const out = new NeweggError("api", "failed", { cause: new MyError() }).cause;
+    expect(out).toBeInstanceOf(MyError);
+    expectNoSecret(leaks(new MyError()));
+  });
+
+  it("survives a cyclic cause, a throwing getter and a very large graph", () => {
+    const cyclic: Record<string, unknown> = { url };
+    cyclic.self = cyclic;
+    expectNoSecret(leaks(cyclic));
+    const throwing = new Error("m");
+    Object.defineProperty(throwing, "boom", {
+      get() {
+        throw new Error("nope");
+      },
+      enumerable: true,
+    });
+    expect(() => leaks(throwing)).not.toThrow();
+    const wide = Array.from({ length: 5000 }, (_, index) => ({ index, url }));
+    const started = Date.now();
+    expectNoSecret(leaks(wide));
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });
