@@ -232,6 +232,7 @@ describe("sbn.listShipments", () => {
       { status: "bogus" as never },
       { updatedFrom: new Date("nope") },
       { updatedTo: " " },
+      { updatedFrom: "not a date" },
     ]) {
       await expect(client.sbn.listShipments(input)).rejects.toBeInstanceOf(NeweggValidationError);
     }

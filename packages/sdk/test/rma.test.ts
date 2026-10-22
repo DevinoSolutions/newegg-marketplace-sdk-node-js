@@ -346,6 +346,7 @@ describe("rma.list", () => {
     [{ keyword: { type: "rmaNumber" as const, value: "  " } }, "keyword.value"],
     [{ dateFrom: new Date("nope") }, "dateFrom"],
     [{ dateTo: " " }, "dateTo"],
+    [{ dateFrom: "not a date" }, "dateFrom"],
   ])("rejects invalid input %j before sending", async (input, path) => {
     const { client, calls } = makeClient(
       "us",

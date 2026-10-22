@@ -33,6 +33,7 @@ import {
   type ToolDefinition,
   type ToolResult,
 } from "./shared.js";
+import { toDateInput } from "./orders.js";
 import { TOOL_NAMES } from "./names.js";
 
 // ---------------------------------------------------------------------------
@@ -41,20 +42,15 @@ import { TOOL_NAMES } from "./names.js";
 const timestampSchema = z.object({ raw: z.string(), iso: z.string().optional() });
 const currencySchema = z.enum(["USD", "CAD"]);
 
-/** ISO 8601 (or `YYYY-MM-DD[ HH:mm:ss]`) -> Date so the SDK renders Pacific; otherwise pass through. */
-function toDateInput(value: string | undefined): Date | string | undefined {
-  if (value === undefined) return undefined;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date;
-}
-
 const dateInputSchema = (what: string) =>
   z
     .string()
     .min(1)
     .max(40)
     .optional()
-    .describe(`${what} (ISO 8601 e.g. 2026-09-01T00:00:00Z, Pacific-converted; or YYYY-MM-DD).`);
+    .describe(
+      `${what} (ISO 8601 with Z or an offset, e.g. 2026-09-01T00:00:00Z, converted to Pacific; a bare YYYY-MM-DD is a Pacific day; or a zone-less Pacific wall clock as YYYY-MM-DD HH:mm:ss or MM/DD/YYYY HH:mm:ss, sent unchanged).`,
+    );
 
 const pageSchema = z.number().int().min(1).optional().describe("1-based page index (default 1).");
 const pageSizeSchema = z
@@ -231,7 +227,7 @@ async function rmaListHandler(
   if (input.processedBy !== undefined) listInput.processedBy = input.processedBy;
   const dateFrom = toDateInput(input.dateFrom);
   if (dateFrom !== undefined) listInput.dateFrom = dateFrom;
-  const dateTo = toDateInput(input.dateTo);
+  const dateTo = toDateInput(input.dateTo, "end");
   if (dateTo !== undefined) listInput.dateTo = dateTo;
   if (input.page !== undefined) listInput.page = input.page;
   if (input.pageSize !== undefined) listInput.pageSize = input.pageSize;
@@ -402,7 +398,7 @@ async function refundListHandler(
   if (input.status !== undefined) listInput.status = input.status;
   const dateFrom = toDateInput(input.dateFrom);
   if (dateFrom !== undefined) listInput.dateFrom = dateFrom;
-  const dateTo = toDateInput(input.dateTo);
+  const dateTo = toDateInput(input.dateTo, "end");
   if (dateTo !== undefined) listInput.dateTo = dateTo;
   if (input.page !== undefined) listInput.page = input.page;
   if (input.pageSize !== undefined) listInput.pageSize = input.pageSize;
@@ -515,7 +511,7 @@ async function refundStatusHandler(
   if (input.status !== undefined) listInput.status = input.status;
   const dateFrom = toDateInput(input.dateFrom);
   if (dateFrom !== undefined) listInput.dateFrom = dateFrom;
-  const dateTo = toDateInput(input.dateTo);
+  const dateTo = toDateInput(input.dateTo, "end");
   if (dateTo !== undefined) listInput.dateTo = dateTo;
   if (input.maxCount !== undefined) listInput.maxCount = input.maxCount;
   try {

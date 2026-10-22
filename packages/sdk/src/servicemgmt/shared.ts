@@ -4,7 +4,7 @@
  */
 import { NeweggApiError, NeweggValidationError } from "../errors/index.js";
 import type { NeweggValidationIssue } from "../errors/index.js";
-import { formatPacificWallClock } from "../platform/dates.js";
+import { formatPacificWallClock, parsePacificTimestamp } from "../platform/dates.js";
 import { asArray, asBoolean, asNumber, asString, getField, isRecord } from "../schemas/wire.js";
 
 /** Maximum `PageSize` for Get RMA Information and Get Courtesy Refund Information. */
@@ -51,16 +51,22 @@ export function renderCriteriaDate(value: Date | string): string {
   return typeof value === "string" ? value : formatPacificWallClock(value);
 }
 
-/** Validates an optional criteria date (invalid `Date` or blank string). */
+/**
+ * Validates an optional criteria date: an invalid `Date`, or a string that
+ * {@link parsePacificTimestamp} cannot read (blank or unparseable), is rejected before any request.
+ * A string is still sent verbatim.
+ */
 export function checkCriteriaDate(
   value: Date | string | undefined,
   path: string,
   issues: NeweggValidationIssue[],
 ): void {
   if (value === undefined) return;
-  if (typeof value === "string" ? value.trim() === "" : Number.isNaN(value.getTime())) {
-    issues.push({ path, message: "must be a valid date" });
-  }
+  const valid =
+    typeof value === "string"
+      ? parsePacificTimestamp(value) !== undefined
+      : !Number.isNaN(value.getTime());
+  if (!valid) issues.push({ path, message: "must be a valid date" });
 }
 
 /**
