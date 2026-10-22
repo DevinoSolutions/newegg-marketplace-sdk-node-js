@@ -56,7 +56,7 @@ describe("NEWEGG_API_BASE_URL allowlist (T-6217)", () => {
     }
     expect(thrown).toBeInstanceOf(NeweggConfigurationError);
     const message = (thrown as Error).message;
-    expect(message).toContain("NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL");
+    expect(message).toContain("allowCustomBaseUrl");
     for (const secret of Object.values(SENTINELS)) expect(message).not.toContain(secret);
   });
 
@@ -101,8 +101,8 @@ describe("NEWEGG_API_BASE_URL allowlist (T-6217)", () => {
       loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL: "true" }))
         .allowCustomBaseUrl,
     ).toBe(true);
-    expect(() => loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL: "yes" }))).toThrow(
-      /NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL/,
-    );
+    expect(() =>
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL: "yes" })),
+    ).toThrow(/NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL/);
   });
 });

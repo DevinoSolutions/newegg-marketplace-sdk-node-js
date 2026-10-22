@@ -110,7 +110,12 @@ function isLoopbackHost(hostname: string): boolean {
   );
 }
 
-function resolveBaseUrl(raw: string | undefined): URL {
+/** The default allowlist: `newegg.com` and its subdomains (checked on the parsed hostname). */
+function isNeweggHost(hostname: string): boolean {
+  return hostname === "newegg.com" || hostname.endsWith(".newegg.com");
+}
+
+function resolveBaseUrl(raw: string | undefined, allowCustom: boolean, logger: NeweggLogger): URL {
   const value = raw ?? DEFAULT_BASE_URL;
   if (!value.endsWith("/")) {
     fail('Configuration field "baseUrl" must end with "/".');
@@ -127,6 +132,17 @@ function resolveBaseUrl(raw: string | undefined): URL {
     fail(
       'Configuration field "baseUrl" must use https (http is allowed only for localhost/127.0.0.1).',
     );
+  }
+  // Credentials ride on every request, so a non-Newegg host is refused unless explicitly allowed.
+  // Judged on the parsed hostname: `https://newegg.com@evil.example/` has hostname evil.example.
+  if (httpsOk && !isNeweggHost(url.hostname)) {
+    if (!allowCustom) {
+      fail(
+        'Configuration field "baseUrl" must be a newegg.com host (API keys are sent to it); set "allowCustomBaseUrl: true" to use another https host.',
+      );
+    }
+    // Host only: the path and query of a custom endpoint may be sensitive.
+    logger.warn("config.custom_base_url", { host: url.hostname });
   }
   return url;
 }
@@ -182,7 +198,14 @@ export function resolveConfig(config: NeweggClientConfig): ResolvedConfig {
     }
   }
 
-  const baseUrl = resolveBaseUrl(config.baseUrl);
+  if (config.allowCustomBaseUrl !== undefined && typeof config.allowCustomBaseUrl !== "boolean") {
+    fail('Configuration field "allowCustomBaseUrl" must be a boolean.');
+  }
+  const baseUrl = resolveBaseUrl(
+    config.baseUrl,
+    config.allowCustomBaseUrl === true,
+    config.logger ?? noopLogger,
+  );
 
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {

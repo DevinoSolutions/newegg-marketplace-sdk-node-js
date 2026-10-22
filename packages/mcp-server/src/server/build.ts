@@ -194,6 +194,7 @@ function createClientFromConfig(
   }
   if (config.baseUrl !== undefined) {
     clientConfig.baseUrl = config.baseUrl;
+    clientConfig.allowCustomBaseUrl = config.allowCustomBaseUrl === true;
   }
   return createNeweggClient(clientConfig);
 }

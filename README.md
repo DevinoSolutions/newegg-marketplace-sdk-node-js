@@ -565,7 +565,7 @@ Seller ID or a key from another platform is the usual cause), see
 | `NEWEGG_US_*` / `NEWEGG_B2B_*` / `NEWEGG_CA_*` | —                 | MCP: `SELLER_ID`, `API_KEY`, `SECRET_KEY` issued for that marketplace (e.g. `NEWEGG_CA_API_KEY`). When any of the three is set for the selected `NEWEGG_MARKETPLACE`, all three are required. Never used for another marketplace. |
 | `NEWEGG_CREDENTIALS_MARKETPLACE`               | —                 | MCP: the marketplace the unprefixed keys were issued for (`us` \| `b2b` \| `ca`). Required with the unprefixed names and must equal `NEWEGG_MARKETPLACE`, otherwise the server refuses to start.                                  |
 | `NEWEGG_MARKETPLACE`                           | `us`              | Platform: `us` \| `b2b` \| `ca`.                                                                                                                                                                                                  |
-| `NEWEGG_API_BASE_URL`                          | official endpoint | Trusted override for tests/proxies. Defaults to `https://api.newegg.com/marketplace/`. Never settable via MCP.                                                                                                                    |
+| `NEWEGG_API_BASE_URL`                          | official endpoint | Trusted override. Default `https://api.newegg.com/marketplace/`; other hosts need `allowCustomBaseUrl`.                                                                                                                           |
 
 ### MCP server
 

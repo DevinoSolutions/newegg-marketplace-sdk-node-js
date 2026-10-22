@@ -37,8 +37,18 @@ export interface NeweggClientConfig {
    * marketplace can disagree); the MCP server always sets it.
    */
   credentialMarketplace?: NeweggMarketplace;
-  /** Trusted-config-only override (tests, proxies). Never exposed via MCP. Must end in `/`. */
+  /**
+   * Trusted-config-only override (tests, proxies). Never exposed via MCP tools. Must end in `/`.
+   * Unless `allowCustomBaseUrl` is set it must be an `https` `newegg.com` host (or a loopback
+   * host, which may use `http`), because the API keys and seller ID are sent to it.
+   */
   baseUrl?: string;
+  /**
+   * Opt in to a `baseUrl` outside `newegg.com` (a proxy or mock server over `https`). Default
+   * `false`: any other host throws {@link NeweggConfigurationError}. Accepting one logs a single
+   * `warn` naming the host only. Loopback hosts never need this.
+   */
+  allowCustomBaseUrl?: boolean;
   /** Per-request timeout in milliseconds. Default `30_000`. */
   timeoutMs?: number;
   /** Default `newegg-marketplace-sdk/<version> node/<version>`. */
