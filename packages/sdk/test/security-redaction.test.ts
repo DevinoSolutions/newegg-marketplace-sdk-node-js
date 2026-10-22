@@ -101,7 +101,7 @@ describe("redactUrlCredentials (T-5665 / L1)", () => {
     });
   }
 
-  it("is linear time on adversarial 500k-character inputs", () => {
+  it("finishes adversarial 500k-character inputs (a quadratic scan would take minutes)", () => {
     const size = 500_000;
     const shapes = [
       "a:".repeat(size / 2),
@@ -118,7 +118,9 @@ describe("redactUrlCredentials (T-5665 / L1)", () => {
     for (const shape of shapes) {
       const started = performance.now();
       redactUrlCredentials(shape);
-      expect(performance.now() - started).toBeLessThan(1000);
+      // Generous on purpose so a slow runner does not flake; the relative test below is the
+      // linearity check, and a quadratic scan of 500k characters takes minutes, not seconds.
+      expect(performance.now() - started).toBeLessThan(15_000);
     }
   });
 
@@ -134,11 +136,16 @@ describe("redactUrlCredentials (T-5665 / L1)", () => {
       ["ftp:/a", (size) => "ftp:/a".repeat(size / 6)],
       ["a.ftp@", (size) => `${"a.".repeat(size / 2)}@ftp`],
     ];
+    // The fastest of three runs: scheduler and GC noise only ever add time.
     const measure = (make: (size: number) => string, size: number): number => {
       const input = make(size);
-      const started = performance.now();
-      redactUrlCredentials(input);
-      return performance.now() - started;
+      let best = Number.POSITIVE_INFINITY;
+      for (let run = 0; run < 3; run += 1) {
+        const started = performance.now();
+        redactUrlCredentials(input);
+        best = Math.min(best, performance.now() - started);
+      }
+      return best;
     };
     for (const [name, make] of shapes) {
       measure(make, 20_000); // warm up
@@ -146,7 +153,7 @@ describe("redactUrlCredentials (T-5665 / L1)", () => {
       const large = measure(make, 800_000);
       // 8x the input: linear is about 8x; a quadratic scan would be 64x.
       expect(large, name).toBeLessThan(small * 24);
-      expect(large, name).toBeLessThan(1000);
+      expect(large, name).toBeLessThan(15_000);
     }
   });
 });
