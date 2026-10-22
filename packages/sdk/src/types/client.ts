@@ -9,7 +9,7 @@ import type { ListingsApi } from "./listings.js";
 import type { OrdersApi } from "./orders.js";
 import type { PricingApi } from "./pricing.js";
 import type { ReferenceApi } from "./reference.js";
-import type { ReportFileDownloader, ReportsApi } from "./reports.js";
+import type { ReportFileDownloader, ReportFileFtpOptions, ReportsApi } from "./reports.js";
 import type { RefundsApi, RmaApi } from "./rma.js";
 import type { NeweggLogger, OperationStore, RateLimitStore, RetryOptions } from "./runtime.js";
 import type { SbnApi } from "./sbn.js";
@@ -65,6 +65,12 @@ export interface NeweggClientConfig {
    * a secret and never log it. Mainly for tests and for environments that must proxy FTP.
    */
   reportFileDownloader?: ReportFileDownloader;
+  /**
+   * Transport settings of the built-in FTP downloader. It speaks explicit FTPS by default and
+   * refuses a server that does not; set `allowPlaintext: true` only for an FTP endpoint that
+   * cannot do TLS. Ignored when {@link NeweggClientConfig.reportFileDownloader} is set.
+   */
+  reportFileFtp?: ReportFileFtpOptions;
 }
 
 export interface NeweggClient {

@@ -23,6 +23,23 @@ export type ReportFileDownloader = (
   options: { signal?: AbortSignal; maxBytes: number; timeoutMs: number },
 ) => Promise<Uint8Array>;
 
+/**
+ * Transport settings of the built-in FTP downloader (`NeweggClientConfig.reportFileFtp`). The
+ * defaults are the safe ones: explicit FTPS (`AUTH TLS` before any credential is sent, verified
+ * certificate, protected data channel), URL port 21 only, `*.newegg.com` only.
+ */
+export interface ReportFileFtpOptions {
+  /**
+   * Opt out of FTPS and use clear-text FTP. Credentials and report contents are then readable by
+   * anyone on the network path. Off by default; there is no automatic fallback to it.
+   */
+  allowPlaintext?: boolean;
+  /** URL ports the downloader may connect to. Default `[21]`. */
+  allowedPorts?: number[];
+  /** Extra trusted CA certificate(s), PEM, for the FTPS handshake (verification is never disabled). */
+  tlsCa?: string | string[];
+}
+
 export interface ReportSubmission {
   marketplace: NeweggMarketplace;
   /** Poll with `status(requestId)` / continue with `result` or `waitForRequest` - do NOT resubmit. */
