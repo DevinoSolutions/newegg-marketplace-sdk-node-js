@@ -312,6 +312,125 @@ describe("price write tools - server-side guards", () => {
   });
 });
 
+describe("price write tools - apply-time drift re-check (T-6219)", () => {
+  const puts = (harness: { calls: Array<{ method: string }> }) =>
+    harness.calls.filter((c) => c.method === "PUT");
+
+  it("refuses an apply when the live price moved after the preview and sends zero writes", async () => {
+    // Preview: 100 -> 110 (+10%, inside the 50% cap). Another actor then moves the live price to
+    // 300; applying 110 would be a ~63% cut the cap would have blocked.
+    const book = priceBook({ "SKU-1": { price: 100 } });
+    const harness = await startHarness({ env: writesEnv(), routes: book.routes });
+    try {
+      const preview = await callTool(harness.mcp, PREVIEW, { updates: [update("SKU-1", 110)] });
+      expect(preview.json.previewId).toBeDefined();
+      book.state.set("SKU-1", { price: 300 });
+
+      const applied = await callTool(harness.mcp, APPLY, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(String(applied.json.message)).toContain("Nothing was sent");
+      expect(puts(harness)).toHaveLength(0);
+      expect(book.state.get("SKU-1")?.price).toBe(300);
+
+      // The preview is consumed even though nothing was sent.
+      const replay = await callTool(harness.mcp, APPLY, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(replay.json.errorCode).toBe("preview_already_used");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("also refuses when the live price drifted but the stored target still passes every cap", async () => {
+    const book = priceBook({ "SKU-1": { price: 100 } });
+    const harness = await startHarness({ env: writesEnv(), routes: book.routes });
+    try {
+      const preview = await callTool(harness.mcp, PREVIEW, { updates: [update("SKU-1", 110)] });
+      book.state.set("SKU-1", { price: 105 });
+
+      const applied = await callTool(harness.mcp, APPLY, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(String(applied.json.message)).toContain("changed since the preview");
+      expect(puts(harness)).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("refuses when an MSRP blocker trips at apply time even though the price is unchanged", async () => {
+    const book = priceBook({ "SKU-1": { price: 100, msrp: 120 } });
+    const harness = await startHarness({ env: writesEnv(), routes: book.routes });
+    try {
+      const preview = await callTool(harness.mcp, PREVIEW, { updates: [update("SKU-1", 110)] });
+      expect(preview.json.previewId).toBeDefined();
+      book.state.set("SKU-1", { price: 100, msrp: 105 });
+
+      const applied = await callTool(harness.mcp, APPLY, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(String(applied.json.message)).toContain("MSRP");
+      expect(puts(harness)).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("refuses when the percent cap trips at apply time (cap computed against the live price)", async () => {
+    const book = priceBook({ A: { price: 100 }, B: { price: 100 } });
+    const harness = await startHarness({ env: writesEnv(), routes: book.routes });
+    try {
+      const preview = await callTool(harness.mcp, PREVIEW, {
+        updates: [update("A", 110), update("B", 110)],
+      });
+      // Only B drifts; the whole preview is refused, A is not written either.
+      book.state.set("B", { price: 300 });
+
+      const applied = await callTool(harness.mcp, APPLY, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(String(applied.json.message)).toContain("NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT");
+      expect(puts(harness)).toHaveLength(0);
+      expect(book.state.get("A")?.price).toBe(100);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("still applies when the live price is unchanged, re-reading it first", async () => {
+    const book = priceBook({ "SKU-1": { price: 100 } });
+    const harness = await startHarness({ env: writesEnv(), routes: book.routes });
+    try {
+      const preview = await callTool(harness.mcp, PREVIEW, { updates: [update("SKU-1", 110)] });
+      const readsAfterPreview = harness.calls.filter((c) => c.method === "POST").length;
+
+      const applied = await callTool(harness.mcp, APPLY, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(false);
+      expect(applied.json).toMatchObject({ appliedItemCount: 1, failedItemCount: 0 });
+      expect(puts(harness)).toHaveLength(1);
+      // At least one extra price read happened before the write (the drift check).
+      const firstPut = harness.calls.findIndex((c) => c.method === "PUT");
+      const readsBeforePut = harness.calls.slice(0, firstPut).filter((c) => c.method === "POST");
+      expect(readsBeforePut.length).toBeGreaterThan(readsAfterPreview);
+      expect(book.state.get("SKU-1")?.price).toBe(110);
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
 describe("NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT config", () => {
   it.each(["0", "-5", "abc", "10001"])("rejects %s", (value) => {
     expect(() =>
