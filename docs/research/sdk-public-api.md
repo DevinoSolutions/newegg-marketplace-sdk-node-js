@@ -2534,7 +2534,7 @@ export interface NeweggLogger {
 /** Structured events: request_started, request_completed, retry_scheduled, rate_limit_wait,
  * feed_submitted, feed_status_changed, feed_processing_completed, partial_failure,
  * indeterminate_submission. Fields always include correlationId, operation, marketplace,
- * sellerIdHash (sha256 prefix, never the raw seller ID), durationMs where relevant.
+ * sellerIdHash (keyed HMAC token, stable per process only, never the raw seller ID), durationMs where relevant.
  * Authorization/SecretKey/api key/secret values are never logged. */
 
 // ----------------------------------------------------------------------------
