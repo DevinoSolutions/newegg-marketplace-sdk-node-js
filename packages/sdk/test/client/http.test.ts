@@ -10,6 +10,7 @@ import {
 import { LogEvent } from "../../src/logging/index.js";
 import { getAdapter, type RequestSpec } from "../../src/platform/index.js";
 import type { NeweggClientConfig } from "../../src/types.js";
+import { createNeweggClient, IndeterminateOrderWriteError } from "../../src/index.js";
 import { capturingLogger, TEST_API_KEY, TEST_SECRET_KEY } from "../helpers.js";
 
 type FetchCall = { url: string; init: RequestInit };
@@ -214,13 +215,16 @@ describe("retry decisions", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("wraps a non-Newegg thrown value as a non-retryable API error", async () => {
+  it("treats an unrecognized thrown fetch value as a retryable network failure", async () => {
     const { fetch, calls } = queuedFetch([new Error("weird")]);
     const { http } = makeHttp(fetch);
     const error = await http.request(SPEC, ctx()).catch((e: unknown) => e);
-    // classifyTransport turns any thrown fetch error into a retryable network failure.
+    // classifyTransport turns any thrown fetch error into an ambiguous TransportError, which
+    // request() maps to a retryable NeweggApiError and retries up to maxAttempts (3).
     expect(error).toBeInstanceOf(NeweggApiError);
-    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect((error as NeweggApiError).retryable).toBe(true);
+    expect((error as NeweggApiError).details).toEqual({ causeCode: undefined });
+    expect(calls).toHaveLength(3);
   });
 });
 
@@ -411,5 +415,80 @@ describe("rate-limit acquisition", () => {
     expect(acquire).toHaveBeenCalledTimes(1);
     expect(acquire).toHaveBeenCalledWith("k", expect.objectContaining({ recordCost: 3 }));
     expect(entries.find((e) => e.event === LogEvent.RateLimitWait)?.level).toBe("info");
+  });
+});
+
+describe("writes are never blindly retried (ADR 0004)", () => {
+  const RETRY = { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 };
+  const cancelInput = { orderNumber: "900000001", reason: "outOfStock" } as const;
+
+  function writeClient(replies: Array<Response | Error>): {
+    client: ReturnType<typeof createNeweggClient>;
+    calls: FetchCall[];
+  } {
+    const { fetch, calls } = queuedFetch(replies);
+    const client = createNeweggClient({
+      sellerId: "A006",
+      apiKey: TEST_API_KEY,
+      secretKey: TEST_SECRET_KEY,
+      marketplace: "us",
+      fetch,
+      retry: RETRY,
+    });
+    return { client, calls };
+  }
+
+  it.each([408, 502, 503, 504])(
+    "orders.cancel sends exactly once on a %i and reports the outcome as indeterminate",
+    async (status) => {
+      const { client, calls } = writeClient([new Response("unavailable", { status }), json({})]);
+      const error = await client.orders.cancel(cancelInput).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(IndeterminateOrderWriteError);
+      expect((error as IndeterminateOrderWriteError).retryable).toBe(false);
+      expect((error as IndeterminateOrderWriteError).operation).toBe("orders.cancel");
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.init.redirect).toBe("error");
+    },
+  );
+
+  it.each(["ECONNRESET", "EPIPE", "ETIMEDOUT"])(
+    "orders.cancel sends exactly once when the connection fails after dispatch (%s)",
+    async (code) => {
+      const failure = new TypeError("fetch failed", { cause: { code } });
+      const { client, calls } = writeClient([failure, json({})]);
+      const error = await client.orders.cancel(cancelInput).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(IndeterminateOrderWriteError);
+      expect(calls).toHaveLength(1);
+    },
+  );
+
+  it("orders.cancel retries only a provably-unsent failure, then surfaces a non-retryable error", async () => {
+    const refused = new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+    const { client, calls } = writeClient([refused]);
+    const error = await client.orders.cancel(cancelInput).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect(error).not.toBeInstanceOf(IndeterminateOrderWriteError);
+    expect((error as NeweggApiError).retryable).toBe(false);
+    expect(calls).toHaveLength(RETRY.maxAttempts);
+  });
+
+  it.each([
+    Operation.OrderShip,
+    Operation.OrderCancel,
+    Operation.OrderConfirm,
+    Operation.ShippingLabelCreate,
+  ])("requestOnce on %s never resends after a 503 or a network error", async (operation) => {
+    for (const reply of [
+      new Response("down", { status: 503 }),
+      new TypeError("fetch failed", { cause: { code: "ECONNRESET" } }),
+    ]) {
+      const { fetch, calls } = queuedFetch([reply, json({})]);
+      const { http } = makeHttp(fetch);
+      const spec: RequestSpec = { method: "PUT", path: "ordermgmt/orderstatus/orders/1", body: {} };
+      const error = await http.requestOnce(spec, ctx({ operation })).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(NeweggApiError);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.init.redirect).toBe("error");
+    }
   });
 });
