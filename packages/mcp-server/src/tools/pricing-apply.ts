@@ -129,7 +129,9 @@ export const pricingApplyTool: ToolDefinition<
     "Execute exactly the selling-price update captured by a previewId from " +
     "newegg_pricing_preview_update. Accepts only the previewId - prices cannot be changed at " +
     "apply time. The preview is single-use and consumed atomically (replays and expired " +
-    "previews are rejected). Each price is read back after the write: verified = the new price " +
+    "previews are rejected). Before writing, apply re-reads every live price and refuses with " +
+    "preview_stale (nothing sent) when one differs from the price the preview was assessed " +
+    "against, or when a change now breaks a price cap. Each price is read back after the write: verified = the new price " +
     "is live; unverified/unknown = re-read it with newegg_pricing_get before trusting or " +
     "retrying (Newegg silently ignores price updates to deactivated items). This tool exists " +
     "only when the server is started with writes enabled.",

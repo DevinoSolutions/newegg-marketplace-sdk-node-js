@@ -3134,8 +3134,8 @@ balance cannot be established. The write methods
 **MCP.** Both the preview and the apply tool of each pair register only when
 `NEWEGG_MCP_ALLOW_WRITES=true` (ADR 0005 and the pricing precedent). A preview with blockers returns no
 `previewId`; a clean one returns a single-use, TTL-bound, 256-bit `previewId`, and apply accepts only that
-id, re-hashes the stored request (error code `preview_tampered`; the hash is unkeyed, so it detects
-a changed record rather than proving who changed it) and refuses a replay, an expired id or one of another
+id, re-verifies the stored request's integrity MAC (error code `preview_tampered`; an HMAC-SHA256 under
+`NEWEGG_MCP_PREVIEW_HMAC_KEY`, T-6218) and refuses a replay, an expired id or one of another
 kind. The ceiling `NEWEGG_MCP_MAX_REFUND_AMOUNT` (default 500, in the marketplace currency) applies to
 EVERY `refundTotal`: RMA submit, edit and process, and the courtesy refund. It is MCP-only and **per
 operation**, not cumulative across previews: SDK callers are the operator, so the SDK enforces only the

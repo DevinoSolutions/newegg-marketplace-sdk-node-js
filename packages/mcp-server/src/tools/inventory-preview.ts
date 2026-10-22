@@ -26,7 +26,7 @@ import {
 } from "./shared.js";
 import { inventoryOperationResultSchema } from "./operation-result.js";
 import { TOOL_NAMES } from "./names.js";
-import { hashInventoryPreview } from "./preview-hash.js";
+import { hashInventoryPreview, sealFor } from "./preview-hash.js";
 
 const updateSchema = z
   .strictObject({
@@ -164,7 +164,12 @@ async function handler(input: PreviewInput, ctx: ToolContext): Promise<ToolResul
   const record: PreviewRecord = {
     previewId,
     kind: "inventoryUpdate",
-    hash: hashInventoryPreview(preview.marketplace, requestedStrategy, preview.normalizedUpdates),
+    hash: hashInventoryPreview(
+      sealFor(ctx, previewId, expiresAt),
+      preview.marketplace,
+      requestedStrategy,
+      preview.normalizedUpdates,
+    ),
     marketplace: preview.marketplace,
     strategy: requestedStrategy,
     normalizedUpdates: preview.normalizedUpdates,

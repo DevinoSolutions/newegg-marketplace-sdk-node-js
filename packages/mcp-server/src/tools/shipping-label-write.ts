@@ -25,7 +25,7 @@
  * deliberately not exposed, because an agent could simply pass it back. The operator verifies the
  * order in the Seller Portal and restarts the server (the record is in memory).
  */
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   IndeterminateOrderWriteError,
@@ -58,6 +58,7 @@ import {
 import { numberInputSchema } from "./service-write.js";
 import { shippingLabelRequestSchema } from "./shipping-label.js";
 import { appendConsumedNote, consumeTypedPreview } from "./preview-apply-core.js";
+import { hashLabelPreview, sealFor } from "./preview-hash.js";
 import { TOOL_NAMES } from "./names.js";
 import { reprintLimiterFor, type ReprintLimiter } from "./label-reprint-limiter.js";
 
@@ -142,17 +143,6 @@ const COST_WARNING =
   "carries the quoted cost and is blocked above that cap (default 100, marketplace currency).";
 
 const toCents = (amount: number): number => Math.round(amount * 100);
-
-function hashInput(
-  kind: ShippingLabelKind,
-  marketplace: string,
-  input: unknown,
-  costCents: number | undefined,
-): string {
-  return createHash("sha256")
-    .update(JSON.stringify({ kind, marketplace, input, costCents: costCents ?? null }), "utf8")
-    .digest("hex");
-}
 
 /**
  * The remedy shown for a blocked create. The MCP offers no way to clear a block, on purpose: the
@@ -369,7 +359,13 @@ async function runLabelPreview<K extends ShippingLabelKind>(
     const record = {
       previewId,
       kind,
-      hash: hashInput(kind, preview.marketplace, preview.normalized, costCents),
+      hash: hashLabelPreview(
+        sealFor(ctx, previewId, expiresAt),
+        kind,
+        preview.marketplace,
+        preview.normalized,
+        costCents,
+      ),
       marketplace: preview.marketplace,
       input: preview.normalized,
       costCents,
@@ -422,21 +418,10 @@ async function runLabelApply<K extends ShippingLabelKind>(
   }
   const record = outcome.record as unknown as {
     kind: K;
-    hash: string;
     marketplace: string;
     input: ShippingLabelInputs[K];
     costCents?: number;
   };
-
-  if (hashInput(kind, record.marketplace, record.input, record.costCents) !== record.hash) {
-    return errorResult(
-      businessError(
-        "preview_tampered",
-        "The stored preview no longer matches the hash taken when it was created (the store altered or " +
-          "corrupted it), so nothing was sent. The preview has been consumed; create a new preview.",
-      ),
-    );
-  }
 
   // Cheapest, ledger-only refusals first: a blocked order must make no request (no quote, no
   // order read).

@@ -75,6 +75,16 @@ export interface McpLimits {
   readonly allowedMarketplaces: NeweggMarketplace[];
 }
 
+/**
+ * Secret that keys the integrity MAC of stored previews (T-6218). Field access yields the raw
+ * value (needed to key the HMAC); `toJSON` redacts it so `JSON.stringify(config)` cannot leak it.
+ */
+export interface McpPreviewIntegrity {
+  /** `NEWEGG_MCP_PREVIEW_HMAC_KEY` (at least 32 characters, 12 different); undefined = per-process random key. */
+  readonly hmacKey: string | undefined;
+  toJSON(): Record<string, string>;
+}
+
 export interface McpHttpConfig {
   readonly host: string;
   readonly port: number;
@@ -144,6 +154,12 @@ export interface McpServerConfig {
   /** PEM text of the certificate(s) trusted for the report FTPS handshake. */
   readonly reportFtpsCa?: string;
   readonly credentials: McpCredentials;
+  /**
+   * Keys the MAC that seals every stored preview. Unset (or absent on a hand-built config) means a
+   * random per-process key, which is only correct for the in-memory store; a `PreviewStore` shared
+   * across processes must set `NEWEGG_MCP_PREVIEW_HMAC_KEY` to the same value everywhere.
+   */
+  readonly previewIntegrity?: McpPreviewIntegrity;
   readonly limits: McpLimits;
   readonly http: McpHttpConfig;
 }
@@ -407,11 +423,11 @@ function readReportFtpsCa(path: string | undefined): string | undefined {
 }
 
 /**
- * Optional HTTP bearer token: undefined when unset/blank, otherwise a token that passes
- * {@link weakBearerTokenReason}. The message names the variable and the rule only: a rejected token
+ * Optional secret (HTTP bearer token, preview HMAC key): undefined when unset/blank, otherwise a
+ * value that passes {@link weakBearerTokenReason}. The message names the variable and the rule only: a rejected token
  * is never echoed back.
  */
-function bearerTokenEnv(name: string) {
+function strongSecretEnv(name: string) {
   return z
     .string()
     .optional()
@@ -515,7 +531,9 @@ const envSchema = z.object({
       return trimmed.length > 0 ? trimmed : "127.0.0.1";
     }),
   NEWEGG_MCP_HTTP_PORT: strictCountEnv("NEWEGG_MCP_HTTP_PORT", 3919, 65_535),
-  NEWEGG_MCP_HTTP_BEARER_TOKEN: bearerTokenEnv("NEWEGG_MCP_HTTP_BEARER_TOKEN"),
+  NEWEGG_MCP_HTTP_BEARER_TOKEN: strongSecretEnv("NEWEGG_MCP_HTTP_BEARER_TOKEN"),
+  // Same strength rule as the bearer token; the value is never echoed in an error message.
+  NEWEGG_MCP_PREVIEW_HMAC_KEY: strongSecretEnv("NEWEGG_MCP_PREVIEW_HMAC_KEY"),
   NEWEGG_MCP_HTTP_ALLOWED_ORIGINS: originsCsvEnv("NEWEGG_MCP_HTTP_ALLOWED_ORIGINS"),
   NEWEGG_MCP_HTTP_ALLOWED_HOSTS: csvEnv(),
   NEWEGG_MCP_HTTP_MAX_SESSIONS: strictCountEnv(
@@ -735,6 +753,12 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     reportFtpsCertSha256: parsed.NEWEGG_MCP_REPORT_FTPS_CERT_SHA256,
     ...(reportFtpsCa === undefined ? {} : { reportFtpsCa }),
     credentials,
+    previewIntegrity: {
+      hmacKey: parsed.NEWEGG_MCP_PREVIEW_HMAC_KEY,
+      toJSON(): Record<string, string> {
+        return { hmacKey: REDACTED };
+      },
+    },
     limits,
     http,
   };

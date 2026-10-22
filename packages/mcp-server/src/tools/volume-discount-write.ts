@@ -23,7 +23,7 @@ import {
 import { appendConsumedNote, consumeTypedPreview } from "./preview-apply-core.js";
 import { feedRequestStatusSchema } from "./operation-result.js";
 import { TOOL_NAMES } from "./names.js";
-import { hashItemsPreview } from "./preview-hash.js";
+import { hashItemsPreview, sealFor } from "./preview-hash.js";
 
 // ---------------------------------------------------------------------------
 // input schema (mirrors the SDK's VolumeDiscountUpdate)
@@ -137,7 +137,12 @@ async function previewHandler(input: PreviewInput, ctx: ToolContext): Promise<To
   const record: VolumeDiscountPreviewRecord = {
     previewId,
     kind: "volumeDiscountUpdate",
-    hash: hashItemsPreview(preview.marketplace, preview.items),
+    hash: hashItemsPreview(
+      sealFor(ctx, previewId, expiresAt),
+      "volumeDiscountUpdate",
+      preview.marketplace,
+      preview.items,
+    ),
     marketplace: preview.marketplace,
     items: preview.items,
     createdAt,
