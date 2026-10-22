@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { loadMcpConfigFromEnv, McpConfigError } from "../src/index.js";
+import { createNeweggMcpServer, loadMcpConfigFromEnv, McpConfigError } from "../src/index.js";
 import { makeEnv } from "./helpers.js";
 
 // T-5672 (L8): the HTTP bearer token needs a minimum strength.
@@ -70,6 +70,7 @@ describe("report FTPS opt-in (T-5668)", () => {
     const pin = "ab".repeat(32);
     const config = loadMcpConfigFromEnv(
       makeEnv({
+        NEWEGG_MCP_REPORT_FTPS: "true",
         NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: pin,
         NEWEGG_MCP_REPORT_FTPS_CA_FILE: pemFile,
       }),
@@ -79,6 +80,7 @@ describe("report FTPS opt-in (T-5668)", () => {
     expect(() =>
       loadMcpConfigFromEnv(
         makeEnv({
+          NEWEGG_MCP_REPORT_FTPS: "true",
           NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: "not-a-fingerprint",
           NEWEGG_MCP_REPORT_FTPS_CA_FILE: pemFile,
         }),
@@ -88,8 +90,33 @@ describe("report FTPS opt-in (T-5668)", () => {
 
   it("refuses a pin without the certificate PEM, since validation is never disabled", () => {
     expect(() =>
-      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: "ab".repeat(32) })),
+      loadMcpConfigFromEnv(
+        makeEnv({
+          NEWEGG_MCP_REPORT_FTPS: "true",
+          NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: "ab".repeat(32),
+        }),
+      ),
     ).toThrow(/NEWEGG_MCP_REPORT_FTPS_CA_FILE/);
+  });
+
+  it("refuses a pin or CA file without NEWEGG_MCP_REPORT_FTPS=true instead of staying plain FTP", () => {
+    for (const extra of [
+      {
+        NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: "ab".repeat(32),
+        NEWEGG_MCP_REPORT_FTPS_CA_FILE: pemFile,
+      },
+      { NEWEGG_MCP_REPORT_FTPS_CA_FILE: pemFile },
+      { NEWEGG_MCP_REPORT_FTPS: "1", NEWEGG_MCP_REPORT_FTPS_CA_FILE: pemFile },
+    ]) {
+      let thrown: unknown;
+      try {
+        loadMcpConfigFromEnv(makeEnv(extra));
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(McpConfigError);
+      expect((thrown as Error).message).toContain("NEWEGG_MCP_REPORT_FTPS=true");
+    }
   });
 
   it("rejects an unreadable or non-PEM CA file without echoing its content", () => {
@@ -106,6 +133,16 @@ describe("report FTPS opt-in (T-5668)", () => {
       expect((thrown as Error).message).toContain("NEWEGG_MCP_REPORT_FTPS_CA_FILE");
       expect((thrown as Error).message).not.toContain("SECRET-LOOKING-CONTENT");
     }
+  });
+
+  it("never drops a pin silently when a hand-built config forgets reportFtps", () => {
+    const config = loadMcpConfigFromEnv(makeEnv());
+    expect(() =>
+      createNeweggMcpServer({ config: { ...config, reportFtpsCertSha256: "ab".repeat(32) } }),
+    ).toThrow(/refusing to fall back to plain FTP/);
+    expect(() => createNeweggMcpServer({ config: { ...config, reportFtpsCa: pem } })).toThrow(
+      /refusing to fall back to plain FTP/,
+    );
   });
 
   it("exposes the PEM and the pin for the SDK client config", () => {
@@ -139,7 +176,7 @@ describe("HTTP bearer token strength (T-5672 / L8)", () => {
   it.each([
     ["a single repeated character", "a".repeat(40)],
     ["two alternating characters", "ab".repeat(20)],
-    ["seven distinct characters", "abcdefg".repeat(6)],
+    ["eleven distinct characters", "abcdefghijk".repeat(4)],
   ])("rejects a long but trivially weak token: %s", (_label, weak) => {
     let thrown: unknown;
     try {
@@ -153,9 +190,11 @@ describe("HTTP bearer token strength (T-5672 / L8)", () => {
     expect((thrown as Error).message).not.toContain(weak);
   });
 
-  it("accepts a token with eight distinct characters", () => {
-    const token = "abcdefgh".repeat(5);
+  it("accepts a token with twelve distinct characters, and a hex one from openssl rand -hex 32", () => {
+    const token = "abcdefghijkl".repeat(3);
     expect(loadWithToken(token).http.bearerToken).toBe(token);
+    const hex = "9f2c4e6a1b7d3085c2e49a6f01d8b37e5a4c9d20f6b18e73a0c5d4b92e6f1a37";
+    expect(loadWithToken(hex).http.bearerToken).toBe(hex);
   });
 
   it("accepts a 32-character token", () => {

@@ -36,6 +36,8 @@ interface StubOptions {
   tls?: TlsFixture;
   /** Answer SIZE with the real length of the file (default); false makes SIZE "not implemented". */
   supportSize?: boolean;
+  /** Answer SIZE with "550 no such file" even though the file exists. */
+  sizeNotFound?: boolean;
   /** Answer SIZE with this length whatever the file really is. */
   sizeReply?: number;
   /** Send only this many bytes of the file, then drop the data connection without closing TLS. */
@@ -144,7 +146,9 @@ async function startStub(options: StubOptions = {}): Promise<Stub> {
         }
         case "SIZE": {
           const file = files[arg];
-          if (options.sizeReply !== undefined) {
+          if (options.sizeNotFound === true) {
+            socket.write("550 no such file\r\n");
+          } else if (options.sizeReply !== undefined) {
             socket.write(`213 ${options.sizeReply}\r\n`);
           } else if (options.supportSize !== false && file !== undefined) {
             socket.write(`213 ${file.length}\r\n`);
@@ -353,6 +357,49 @@ describe("FTP report download is not plaintext and not port-hopping (T-5668 / L4
         reportFileFtp: { ftps: true, tlsPinnedCertSha256: "ab".repeat(32), tlsCa: FIXTURE.cert },
       }),
     ).not.toThrow();
+  });
+
+  it("refuses a pin or CA without ftps instead of silently staying plain FTP", async () => {
+    const base = { sellerId: "S", apiKey: "k", secretKey: "s", marketplace: "ca" as const };
+    expect(() =>
+      createNeweggClient({
+        ...base,
+        reportFileFtp: { tlsPinnedCertSha256: "ab".repeat(32), tlsCa: FIXTURE.cert },
+      }),
+    ).toThrow(/ftps: true/);
+    expect(() =>
+      createNeweggClient({ ...base, reportFileFtp: { ftps: false, tlsCa: FIXTURE.cert } }),
+    ).toThrow(/ftps: true/);
+    // The downloader itself also refuses, and nothing is sent.
+    const stub = await startStub({ tls: FIXTURE, files: { "x.csv": Buffer.from("rows") } });
+    const error = await downloadViaFtp(`ftp://user:pw@127.0.0.1:${stub.port}/x.csv`, {
+      maxBytes: 1024,
+      timeoutMs: 5000,
+      allowedHost: ANY_HOST,
+      allowedPorts: [stub.port],
+      tlsCa: FIXTURE.cert,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect(stub.connections).toBe(0);
+  });
+
+  it("refuses an FTPS transfer when SIZE answers 550", async () => {
+    const stub = await startStub({
+      tls: FIXTURE,
+      sizeNotFound: true,
+      files: { "x.csv": Buffer.from("0123456789") },
+    });
+    const error = await downloadViaFtp(`ftp://user:pw@127.0.0.1:${stub.port}/x.csv`, {
+      maxBytes: 1024,
+      timeoutMs: 5000,
+      allowedHost: ANY_HOST,
+      allowedPorts: [stub.port],
+      ftps: true,
+      tlsCa: FIXTURE.cert,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect((error as Error).message).toMatch(/transfer setup/);
+    expect(verbs(stub)).not.toContain("RETR");
   });
 
   it("rejects a certificate that does not match the pin before any credentials are sent", async () => {

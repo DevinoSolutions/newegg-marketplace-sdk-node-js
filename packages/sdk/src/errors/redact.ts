@@ -163,8 +163,6 @@ export function sanitizeRaw(value: unknown): unknown {
 const MAX_CAUSE_DEPTH = 12;
 /** Most objects visited per cause, so a huge or hostile object graph cannot make the scan slow. */
 const MAX_CAUSE_NODES = 2000;
-/** Object tags (`Object.prototype.toString`) that are walked; Date, RegExp, Promise etc. are not data. */
-const WALKED_TAGS = new Set(["[object Object]", "[object Error]", "[object Arguments]"]);
 
 interface CauseWalk {
   nodes: number;
@@ -211,12 +209,27 @@ function changedOwnProperties(
 
 /** A copy of `value` (same prototype, same own properties) with `changed` applied over them. */
 function cloneWith(value: object, changed: Map<string | symbol, PropertyDescriptor>): object {
-  const clone = Object.create(Object.getPrototypeOf(value) as object | null) as object;
+  const clone = cloneBase(value);
   for (const key of Reflect.ownKeys(value)) {
     const descriptor = changed.get(key) ?? Object.getOwnPropertyDescriptor(value, key);
-    if (descriptor !== undefined) Object.defineProperty(clone, key, descriptor);
+    if (descriptor === undefined) continue;
+    try {
+      Object.defineProperty(clone, key, descriptor);
+    } catch {
+      // A property the fresh base already has and cannot redefine (a boxed string's indices).
+    }
   }
   return clone;
+}
+
+/** An empty object of the same kind: Dates, RegExps and boxed primitives keep their internal value. */
+function cloneBase(value: object): object {
+  if (value instanceof Date) return new Date(value.getTime());
+  if (value instanceof RegExp) return new RegExp(value.source, value.flags);
+  if (value instanceof Number || value instanceof String || value instanceof Boolean) {
+    return Object(value.valueOf()) as object;
+  }
+  return Object.create(Object.getPrototypeOf(value) as object | null) as object;
 }
 
 function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWalk): unknown {
@@ -257,8 +270,29 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
       const cleaned = redactUrlCredentials(text);
       return cleaned === text ? value : Buffer.from(cleaned, "latin1");
     }
-    if (!WALKED_TAGS.has(Object.prototype.toString.call(value))) return value;
-    // Errors, plain objects and class instances: every own property, accessors included. An object
+    // Typed arrays and DataViews hold bytes, not properties.
+    if (ArrayBuffer.isView(value)) return value;
+    if (value instanceof String) {
+      // The boxed text itself is what util.inspect prints, so it is redacted too.
+      const text = value.valueOf();
+      const cleanedText = redactUrlCredentials(text);
+      const changedProps = changedOwnProperties(value, next, walk);
+      for (const key of [...changedProps.keys()]) {
+        if (key === "length" || (typeof key === "string" && /^\d+$/.test(key))) {
+          changedProps.delete(key);
+        }
+      }
+      if (cleanedText === text && changedProps.size === 0) return value;
+      const boxed = Object(cleanedText) as object;
+      for (const key of Reflect.ownKeys(value)) {
+        if (key === "length" || (typeof key === "string" && /^\d+$/.test(key))) continue;
+        const descriptor = changedProps.get(key) ?? Object.getOwnPropertyDescriptor(value, key);
+        if (descriptor !== undefined) Object.defineProperty(boxed, key, descriptor);
+      }
+      return boxed;
+    }
+    // Every other object (errors, plain objects, class instances, Dates, RegExps, boxed primitives):
+    // every own property, accessors included. An object
     // keeps its identity unless a redaction changes one of its properties; then a same-prototype
     // copy replaces it and the original is never mutated.
     const changed = changedOwnProperties(value, next, walk);

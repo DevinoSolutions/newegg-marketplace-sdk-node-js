@@ -167,6 +167,15 @@ function createClientFromConfig(config: McpServerConfig, logger: Logger): Newegg
     credentialMarketplace: config.credentialMarketplace,
     logger: adaptLogger(logger),
   };
+  if (
+    config.reportFtps !== true &&
+    (config.reportFtpsCertSha256 !== undefined || config.reportFtpsCa !== undefined)
+  ) {
+    // loadMcpConfigFromEnv already refuses this; never drop a pin silently for a hand-built config.
+    throw new NeweggConfigurationError(
+      "A report FTPS pin or CA is configured without reportFtps: refusing to fall back to plain FTP.",
+    );
+  }
   if (config.reportFtps === true) {
     clientConfig.reportFileFtp = {
       ftps: true,

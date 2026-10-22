@@ -96,11 +96,11 @@ export interface McpHttpConfig {
 /** Shortest accepted `NEWEGG_MCP_HTTP_BEARER_TOKEN` (e.g. `openssl rand -hex 16`). */
 const MIN_BEARER_TOKEN_LENGTH = 32;
 /** Fewest distinct characters a bearer token must contain (rejects `aaaa...` and `abab...`). */
-const MIN_BEARER_TOKEN_DISTINCT = 8;
+const MIN_BEARER_TOKEN_DISTINCT = 12;
 
 /**
  * Why `token` is too weak to guard the HTTP transport, or undefined when it is acceptable: shorter
- * than 32 characters, or fewer than 8 distinct characters. The reason never contains the token.
+ * than 32 characters, or fewer than 12 distinct characters. The reason never contains the token.
  */
 export function weakBearerTokenReason(token: string): string | undefined {
   if (token.length < MIN_BEARER_TOKEN_LENGTH) {
@@ -686,6 +686,14 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
   }
 
   const reportFtpsCa = readReportFtpsCa(env["NEWEGG_MCP_REPORT_FTPS_CA_FILE"]);
+  if (
+    (reportFtpsCa !== undefined || parsed.NEWEGG_MCP_REPORT_FTPS_CERT_SHA256 !== undefined) &&
+    !parsed.NEWEGG_MCP_REPORT_FTPS
+  ) {
+    throw new McpConfigError(
+      "NEWEGG_MCP_REPORT_FTPS_CERT_SHA256 / NEWEGG_MCP_REPORT_FTPS_CA_FILE only apply with NEWEGG_MCP_REPORT_FTPS=true; without it the report download would silently stay plain FTP.",
+    );
+  }
   if (parsed.NEWEGG_MCP_REPORT_FTPS_CERT_SHA256 !== undefined && reportFtpsCa === undefined) {
     throw new McpConfigError(
       "NEWEGG_MCP_REPORT_FTPS_CERT_SHA256 needs NEWEGG_MCP_REPORT_FTPS_CA_FILE (the PEM of the pinned certificate): certificate validation is never disabled, so a self-signed certificate must be trusted explicitly.",

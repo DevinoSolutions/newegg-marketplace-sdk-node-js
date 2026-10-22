@@ -75,6 +75,14 @@ function resolveReportFileFtp(
       'Configuration field "reportFileFtp.tlsPinnedCertSha256" must be a SHA-256 hex fingerprint.',
     );
   }
+  if (
+    (options.tlsPinnedCertSha256 !== undefined || options.tlsCa !== undefined) &&
+    options.ftps !== true
+  ) {
+    fail(
+      'Configuration field "reportFileFtp.tlsPinnedCertSha256" / "reportFileFtp.tlsCa" only apply with "reportFileFtp.ftps: true"; without it the report download would silently stay plain FTP.',
+    );
+  }
   if (options.tlsPinnedCertSha256 !== undefined && options.tlsCa === undefined) {
     fail(
       'Configuration field "reportFileFtp.tlsPinnedCertSha256" needs "reportFileFtp.tlsCa" (the pinned certificate PEM): certificate validation is never disabled, so a self-signed certificate must be trusted explicitly.',

@@ -224,6 +224,28 @@ describe("NeweggError.cause covers every shape a cause can take (T-5666 review)"
     expectNoSecret(leaks(Buffer.from(url)));
   });
 
+  it("walks the own properties of Dates, RegExps and boxed primitives, keeping their value", () => {
+    const date = Object.assign(new Date(Date.UTC(2026, 0, 2)), { u: url });
+    const sanitizedDate = new NeweggError("api", "failed", { cause: date }).cause as Date;
+    expect(sanitizedDate).toBeInstanceOf(Date);
+    expect(sanitizedDate.getTime()).toBe(date.getTime());
+    expectNoSecret(leaks(date));
+
+    const regexp = Object.assign(/a+b/gi, { u: url });
+    const sanitizedRegexp = new NeweggError("api", "failed", { cause: regexp }).cause as RegExp;
+    expect(sanitizedRegexp.source).toBe("a+b");
+    expect(sanitizedRegexp.flags).toBe("gi");
+    expectNoSecret(leaks(regexp));
+
+    expectNoSecret(leaks(Object.assign(Object(7), { u: url })));
+    expectNoSecret(leaks(Object.assign(Object(true), { u: url })));
+    expectNoSecret(leaks(Object.assign(Object("plain"), { u: url })));
+    expectNoSecret(leaks(Object(url)));
+    // Errors keep working next to them, and typed arrays other than Buffer are left alone.
+    const floats = new Float64Array([1, 2]);
+    expect(new NeweggError("api", "failed", { cause: floats }).cause).toBe(floats);
+  });
+
   it("redacts a class instance and the class instances an error points at", () => {
     class Holder {
       readonly link = url;

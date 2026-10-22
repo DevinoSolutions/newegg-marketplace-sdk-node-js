@@ -375,6 +375,13 @@ export async function downloadViaFtp(
   if (!(options.allowedPorts ?? DEFAULT_ALLOWED_PORTS).includes(port)) {
     throw fail("port validation (port is not an allowed report file port)");
   }
+  if (
+    (options.tlsPinnedCertSha256 !== undefined || options.tlsCa !== undefined) &&
+    options.ftps !== true
+  ) {
+    // A pin or CA without ftps would silently leave the transfer in clear text.
+    throw fail("TLS configuration (a pinned certificate or CA needs ftps: true)");
+  }
   const user = decodeURIComponent(parsed.username || "anonymous");
   const password = decodeURIComponent(parsed.password || "anonymous@");
   const path = decodeURIComponent(parsed.pathname).replace(/^\//, "");
@@ -463,7 +470,7 @@ export async function downloadViaFtp(
     control.send(`SIZE ${path}`);
     const sizeReply = await control.reply();
     const announced = sizeReply.code === 213 ? parseAnnouncedSize(sizeReply.text) : undefined;
-    if (announced === undefined && controlTls !== undefined && sizeReply.code !== 550) {
+    if (announced === undefined && controlTls !== undefined) {
       throw fail(
         "transfer setup (server cannot report the file size, which FTPS needs to detect a truncated transfer)",
         sizeReply.code,

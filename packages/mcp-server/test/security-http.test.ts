@@ -331,8 +331,8 @@ describe("failed bearer attempts are throttled (T-5672 / L8)", () => {
 });
 
 describe("a trivially weak bearer token is refused at startup (T-5672 / L8)", () => {
-  it("refuses a long token with fewer than 8 distinct characters, without echoing it", async () => {
-    const weak = "a".repeat(48);
+  it("refuses a long token with fewer than 12 distinct characters, without echoing it", async () => {
+    const weak = "abcdefghijk".repeat(5);
     const error = await start(httpConfigWith({ bearerToken: weak })).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("different characters");

@@ -226,8 +226,8 @@ Low and informational findings from the security audit, closed together. Each is
   session that is over its own cap, so one session cannot push another's live preview out.
 - **Malformed `Host` is a 400 (T-5671).** The header is validated before URL parsing, auth or logging, so it
   can no longer produce a 500 or an `http_request_failed` log line.
-- **Bearer token strength and throttling (T-5672).** The token must be at least 32 characters with at least 8
-  different ones (the server refuses to start otherwise). Failed bearer attempts are delayed per client
+- **Bearer token strength and throttling (T-5672).** The token must be at least 32 characters with at least 12
+  different ones (the server refuses to start otherwise). `openssl rand -hex 32` is the supported way to make one. Failed bearer attempts are delayed per client
   address (250 ms doubling to 5 s) and answered 429 once eight delayed failures are in flight. A good token
   lowers the address's failure count by one step, at most once a second, instead of clearing it, so a
   legitimate client behind a shared address (a proxy) cannot erase another client's guessing run. The listener speaks plain HTTP: a
@@ -302,7 +302,7 @@ Stdio is the default transport (a subprocess launched by the MCP client).
 
 - [ ] Keep the default bind `127.0.0.1:3919` unless remote access is genuinely required.
 - [ ] To bind a non-loopback host, you **must** set `NEWEGG_MCP_HTTP_BEARER_TOKEN`; the
-      server refuses to bind otherwise. The token must be **at least 32 characters, with at least 8 different ones** (the server
+      server refuses to bind otherwise. The token must be **at least 32 characters, with at least 12 different ones** (the server
       refuses to start with a weaker one): generate it with `openssl rand -hex 32` and rotate it.
 - [ ] Set `NEWEGG_MCP_HTTP_ALLOWED_HOSTS` (expected `Host` header values) and
       `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS` (expected browser `Origin`s). Do not rely on CORS
