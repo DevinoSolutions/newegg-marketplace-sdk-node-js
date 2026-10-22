@@ -124,7 +124,10 @@ async function startFakeFtp(
         else if (verb === "PASS") {
           control.write(options.rejectPass ? "530 login incorrect\r\n" : "230 ok\r\n");
         } else if (verb === "TYPE") control.write("200 binary\r\n");
-        else if (verb === "PASV") {
+        else if (verb === "SIZE") {
+          const sized = files[arg];
+          control.write(sized ? `213 ${sized.length}\r\n` : "550 no such file\r\n");
+        } else if (verb === "PASV") {
           dataServer = net.createServer();
           dataSocketReady = new Promise((resolve) => {
             dataServer?.once("connection", (socket) => {

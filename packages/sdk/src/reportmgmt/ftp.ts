@@ -302,7 +302,16 @@ function passivePort(reply: Reply): number | undefined {
   return epsv ? Number(epsv[1]) : undefined;
 }
 
-function collect(socket: net.Socket, maxBytes: number): Promise<Uint8Array> {
+/** Whether the data channel's TLS handshake (and pin check) finished; only used in FTPS mode. */
+interface DataTlsState {
+  handshaken: boolean;
+}
+
+function collect(
+  socket: net.Socket,
+  maxBytes: number,
+  secure?: DataTlsState,
+): Promise<Uint8Array> {
   return new Promise<Uint8Array>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -315,9 +324,34 @@ function collect(socket: net.Socket, maxBytes: number): Promise<Uint8Array> {
       }
       chunks.push(chunk);
     });
-    socket.once("end", () => resolve(Buffer.concat(chunks)));
-    socket.once("error", reject);
+    socket.once("end", () => {
+      // A peer that answers the ClientHello with plain bytes and hangs up must not look like an
+      // empty file.
+      if (secure !== undefined && !secure.handshaken) {
+        reject(fail("data channel TLS (closed before the handshake completed)"));
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    });
+    socket.once("error", (error: unknown) => {
+      if (secure !== undefined) {
+        reject(
+          fail("data channel TLS (certificate or protocol error)", undefined, error, {
+            ...tlsErrorCode(error),
+          }),
+        );
+      } else {
+        reject(fail("transfer (data connection error)", undefined, error));
+      }
+    });
   });
+}
+
+/** The byte count of a `213 <size>` reply, or undefined when it is not one plain integer. */
+function parseAnnouncedSize(text: string): number | undefined {
+  const trimmed = text.trim();
+  if (!/^\d{1,15}$/.test(trimmed)) return undefined;
+  return Number(trimmed);
 }
 
 function tlsErrorCode(error: unknown): Record<string, unknown> {
@@ -431,6 +465,22 @@ export async function downloadViaFtp(
     control.send("TYPE I");
     await expect(control, "transfer setup", (code) => code === 200);
 
+    // The data channel's end of stream is the only length marker a plain transfer has, and Node's
+    // TLS layer does not report a missing close_notify, so a transfer cut short on the wire looks
+    // complete. SIZE (RFC 3659, binary mode) gives an independent length to compare against.
+    control.send(`SIZE ${path}`);
+    const sizeReply = await control.reply();
+    const announced = sizeReply.code === 213 ? parseAnnouncedSize(sizeReply.text) : undefined;
+    if (announced === undefined && controlTls !== undefined && sizeReply.code !== 550) {
+      throw fail(
+        "transfer setup (server cannot report the file size, which FTPS needs to detect a truncated transfer)",
+        sizeReply.code,
+      );
+    }
+    if (announced !== undefined && announced > options.maxBytes) {
+      throw fail("transfer (file exceeds the size limit)");
+    }
+
     control.send("PASV");
     let reply = await control.reply();
     if (reply.code !== 227) {
@@ -449,6 +499,7 @@ export async function downloadViaFtp(
     }
     sockets.push(dataSocket);
     let transferSocket: net.Socket = dataSocket;
+    let dataTls: DataTlsState | undefined;
     if (controlTls !== undefined) {
       // The handshake runs while RETR is being sent: some servers only start theirs after the
       // transfer command. Reusing the control session satisfies servers that require it.
@@ -457,10 +508,14 @@ export async function downloadViaFtp(
         socket: dataSocket,
       });
       sockets.push(secureData);
-      secureData.once("secureConnect", () => verifyPin(secureData, settings.pin));
+      const state: DataTlsState = { handshaken: false };
+      dataTls = state;
+      secureData.once("secureConnect", () => {
+        state.handshaken = verifyPin(secureData, settings.pin);
+      });
       transferSocket = secureData;
     }
-    const transfer = collect(transferSocket, options.maxBytes);
+    const transfer = collect(transferSocket, options.maxBytes, dataTls);
     // `transfer` can reject before we await it below; attach a handler so that is not unhandled.
     transfer.catch(() => undefined);
 
@@ -468,6 +523,9 @@ export async function downloadViaFtp(
     await expect(control, "file retrieval", (code) => code === 125 || code === 150);
     const bytes = await Promise.race([transfer, control.overflowed]);
     await expect(control, "transfer completion", (code) => code === 226 || code === 250);
+    if (announced !== undefined && bytes.length !== announced) {
+      throw fail(`transfer (truncated: received ${bytes.length} of ${announced} bytes)`);
+    }
     control.send("QUIT");
     return bytes;
   })();

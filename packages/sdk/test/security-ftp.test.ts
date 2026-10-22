@@ -30,6 +30,14 @@ interface StubOptions {
   files?: Record<string, Buffer>;
   /** Offer explicit FTPS (AUTH TLS) with this certificate; omit for a plaintext-only server. */
   tls?: TlsFixture;
+  /** Answer SIZE with the real length of the file (default); false makes SIZE "not implemented". */
+  supportSize?: boolean;
+  /** Answer SIZE with this length whatever the file really is. */
+  sizeReply?: number;
+  /** Send only this many bytes of the file, then drop the data connection without closing TLS. */
+  truncateTo?: number;
+  /** Serve plain bytes on the data port even after PROT P, so the client's TLS handshake fails. */
+  brokenDataTls?: boolean;
 }
 
 const closers: Array<() => Promise<void>> = [];
@@ -111,7 +119,8 @@ async function startStub(options: StubOptions = {}): Promise<Stub> {
           socket.write("200 binary\r\n");
           return;
         case "PASV": {
-          const secureData = protectData && options.tls !== undefined;
+          const secureData =
+            protectData && options.tls !== undefined && options.brokenDataTls !== true;
           dataServer = secureData
             ? tls.createServer({ key: options.tls?.key, cert: options.tls?.cert })
             : net.createServer();
@@ -129,6 +138,17 @@ async function startStub(options: StubOptions = {}): Promise<Stub> {
           });
           return;
         }
+        case "SIZE": {
+          const file = files[arg];
+          if (options.sizeReply !== undefined) {
+            socket.write(`213 ${options.sizeReply}\r\n`);
+          } else if (options.supportSize !== false && file !== undefined) {
+            socket.write(`213 ${file.length}\r\n`);
+          } else {
+            socket.write("502 not implemented\r\n");
+          }
+          return;
+        }
         case "RETR": {
           const file = files[arg];
           if (file === undefined) {
@@ -137,6 +157,14 @@ async function startStub(options: StubOptions = {}): Promise<Stub> {
           }
           socket.write("150 opening\r\n");
           void dataSocketReady?.then((data) => {
+            if (options.truncateTo !== undefined) {
+              data.write(file.subarray(0, options.truncateTo), () => {
+                data.destroy();
+                socket.write("226 done\r\n");
+                dataServer?.close();
+              });
+              return;
+            }
             data.end(file, () => {
               socket.write("226 done\r\n");
               dataServer?.close();
@@ -289,6 +317,96 @@ describe("FTP report download is not plaintext and not port-hopping (T-5668 / L4
   });
 });
 
+describe("FTP report download notices damaged transfers (T-5668 review)", () => {
+  const base = (stub: Stub) => ({
+    maxBytes: 1024,
+    timeoutMs: 5000,
+    allowedHost: ANY_HOST,
+    allowedPorts: [stub.port],
+  });
+  const url = (stub: Stub) => `ftp://user:pw@127.0.0.1:${stub.port}/x.csv`;
+
+  it("wraps a failed data-channel TLS handshake in a NeweggApiError", async () => {
+    const stub = await startStub({
+      tls: FIXTURE,
+      brokenDataTls: true,
+      files: { "x.csv": Buffer.from("rows") },
+    });
+    const error = await downloadViaFtp(url(stub), {
+      ...base(stub),
+      ftps: true,
+      tlsCa: FIXTURE.cert,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect((error as Error).message).toMatch(/data channel/);
+    expect(JSON.stringify(error)).not.toContain("pw");
+  });
+
+  it("rejects a transfer shorter than the SIZE the server announced (plain FTP)", async () => {
+    const stub = await startStub({
+      truncateTo: 4,
+      files: { "x.csv": Buffer.from("0123456789") },
+    });
+    const error = await downloadViaFtp(url(stub), base(stub)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect((error as Error).message).toMatch(/truncated/);
+  });
+
+  it("rejects a transfer whose SIZE already exceeds the cap, before downloading", async () => {
+    const stub = await startStub({ sizeReply: 5_000_000, files: { "x.csv": Buffer.from("rows") } });
+    const error = await downloadViaFtp(url(stub), base(stub)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect((error as Error).message).toMatch(/size limit/);
+    expect(verbs(stub)).not.toContain("RETR");
+  });
+
+  it("accepts a complete transfer that matches SIZE, and one from a server without SIZE", async () => {
+    const withSize = await startStub({
+      files: { "x.csv": Buffer.from("0123456789") },
+    });
+    const first = await downloadViaFtp(url(withSize), base(withSize));
+    expect(Buffer.from(first).toString()).toBe("0123456789");
+    expect(verbs(withSize)).toContain("SIZE");
+    const without = await startStub({
+      supportSize: false,
+      files: { "x.csv": Buffer.from("0123456789") },
+    });
+    const second = await downloadViaFtp(url(without), base(without));
+    expect(Buffer.from(second).toString()).toBe("0123456789");
+  });
+
+  it("treats a TLS data channel dropped without close_notify as a truncated transfer", async () => {
+    const stub = await startStub({
+      tls: FIXTURE,
+      truncateTo: 4,
+      files: { "x.csv": Buffer.from("0123456789") },
+    });
+    const error = await downloadViaFtp(url(stub), {
+      ...base(stub),
+      ftps: true,
+      tlsCa: FIXTURE.cert,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect((error as Error).message).toMatch(/truncated/);
+  });
+
+  it("refuses an FTPS transfer when the server cannot report the file size", async () => {
+    const stub = await startStub({
+      tls: FIXTURE,
+      supportSize: false,
+      files: { "x.csv": Buffer.from("0123456789") },
+    });
+    const error = await downloadViaFtp(url(stub), {
+      ...base(stub),
+      ftps: true,
+      tlsCa: FIXTURE.cert,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect((error as Error).message).toMatch(/transfer setup/);
+    expect(verbs(stub)).not.toContain("RETR");
+  });
+});
+
 interface Flood {
   readonly port: number;
   readonly closedByClient: Promise<void>;
@@ -405,6 +523,7 @@ describe("FTP control channel is bounded (T-5669 / L5)", () => {
           buffer = buffer.slice(end + 2);
           if (line.startsWith("USER")) socket.write("230 in\r\n");
           else if (line.startsWith("TYPE")) socket.write("200 ok\r\n");
+          else if (line.startsWith("SIZE")) socket.write("502 no\r\n");
           else if (line.startsWith("PASV")) {
             socket.write(`227 x (127,0,0,1,${dataPort >> 8},${dataPort & 255})\r\n`);
           } else if (line.startsWith("RETR")) {
