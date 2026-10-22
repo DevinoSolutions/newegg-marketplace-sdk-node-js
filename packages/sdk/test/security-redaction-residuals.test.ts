@@ -137,6 +137,35 @@ describe("keys and own properties of the rebuilt objects (T-6111 review)", () =>
   });
 });
 
+describe("symbol-keyed internals of platform objects (T-6111, Node 22 undici)", () => {
+  it("does not walk or replace a Response, Request, Headers or URLSearchParams for its symbol keys", () => {
+    const cyclic: Record<string, unknown> = { note: "internal" };
+    cyclic.self = cyclic;
+    const originals = [
+      new Response("ok"),
+      new Request("https://example.com/z"),
+      new Headers({ a: "b" }),
+      new URLSearchParams({ a: "b" }),
+    ];
+    for (const original of originals) {
+      Object.defineProperty(original, Symbol("state"), { value: cyclic, enumerable: true });
+      expect(causeOf(original), original.constructor.name).toBe(original);
+    }
+  });
+
+  it("does not copy symbol keys onto a rebuilt Headers or URLSearchParams", () => {
+    const marker = Symbol("internal");
+    const headers = Object.assign(new Headers({ x: URL_WITH_SECRET }), { [marker]: 1 });
+    const params = Object.assign(new URLSearchParams({ x: URL_WITH_SECRET }), { [marker]: 1 });
+    for (const original of [headers, params]) {
+      const sanitized = causeOf(original) as object;
+      expect(sanitized).not.toBe(original);
+      expect(Reflect.ownKeys(sanitized)).not.toContain(marker);
+      expectNoSecret(render(original));
+    }
+  });
+});
+
 describe("objects whose clone would break (T-6111 item 2)", () => {
   class WithPrivate {
     readonly link = URL_WITH_SECRET;

@@ -2554,7 +2554,8 @@ export class NeweggError extends Error {
   // `cause` (standard Error.cause) is sanitized too: URL credentials are removed from the cause's message, stack,
   // string properties and nested causes, so util.inspect / console.log of the error cannot print them. Functions
   // (own properties), URLSearchParams (names and values) and Headers are rebuilt from redacted entries, own
-  // properties included. A Response or Request becomes a redacted util.inspect text only when redaction changes
+  // properties included (string-keyed only: a secret stored under a SYMBOL key on these four types is not redacted,
+  // low risk, documented). A Response or Request becomes a redacted util.inspect text only when redaction changes
   // something (its text or an own property); otherwise the original is kept. The same text form replaces any object
   // whose copy would not work (#private fields).
 }

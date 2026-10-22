@@ -420,11 +420,11 @@ function changedOwnProperties(
   value: object,
   path: readonly object[],
   walk: CauseWalk,
-  skip?: ReadonlySet<string | symbol>,
+  skip?: (key: string | symbol) => boolean,
 ): Map<string | symbol, PropertyDescriptor> {
   const changed = new Map<string | symbol, PropertyDescriptor>();
   for (const key of Reflect.ownKeys(value)) {
-    if (skip?.has(key) === true) continue;
+    if (skip?.(key) === true) continue;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (descriptor === undefined) continue;
     let current: unknown;
@@ -531,6 +531,8 @@ function withOwnProperties<T extends object>(
   changed: Map<string | symbol, PropertyDescriptor>,
 ): T {
   for (const key of Reflect.ownKeys(source)) {
+    // Never overwrite the fresh object's internal slots with the source's.
+    if (SYMBOL_KEYS(key)) continue;
     const descriptor = changed.get(key) ?? Object.getOwnPropertyDescriptor(source, key);
     if (descriptor === undefined) continue;
     try {
@@ -547,7 +549,16 @@ function withOwnProperties<T extends object>(
  * changed; then a forwarding wrapper with the same name, length, prototype and (redacted)
  * properties replaces it. `prototype` is not walked: it points back at the function.
  */
-const FUNCTION_SKIP: ReadonlySet<string | symbol> = new Set(["prototype"]);
+const FUNCTION_SKIP = (key: string | symbol): boolean => key === "prototype";
+
+/**
+ * Platform objects (Response, Request, Headers, URLSearchParams) keep their internals under symbol
+ * keys on some runtimes (undici on Node 22): cyclic streams, controllers, lists. Those are not data,
+ * and walking them turns a clean object into a copy that no longer works. Only string-keyed own
+ * properties, the ones a caller attaches (`response.link`), are walked and copied. A secret under a
+ * SYMBOL key on these four types is therefore not redacted (documented, low risk).
+ */
+const SYMBOL_KEYS = (key: string | symbol): boolean => typeof key === "symbol";
 
 function cloneFunction(
   fn: (...args: unknown[]) => unknown,
@@ -560,7 +571,7 @@ function cloneFunction(
   };
   Object.setPrototypeOf(wrapper, Object.getPrototypeOf(fn) as object | null);
   for (const key of Reflect.ownKeys(fn)) {
-    if (FUNCTION_SKIP.has(key)) continue;
+    if (FUNCTION_SKIP(key)) continue;
     const descriptor = changed.get(key) ?? Object.getOwnPropertyDescriptor(fn, key);
     if (descriptor === undefined) continue;
     try {
@@ -628,7 +639,7 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
         if (cleanedName !== name || cleaned !== item) changed = true;
         pairs.push([cleanedName, cleaned]);
       }
-      const props = changedOwnProperties(value, next, walk);
+      const props = changedOwnProperties(value, next, walk, SYMBOL_KEYS);
       if (!changed && props.size === 0) return value;
       return withOwnProperties(new URLSearchParams(pairs), value, props);
     }
@@ -640,7 +651,7 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
         if (cleaned !== item) changed = true;
         rebuilt.append(name, cleaned);
       }
-      const props = changedOwnProperties(value, next, walk);
+      const props = changedOwnProperties(value, next, walk, SYMBOL_KEYS);
       if (!changed && props.size === 0) return value;
       return withOwnProperties(rebuilt, value, props);
     }
@@ -650,7 +661,7 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
       const text = textSummary(value);
       const redacted = redactUrlCredentials(text);
       // An own property (`response.link`) holding a secret also forces the text form.
-      const props = changedOwnProperties(value, next, walk);
+      const props = changedOwnProperties(value, next, walk, SYMBOL_KEYS);
       return redacted === text && props.size === 0 ? value : redacted;
     }
     if (value instanceof String) {
