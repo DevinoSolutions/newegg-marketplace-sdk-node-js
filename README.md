@@ -321,8 +321,11 @@ the reports API and its MCP tools (`newegg_reports_settlement_summary`,
 `newegg_reports_settlement_transactions`, `newegg_reports_daily_inventory`,
 `newegg_reports_daily_price`, `newegg_reports_status`) are always available and read-only. If a
 wait times out, `ReportTimeoutError.requestId` lets you continue with `waitForRequest`. The
-daily reports return an FTP URL with embedded credentials; the SDK downloads the file itself and
-never exposes or logs that URL. Daily Price exists on Newegg.com only; on B2B/CA use the Daily
+daily reports return an FTP URL with embedded credentials; the SDK downloads the file itself over
+**explicit FTPS** (`AUTH TLS` before the login, verified certificate, port 21 only; **no plaintext
+fallback**) and never exposes or logs that URL. Plain FTP carries the credentials and the report data
+in clear text, so it is available only as an explicit opt-out
+(`reportFileFtp: { allowPlaintext: true }`, MCP `NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP=true`). Daily Price exists on Newegg.com only; on B2B/CA use the Daily
 Inventory report, which carries price and activation columns. Details: contracts §17.
 
 To enumerate every listing (there is no synchronous "list my products" call) use the Item Basic
@@ -508,6 +511,20 @@ Seller ID or a key from another platform is the usual cause), see
 > marketplace's set. SDK users should pass `credentialMarketplace` to `createNeweggClient`; omitting it
 > keeps the old, unsafe behaviour. See ADR 0006.
 
+> **Breaking (0.1.x, T-5665 to T-5675): security hardening.** (1) The report file download now requires
+> **explicit FTPS** and port 21: a server that does not offer `AUTH TLS` fails the download instead of
+> falling back to clear text. If your network or a proxy cannot do FTPS, set
+> `reportFileFtp: { allowPlaintext: true }` (SDK) or `NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP=true` (MCP),
+> knowing that credentials and report data then cross the network unencrypted. (2) `NEWEGG_MCP_HTTP_BEARER_TOKEN`
+> must be **at least 32 characters**; a shorter token makes the server refuse to start (generate one with
+> `openssl rand -hex 32`). (3) RMA evidence `imageUrls` must be `https` and carry no `user:password@`.
+> (4) A preview can only be applied from the MCP session that created it; `startHttpServer`'s
+> `createServer` callback now receives the `sessionId` (pass it to `createNeweggMcpServer`), and a custom
+> `PreviewStore` should honour the new optional `PreviewScope` argument of `get` / `consume`. (5) The HTTP
+> transport now caps sessions (`NEWEGG_MCP_HTTP_MAX_SESSIONS`, default 32), closes idle ones
+> (`NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS`, default 1800), delays failed bearer attempts per client address
+> and warns on a non-loopback bind unless `NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY=true`.
+
 > **Breaking (0.1.x, T-5948): `orders.list` input validation is strict.** These now throw
 > `NeweggValidationError` before any request instead of being sent or silently dropped: a `dateFrom` /
 > `dateTo` string that is not `MM/DD/YYYY HH:mm:ss` or `YYYY-MM-DD HH:mm:ss` (Pacific), including a
@@ -548,7 +565,11 @@ Seller ID or a key from another platform is the usual cause), see
 | `NEWEGG_MCP_ALLOWED_MARKETPLACES`           | empty = all              | Comma-separated marketplace allowlist.                                                                                                                                                                                                                                                                                      |
 | `NEWEGG_MCP_HTTP_HOST`                      | `127.0.0.1`              | HTTP transport bind host.                                                                                                                                                                                                                                                                                                   |
 | `NEWEGG_MCP_HTTP_PORT`                      | `3919`                   | HTTP transport bind port.                                                                                                                                                                                                                                                                                                   |
-| `NEWEGG_MCP_HTTP_BEARER_TOKEN`              | empty                    | Bearer token; **required** before binding a non-loopback host.                                                                                                                                                                                                                                                              |
+| `NEWEGG_MCP_HTTP_MAX_SESSIONS`              | `32`                     | Concurrent HTTP sessions; the next `initialize` gets 503.                                                                                                                                                                                                                                                                   |
+| `NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS`      | `1800`                   | A session idle this long is closed.                                                                                                                                                                                                                                                                                         |
+| `NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY`          | unset (`false`)          | Exactly `true` confirms a TLS-terminating proxy fronts the plain-HTTP listener; otherwise a non-loopback bind logs a warning.                                                                                                                                                                                               |
+| `NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP`     | unset (`false`)          | Exactly `true` lets the report file download fall back to clear-text FTP (default: FTPS only).                                                                                                                                                                                                                              |
+| `NEWEGG_MCP_HTTP_BEARER_TOKEN`              | empty                    | Bearer token, **at least 32 characters**; **required** before binding a non-loopback host.                                                                                                                                                                                                                                  |
 | `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`           | empty = same-origin only | Comma-separated allowed browser `Origin` values.                                                                                                                                                                                                                                                                            |
 | `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`             | empty                    | Comma-separated allowed `Host` values (`host[:port]`); loopback always allowed.                                                                                                                                                                                                                                             |
 

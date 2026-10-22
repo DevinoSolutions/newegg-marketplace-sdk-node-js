@@ -188,6 +188,49 @@ never appears in `tools/list` — the deployment is read-only by construction, n
 | T6     | **Structured errors only**        | Raw upstream Newegg bodies are never returned through MCP; only structured, sanitized error/result shapes cross the boundary.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | T6     | **stdout discipline (stdio)**     | On the stdio transport, logs go strictly to **stderr**; stdout is reserved for JSON-RPC frames, so nothing can corrupt or inject into the protocol stream.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
+### Audit hardening (T-5665 to T-5675)
+
+Low and informational findings from the security audit, closed together. Each is covered by a test in
+`packages/*/test/security-*.test.ts`.
+
+- **Redaction is not pattern-bound (T-5665).** `redactUrlCredentials` also removes `user:password@` from
+  percent-encoded URLs, scheme-relative `//u:p@h`, schemeless `u:p@ftp03.newegg.com`, backslash and
+  triple-slash schemes, and passwords containing `%40`, `&#64;`, a fullwidth `@` or `/ ? # "`. It is
+  linear time (500k-character inputs finish in well under a second). Known limit: a password containing
+  whitespace, and a schemeless credential on a host other than a Newegg FTP host, are not recognized.
+- **`NeweggError.cause` is sanitized (T-5666).** `console.log(error)` / `util.inspect(error)` print the whole
+  cause chain; the constructor now redacts URL credentials in the cause's message, stack, string
+  properties and nested causes.
+- **Logs are redacted (T-5667).** The unexpected-error log line and the default logger strip URL
+  credentials and URL query strings (for example `?sellerid=...`) from every string field before writing to
+  stderr.
+- **Report FTP is FTPS-only and port-pinned (T-5668, T-5669).** The SDK upgrades with `AUTH TLS` before
+  sending `USER`/`PASS`, verifies the certificate, protects the data channel and has no plaintext
+  fallback; only URL port 21 is used; the control channel is capped at 64 KiB per line and 256 KiB per
+  reply. Clear-text FTP is an explicit opt-out (`NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP=true`, exact
+  literal). See contracts §17.5.
+- **HTTP transport DoS surface (T-5670).** At most `NEWEGG_MCP_HTTP_MAX_SESSIONS` (default 32)
+  concurrent sessions (the next `initialize` gets 503); a session idle for
+  `NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS` (default 1800) is closed; an oversize (> 4 MB) request body is
+  answered 413 and the connection is dropped instead of drained; consumed and expired preview tombstones are
+  swept after 10 minutes and the in-memory store holds at most 1000 records.
+- **Malformed `Host` is a 400 (T-5671).** The header is validated before URL parsing, auth or logging, so it
+  can no longer produce a 500 or an `http_request_failed` log line.
+- **Bearer token strength and throttling (T-5672).** The token must be at least 32 characters (the server
+  refuses to start otherwise). Failed bearer attempts are delayed per client address (250 ms doubling to
+  5 s) and answered 429 once eight delayed failures are in flight. The listener speaks plain HTTP: a
+  non-loopback bind logs `http_plaintext_non_loopback` unless `NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY=true`
+  declares a TLS-terminating proxy. Behind a proxy every client shares the proxy's address, so the
+  throttle then applies to all clients together.
+- **RMA evidence URLs (T-5673).** `imageUrls` accept `https` only and no `user:password@`.
+- **Hash re-verified at apply for every kind (T-5674).** Inventory, listing, price and volume-discount
+  applies recompute the stored hash and refuse a changed record (`preview_tampered`) before anything is
+  sent, as RMA/refund and shipping-label applies already did.
+- **Previews are bound to the MCP session (T-5675).** A preview records the session that created it; another
+  HTTP session cannot apply (or burn) it and gets `preview_not_found`. stdio has one implicit session. A
+  custom `PreviewStore` should honour the optional `PreviewScope` argument of `get` / `consume`; the tool
+  layer re-checks the returned record either way.
+
 ---
 
 ## What the server will never do
@@ -243,11 +286,16 @@ Stdio is the default transport (a subprocess launched by the MCP client).
 
 - [ ] Keep the default bind `127.0.0.1:3919` unless remote access is genuinely required.
 - [ ] To bind a non-loopback host, you **must** set `NEWEGG_MCP_HTTP_BEARER_TOKEN`; the
-      server refuses to bind otherwise. Use a high-entropy token and rotate it.
+      server refuses to bind otherwise. The token must be **at least 32 characters** (the server
+      refuses to start with a shorter one): generate it with `openssl rand -hex 32` and rotate it.
 - [ ] Set `NEWEGG_MCP_HTTP_ALLOWED_HOSTS` (expected `Host` header values) and
       `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS` (expected browser `Origin`s). Do not rely on CORS
       for authentication.
-- [ ] Terminate TLS at a trusted reverse proxy and keep the server's own bind private.
+- [ ] Terminate TLS at a trusted reverse proxy and keep the server's own bind private. The
+      listener itself speaks plain HTTP; set `NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY=true` to confirm the
+      proxy, otherwise a non-loopback bind logs an `http_plaintext_non_loopback` warning.
+- [ ] Size the session bounds: `NEWEGG_MCP_HTTP_MAX_SESSIONS` (default 32) and
+      `NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS` (default 1800).
 - [ ] MCP requests are served at `POST /mcp` (Streamable HTTP; the session id is returned in
       the `Mcp-Session-Id` response header). On `/mcp` the guards run in order: `Origin`
       allowlist → `Host` allowlist → bearer token. Any other path returns `404`.
@@ -256,5 +304,6 @@ Stdio is the default transport (a subprocess launched by the MCP client).
       on instance A cannot be applied on instance B (apply would see an unknown `previewId`).
       Behind a load balancer, provide a shared `PreviewStore` implementing `get` / `put` /
       `consume` with TTL, backed by Redis or a database (interface documented in ADR 0005).
-      For the same reason, share the SDK's `OperationStore` and `RateLimitStore` across
+      The store must honour the `PreviewScope` argument of `get` / `consume` (a preview is only
+      visible to the session that created it). For the same reason, share the SDK's `OperationStore` and `RateLimitStore` across
       instances so feed dedup and rate budgets remain correct.

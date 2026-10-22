@@ -2120,8 +2120,31 @@ Submit `POST reportmgmt/report/submitrequest?sellerid=&version=310` (the page's 
 embedded (live-verified on the Item Basic Information report, CAN 2026-09-01). Never
 log it, put it in an error, return it from an MCP tool or store it in the repo. The SDK withholds the URL
 from every public type (`ReportFileInfo` exposes only the host and file name), redacts `user:pass@` in every
-`raw` payload (`includeRaw`), downloads over FTP itself (passive mode, host allow-list `*.newegg.com`, size
-caps) or through the caller's `reportFileDownloader`, and keeps the URL out of thrown errors.
+`raw` payload (`includeRaw`), downloads over FTP itself (explicit FTPS, passive mode, host allow-list
+`*.newegg.com`, URL port 21 only, size caps; see below) or through the caller's `reportFileDownloader`, and
+keeps the URL out of thrown errors.
+
+**FTP transport security (T-5668 / T-5669; probed 2026-10-21, read-only, no credentials sent).** A raw TCP
+connection to `mktpftpreport.newegg.com:21` is greeted `220 Serv-U FTP Server ready...`; `AUTH TLS` is answered
+`234 AUTH command OK. Initializing SSL connection.` and `QUIT` ended the session, so the server offers explicit
+FTPS (RFC 4217). Plain FTP puts `USER`/`PASS` and the report (order and customer data) on the wire in clear
+text, so the SDK's downloader now:
+
+- sends `AUTH TLS` **before** `USER`/`PASS`, verifies the server certificate against the URL host (TLS 1.2+),
+  then `PBSZ 0` + `PROT P` and runs the data channel over TLS (reusing the control session);
+- has **no plaintext fallback**: a server that does not answer `234` fails the download with nothing sent
+  (`details.stage` is `TLS upgrade`); `NeweggClientConfig.reportFileFtp.allowPlaintext = true` (MCP:
+  `NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP=true`) is the explicit, off-by-default opt-out;
+- connects only to URL port 21 (`reportFileFtp.allowedPorts` widens it), because the port comes from the
+  Newegg response and a hostile response must not aim the client at another TCP port on a `*.newegg.com` host;
+- caps one control line at 64 KiB and one (multi-line) reply at 256 KiB, destroying the socket and failing the
+  download on overflow, so a hostile or intercepted server cannot grow memory without bound.
+
+**ASSUMPTION (not proven live):** that the real server's certificate chains to a public root and that the
+`PROT P` data channel works against Serv-U. Only the `AUTH TLS` reply was observed; completing the handshake or
+a transfer needs credentials, which the probe did not use. If the handshake fails the download throws a
+`NeweggApiError` with `details.stage = "TLS handshake"` and `details.tlsError` (the Node error code);
+`reportFileFtp.tlsCa` adds a trusted CA, and `allowPlaintext` is the last resort.
 
 ### 17.6 Order List and RMA List reports
 
@@ -2246,7 +2269,8 @@ reports (only CAN was exercised).
   (surfaced as `NeweggApiError`), so wait for FINISHED first. The FTP download of a Daily Inventory file
   is covered by mocked tests and a local fake FTP server only (**ASSUMPTION**: passive FTP to the documented
   `ftp03.newegg.com` URL); the SDK's downloader **was** verified live on the Item Basic Info report's
-  `mktpftpreport.newegg.com` URL (§17.8), which retires the "FTP download itself" assumption in general.
+  `mktpftpreport.newegg.com` URL (§17.8), which retires the "FTP download itself" assumption in general
+  (that live run used the plain-FTP downloader that preceded the FTPS upgrade described in §17.5).
 - **Empty lists (checked 2026-10-10, CAN):** servicemgmt answers an empty list with `""` (§18); the reports do
   NOT do that. An Order List with no matches omits the list key entirely (only `PageInfo` with
   `TotalCount: 0` is present). The SDK's report row reader also drops a `""` / `{}` list node and blank
@@ -2914,7 +2938,7 @@ Body (a refund RMA for one line; all values strings):
 - `RMAReason` (request side, 1-10): 1 item damaged, 2 defective, 3 incompatible, 4 no longer needed,
   5 not as described, 6 ordered wrong item, 7 sent wrong item, 8 unsatisfied, 9 extra item shipped, 10 item
   not received. Reasons **3, 4, 6, 8** additionally require `UnOpen` (`"0"`/`"1"`), 1-5 evidence image URLs
-  (`FileUrls > ImgUrl`) and a `Memo`. `FileUrls` and `Memo` are documented **US and CAN only**; the SDK
+  (`FileUrls > ImgUrl`; the SDK sends **https URLs without `user:password@` only**, since Newegg fetches them) and a `Memo`. `FileUrls` and `Memo` are documented **US and CAN only**; the SDK
   refuses them on B2B (`acceptsEvidenceFiles`).
 - `AutoReceiveMark` `"1"` marks the RMA received on creation (refund only). **The SDK supports it but the MCP
   never exposes it** (auto-receiving is the step before a refund pays out).
