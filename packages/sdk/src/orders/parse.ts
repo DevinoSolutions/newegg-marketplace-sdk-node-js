@@ -27,7 +27,11 @@ import type {
 } from "../types.js";
 import type { NeweggValidationIssue } from "../errors/index.js";
 import { NeweggValidationError } from "../errors/index.js";
-import { formatPacificWallClock, toTimestamp } from "../platform/dates.js";
+import {
+  formatPacificWallClock,
+  isPacificWallClockString,
+  toTimestamp,
+} from "../platform/dates.js";
 import { asArray, asBoolean, asNumber, asString, getField } from "../schemas/wire.js";
 import {
   KILL_ITEM_OPERATION,
@@ -283,27 +287,8 @@ const ADDITIONAL_INFO_STATUS_FILTERS: Record<string, true> = {
   voided: true,
 };
 
-/**
- * The two wire formats Newegg accepted for `LastUpdatedAfter` in the 2026-10-21 probe (contracts
- * §10.1), both Pacific wall clock with seconds: `MM/DD/YYYY HH:mm:ss` and `YYYY-MM-DD HH:mm:ss`.
- * The same check guards `OrderDateFrom` / `OrderDateTo`, which take the same Pacific strings (§10).
- */
-const PACIFIC_WALL_CLOCK_STRING =
-  /^(?:(?:0[1-9]|1[0-2])\/(?:0[1-9]|[12]\d|3[01])\/\d{4}|\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])) (?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
-
-/** True when the year/month/day of a wall-clock string is a real calendar date (no 2026-02-31). */
-function isRealCalendarDate(wall: string): boolean {
-  const iso = /^(\d{4})-(\d{2})-(\d{2}) /.exec(wall);
-  const mdy = /^(\d{2})\/(\d{2})\/(\d{4}) /.exec(wall);
-  const [year, month, day] = iso
-    ? [Number(iso[1]), Number(iso[2]), Number(iso[3])]
-    : mdy
-      ? [Number(mdy[3]), Number(mdy[1]), Number(mdy[2])]
-      : [0, 0, 0];
-  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
-  return daysInMonth !== undefined && day >= 1 && day <= daysInMonth;
-}
+// Wire formats: the two Newegg accepted for `LastUpdatedAfter` in the 2026-10-21 probe (contracts
+// §10.1), checked by isPacificWallClockString; the same check guards `OrderDateFrom` / `OrderDateTo` (§10).
 
 /**
  * Records an issue unless `value` is a valid `Date` or a Pacific wall-clock string in one of the
@@ -318,9 +303,7 @@ function checkPacificDateInput(
   const valid =
     value instanceof Date
       ? !Number.isNaN(value.getTime())
-      : typeof value === "string" &&
-        PACIFIC_WALL_CLOCK_STRING.test(value) &&
-        isRealCalendarDate(value);
+      : typeof value === "string" && isPacificWallClockString(value);
   if (!valid) {
     issues.push({
       path,

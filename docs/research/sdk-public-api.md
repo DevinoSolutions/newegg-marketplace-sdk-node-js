@@ -1265,6 +1265,15 @@ export class ReportTimeoutError extends NeweggError {
 // Courtesy Refund Request Status (PUT, 10,000/hr) - READS despite the verb. Submit / Edit /
 // Process / Reject RMA and Issue Courtesy Refund are WRITES (types further down; the live read-only
 // guard forbids them). Amounts are USD (us, b2b) or CAD (ca): see `currency`.
+// Criteria dates (RMA / refund `dateFrom` `dateTo`, SBN `updatedFrom` `updatedTo` `requestDateFrom`
+// `requestDateTo`): a `Date` renders as Pacific wall clock; a string is sent verbatim but must be a real
+// Pacific date in `YYYY-MM-DD HH:mm[:ss]`, `MM/DD/YYYY HH:mm[:ss]` or a bare `YYYY-MM-DD` (checked by
+// platform/dates.ts `isPacificWallClockString`, shared with orders). Epoch digits, free text, the ISO `T`
+// form, a bare `MM/DD/YYYY` and impossible dates throw NeweggValidationError before any request.
+// The MCP tools pass a zone-less string through unchanged (Pacific), turn only a `Z` / offset instant into
+// a `Date`, and expand a bare YYYY-MM-DD to 00:00:00 (lower bound) or 23:59:59 (upper bound); the
+// machine's time zone never shifts the window. Like the orders tool, a zone-less `T` form or a bare
+// `MM/DD/YYYY` is refused by the SDK rather than normalised.
 export type RmaCurrency = "USD" | "CAD";
 export type RmaStatus =
   "open" | "received" | "rejected" | "voided" | "closed" | "processing" | "unknown";

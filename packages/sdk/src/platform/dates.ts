@@ -143,3 +143,45 @@ export function toTimestamp(
   const date = parsePacificTimestamp(value);
   return date ? { raw: value, iso: toIso(date) } : { raw: value };
 }
+
+const WALL_DATE_MDY = String.raw`(?:0[1-9]|1[0-2])/(?:0[1-9]|[12]\d|3[01])/\d{4}`;
+const WALL_DATE_ISO = String.raw`\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])`;
+const WALL_TIME = String.raw`(?:[01]\d|2[0-3]):[0-5]\d`;
+const WALL_CLOCK_WITH_SECONDS = new RegExp(
+  String.raw`^(?:${WALL_DATE_MDY}|${WALL_DATE_ISO}) ${WALL_TIME}:[0-5]\d$`,
+);
+const WALL_CLOCK_OPTIONAL_SECONDS = new RegExp(
+  String.raw`^(?:${WALL_DATE_MDY}|${WALL_DATE_ISO}) ${WALL_TIME}(?::[0-5]\d)?$`,
+);
+const WALL_BARE_DATE = new RegExp(String.raw`^${WALL_DATE_ISO}$`);
+
+/** True when the leading year/month/day of a wall-clock or bare-date string is a real calendar date (no 2026-02-31). */
+function isRealCalendarDate(wall: string): boolean {
+  const iso = /^(\d{4})-(\d{2})-(\d{2})(?: |$)/.exec(wall);
+  const mdy = /^(\d{2})\/(\d{2})\/(\d{4}) /.exec(wall);
+  const [year, month, day] = iso
+    ? [Number(iso[1]), Number(iso[2]), Number(iso[3])]
+    : mdy
+      ? [Number(mdy[3]), Number(mdy[1]), Number(mdy[2])]
+      : [0, 0, 0];
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return daysInMonth !== undefined && day >= 1 && day <= daysInMonth;
+}
+
+/**
+ * True when `value` is a Pacific wall-clock string Newegg criteria accept, naming a real calendar
+ * date and time: `MM/DD/YYYY HH:mm:ss` or `YYYY-MM-DD HH:mm:ss`. `optionalSeconds` also allows
+ * `HH:mm`; `bareDate` also allows a bare `YYYY-MM-DD`. Nothing else passes (no ISO `T` form,
+ * epoch digits, free text or an impossible date).
+ */
+export function isPacificWallClockString(
+  value: string,
+  options: { optionalSeconds?: boolean; bareDate?: boolean } = {},
+): boolean {
+  const clock = (
+    options.optionalSeconds ? WALL_CLOCK_OPTIONAL_SECONDS : WALL_CLOCK_WITH_SECONDS
+  ).test(value);
+  const bare = options.bareDate === true && WALL_BARE_DATE.test(value);
+  return (clock || bare) && isRealCalendarDate(value);
+}

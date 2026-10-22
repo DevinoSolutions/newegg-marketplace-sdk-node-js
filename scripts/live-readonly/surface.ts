@@ -234,7 +234,18 @@ export function classifiedInterfaceNames(typesSource: string): Set<string> {
  *   top-level class of the same name in a different module (an implementation class) does not
  *   merge with the interface and is allowed;
  * - in any file: an interface that `extends`, or a class that `extends` / `implements`, NeweggClient
- *   by bare, aliased-import or qualified (`T.NeweggClient`) name (defense in depth).
+ *   by bare, aliased-import (`import { NeweggClient as C }` or `import C = T.NeweggClient`) or
+ *   qualified (`T.NeweggClient`) name (defense in depth).
+ *
+ * Not detected (documented gaps): a local type alias of the client under another name
+ * (`type C = NeweggClient; interface X extends C {}`), an intersection alias
+ * (`type C = NeweggClient & Foo`), a parenthesised heritage expression, and class expressions
+ * (`const K = class implements NeweggClient {}`), a cross-file re-export under a new name
+ * (`export { NeweggClient as Renamed }`), a namespace-import alias from another file (`R.Alias`),
+ * and `Omit` / `Pick<NeweggClient, ...>` heritage.
+ *
+ * Aliases are collected in a first pass over the whole file (including `declare module` and
+ * `namespace` blocks) and heritage is checked in a second, so import order does not matter.
  */
 export function strayClientDeclarations(
   source: string,
@@ -247,13 +258,36 @@ export function strayClientDeclarations(
   const topLevelInterfaces = new Set(
     file.statements.filter(ts.isInterfaceDeclaration).map((d) => d.name.text),
   );
-  // Local names bound to NeweggClient by `import { NeweggClient as X }` / `import type ... as X`.
+  // First pass: local names bound to NeweggClient by `import { NeweggClient as X }` / `import type
+  // ... as X` or an import-equals alias (`import U = T.NeweggClient;`, `import V = U;`), anywhere in
+  // the file (nested `declare module` / `namespace` blocks too). Repeated until stable, so an alias
+  // declared before the import it depends on is still found.
   const clientAliases = new Set<string>(["NeweggClient"]);
-  for (const stmt of file.statements) {
-    const bindings = ts.isImportDeclaration(stmt) ? stmt.importClause?.namedBindings : undefined;
-    if (bindings === undefined || !ts.isNamedImports(bindings)) continue;
-    for (const el of bindings.elements) {
-      if ((el.propertyName ?? el.name).text === "NeweggClient") clientAliases.add(el.name.text);
+  const importEquals: ts.ImportEqualsDeclaration[] = [];
+  const collect = (node: ts.Node): void => {
+    if (ts.isImportEqualsDeclaration(node)) importEquals.push(node);
+    if (ts.isImportDeclaration(node)) {
+      const bindings = node.importClause?.namedBindings;
+      if (bindings !== undefined && ts.isNamedImports(bindings)) {
+        for (const el of bindings.elements) {
+          if ((el.propertyName ?? el.name).text === "NeweggClient") clientAliases.add(el.name.text);
+        }
+      }
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(file);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const decl of importEquals) {
+      const ref = decl.moduleReference;
+      const bound =
+        (ts.isQualifiedName(ref) && ref.right.text === "NeweggClient") ||
+        (ts.isIdentifier(ref) && clientAliases.has(ref.text));
+      if (bound && !clientAliases.has(decl.name.text)) {
+        clientAliases.add(decl.name.text);
+        grew = true;
+      }
     }
   }
   // True when an extends/implements clause names NeweggClient: a bare or aliased identifier, or a
@@ -276,9 +310,7 @@ export function strayClientDeclarations(
       (ts.isInterfaceDeclaration(node) || ts.isClassDeclaration(node)) &&
       heritageNamesClient(node)
     ) {
-      flag(
-        `declares ${node.name?.text ?? "a class"}, which extends NeweggClient (extends or implements clause)`,
-      );
+      flag(`declares ${node.name?.text ?? "a class"}, which extends or implements NeweggClient`);
     }
     if (ts.isInterfaceDeclaration(node)) {
       const name = node.name.text;

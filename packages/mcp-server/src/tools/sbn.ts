@@ -25,6 +25,7 @@ import {
   type ToolDefinition,
   type ToolResult,
 } from "./shared.js";
+import { toDateInput } from "./orders.js";
 import { TOOL_NAMES } from "./names.js";
 
 // ---------------------------------------------------------------------------
@@ -32,20 +33,15 @@ import { TOOL_NAMES } from "./names.js";
 // ---------------------------------------------------------------------------
 const timestampSchema = z.object({ raw: z.string(), iso: z.string().optional() });
 
-/** ISO 8601 (or `YYYY-MM-DD[ HH:mm:ss]`) -> Date so the SDK renders Pacific; otherwise pass through. */
-function toDateInput(value: string | undefined): Date | string | undefined {
-  if (value === undefined) return undefined;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date;
-}
-
 const dateInputSchema = (what: string) =>
   z
     .string()
     .min(1)
     .max(40)
     .optional()
-    .describe(`${what} (ISO 8601 e.g. 2026-09-01T00:00:00Z, Pacific-converted; or YYYY-MM-DD).`);
+    .describe(
+      `${what} (ISO 8601 with Z or an offset, e.g. 2026-09-01T00:00:00Z, converted to Pacific; a bare YYYY-MM-DD is a Pacific day; or a zone-less Pacific wall clock as YYYY-MM-DD HH:mm:ss or MM/DD/YYYY HH:mm:ss, sent unchanged).`,
+    );
 
 const requestIdSchema = z
   .string()
@@ -157,7 +153,7 @@ async function shipmentsHandler(
   if (input.status !== undefined) listInput.status = input.status;
   const updatedFrom = toDateInput(input.updatedFrom);
   if (updatedFrom !== undefined) listInput.updatedFrom = updatedFrom;
-  const updatedTo = toDateInput(input.updatedTo);
+  const updatedTo = toDateInput(input.updatedTo, "end");
   if (updatedTo !== undefined) listInput.updatedTo = updatedTo;
   try {
     const result = await ctx.client.sbn.listShipments(listInput);
@@ -262,7 +258,7 @@ async function requestStatusHandler(
   if (input.requestStatus !== undefined) statusInput.requestStatus = input.requestStatus;
   const from = toDateInput(input.requestDateFrom);
   if (from !== undefined) statusInput.requestDateFrom = from;
-  const to = toDateInput(input.requestDateTo);
+  const to = toDateInput(input.requestDateTo, "end");
   if (to !== undefined) statusInput.requestDateTo = to;
   try {
     const result = await ctx.client.sbn.getRequestStatus(statusInput);
