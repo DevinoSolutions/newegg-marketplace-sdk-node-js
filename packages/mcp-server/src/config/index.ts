@@ -11,8 +11,8 @@ import type { NeweggMarketplace } from "@devino/newegg-marketplace-sdk";
 /** Thrown for any invalid/missing configuration. Messages name the offending variable and
  * never echo provided secret values. */
 export class McpConfigError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "McpConfigError";
   }
 }

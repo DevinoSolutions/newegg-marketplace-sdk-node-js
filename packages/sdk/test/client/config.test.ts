@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveConfig } from "../../src/client/config.js";
 import {
+  NeweggBaseUrlNotAllowedError,
   NeweggConfigurationError,
   NeweggMarketplaceMismatchError,
 } from "../../src/errors/index.js";
@@ -159,6 +160,21 @@ describe("resolveConfig baseUrl allowlist (T-6217)", () => {
     expect(serialized).not.toContain("secret-xyz");
     expect(serialized).not.toContain("A006");
   });
+
+  it("throws the dedicated subclass only for the allowlist refusal", () => {
+    const error = configError(base({ baseUrl: "https://evil.example/" }));
+    expect(error).toBeInstanceOf(NeweggBaseUrlNotAllowedError);
+    expect(error).toBeInstanceOf(NeweggConfigurationError);
+    expect(error.code).toBe("configuration");
+    expect(error.message).not.toContain("evil.example");
+  });
+
+  it.each(["https://api.newegg.com/marketplace", "not a url/", "http://example.test/"])(
+    "keeps a plain NeweggConfigurationError for other baseUrl faults (%s)",
+    (baseUrl) => {
+      expect(configError(base({ baseUrl }))).not.toBeInstanceOf(NeweggBaseUrlNotAllowedError);
+    },
+  );
 
   it("still allows a custom https host with allowCustomBaseUrl: true", () => {
     const resolved = resolveConfig(

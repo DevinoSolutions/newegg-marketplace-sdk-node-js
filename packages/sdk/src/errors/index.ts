@@ -88,6 +88,19 @@ export class NeweggConfigurationError extends NeweggError {
   }
 }
 
+/**
+ * `baseUrl` names a host outside the default newegg.com allowlist and `allowCustomBaseUrl` is not
+ * set. Thrown only for that refusal (a missing trailing slash, an invalid URL or non-loopback
+ * `http` stay plain {@link NeweggConfigurationError}s). A {@link NeweggConfigurationError}
+ * (`code: "configuration"`) with a static message: the URL and host are never included.
+ */
+export class NeweggBaseUrlNotAllowedError extends NeweggConfigurationError {
+  constructor(message: string, init: NeweggErrorInit = {}) {
+    super(message, init);
+    this.name = "NeweggBaseUrlNotAllowedError";
+  }
+}
+
 export interface NeweggMarketplaceMismatchErrorInit extends NeweggErrorInit {
   /** The marketplace the client targets (`marketplace`), i.e. what the caller asked for. */
   expectedMarketplace: NeweggMarketplace;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { NeweggConfigurationError } from "@devino/newegg-marketplace-sdk";
 import {
   createNeweggMcpServer,
   loadMcpConfigFromEnv,
@@ -63,6 +64,24 @@ describe("NEWEGG_API_BASE_URL allowlist (T-6217)", () => {
     expect(message).toContain("NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL");
     for (const secret of Object.values(SENTINELS)) expect(message).not.toContain(secret);
     expect(message).not.toContain(new URL(url).hostname);
+  });
+
+  it("surfaces the original reason for other base URL faults, not the opt-in hint", () => {
+    for (const [url, reason] of [
+      ["https://api.newegg.com/marketplace", 'must end with "/"'],
+      ["http://evil.example/", "must use https"],
+    ] as const) {
+      let thrown: unknown;
+      try {
+        build({ NEWEGG_API_BASE_URL: url });
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(NeweggConfigurationError);
+      expect(thrown).not.toBeInstanceOf(McpConfigError);
+      expect((thrown as Error).message).toContain(reason);
+      expect((thrown as Error).message).not.toContain("NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL");
+    }
   });
 
   it("allows a custom host with NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL=true and warns once with the host only", async () => {

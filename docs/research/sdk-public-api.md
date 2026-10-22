@@ -2581,6 +2581,10 @@ export class NeweggConfigurationError extends NeweggError {}
 // the client's marketplace, actualMarketplace = the credentials'), and by the orders currency guard when a
 // whole page of orders is in the wrong marketplace's currency (actualMarketplace inferred, or undefined).
 // code === "configuration"; messages and toJSON carry marketplace names only, never credential values.
+// Thrown by createNeweggClient ONLY when baseUrl is outside the newegg.com allowlist and allowCustomBaseUrl is not
+// set (T-6217). A missing trailing "/", an invalid URL and non-loopback http stay plain NeweggConfigurationErrors.
+// code === "configuration"; the message is static and never includes the URL or host.
+export class NeweggBaseUrlNotAllowedError extends NeweggConfigurationError {}
 export class NeweggMarketplaceMismatchError extends NeweggConfigurationError {
   readonly expectedMarketplace: NeweggMarketplace;
   readonly actualMarketplace?: NeweggMarketplace;

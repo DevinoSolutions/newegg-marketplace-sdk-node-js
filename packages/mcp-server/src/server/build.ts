@@ -6,7 +6,11 @@
 import { type z } from "zod";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
-import { createNeweggClient, NeweggConfigurationError } from "@devino/newegg-marketplace-sdk";
+import {
+  createNeweggClient,
+  NeweggBaseUrlNotAllowedError,
+  NeweggConfigurationError,
+} from "@devino/newegg-marketplace-sdk";
 import type {
   NeweggClient,
   NeweggClientConfig,
@@ -199,16 +203,12 @@ function createClientFromConfig(
   try {
     return createNeweggClient(clientConfig);
   } catch (err) {
-    if (
-      err instanceof NeweggConfigurationError &&
-      config.baseUrl !== undefined &&
-      config.allowCustomBaseUrl !== true &&
-      err.message.includes('"baseUrl"')
-    ) {
-      // Name the env var; the SDK message names only its own field. No values are echoed.
+    if (err instanceof NeweggBaseUrlNotAllowedError) {
+      // Name the env var; the SDK message is static and names only its own field. No values echoed.
       throw new McpConfigError(
         "NEWEGG_API_BASE_URL must be an https newegg.com host (or http loopback); " +
           "set NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL=true to use another https host.",
+        { cause: err },
       );
     }
     throw err;

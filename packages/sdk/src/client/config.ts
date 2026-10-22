@@ -8,7 +8,11 @@ import type {
   ReportFileFtpOptions,
   RetryOptions,
 } from "../types.js";
-import { NeweggConfigurationError, NeweggMarketplaceMismatchError } from "../errors/index.js";
+import {
+  NeweggBaseUrlNotAllowedError,
+  NeweggConfigurationError,
+  NeweggMarketplaceMismatchError,
+} from "../errors/index.js";
 import { noopLogger } from "../logging/index.js";
 import { InMemoryRateLimitStore } from "../rate-limit/index.js";
 import { InMemoryOperationStore } from "../operation-store/index.js";
@@ -137,7 +141,7 @@ function resolveBaseUrl(raw: string | undefined, allowCustom: boolean, logger: N
   // Judged on the parsed hostname: `https://newegg.com@evil.example/` has hostname evil.example.
   if (httpsOk && !isNeweggHost(url.hostname)) {
     if (!allowCustom) {
-      fail(
+      throw new NeweggBaseUrlNotAllowedError(
         'Configuration field "baseUrl" must be a newegg.com host (API keys are sent to it); set "allowCustomBaseUrl: true" to use another https host.',
       );
     }
