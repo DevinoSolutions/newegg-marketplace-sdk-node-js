@@ -29,6 +29,14 @@ An injectable `OperationStore` records `{state: submitting|submitted|failed, pay
 requestIds}` around every feed submission so distributed callers can build dedup ledgers;
 `InMemoryOperationStore` ships for tests/single-process use.
 
+## Addendum (2026-10-22, T-6212): label creates
+
+The same ledger idea guards the non-idempotent shipping-label create, which spends money per call. The
+SDK records a create in the `OperationStore` per (marketplace, order) before dispatch (`submitting`),
+settles it `submitted` or `failed` (provably unsent) and leaves an indeterminate one at `submitting`;
+a new create is refused while such a record is under 24 h old, unless the caller names the prior attempt
+after verifying the order (contracts §23.5).
+
 ## Consequences
 
 No silent double feeds; callers get a machine-usable recovery path; absolute-assignment

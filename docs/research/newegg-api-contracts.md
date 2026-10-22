@@ -3733,6 +3733,20 @@ reprint to fetch the label instead of buying another). The estimate goes through
 path (`HttpClient.requestOnce`): one request, no retry, errors mapped. There is no void / refund-a-label
 operation in the documented API.
 
+**Duplicate-purchase ledger (T-6212).** The documented API has no read that lists the labels of an order (no
+"get labels" operation; the only trace of a bought label is the order itself: a shipped status and a
+`PackageInfoList` tracking number in Get Order Information, §10), so the SDK cannot ask Newegg whether a
+label exists. It therefore keeps its own per-order ledger in the injectable `OperationStore` (ADR 0004) under
+`label-create:<marketplace>:<orderNumber>`: written `submitting` before the POST is dispatched, left there
+when the outcome is unknown (timeout, reset, 5xx, caller abort after dispatch, a 2xx with no package),
+`submitted` on a package-level success, `failed` only when nothing was bought (never dispatched, an HTTP 4xx
+other than 408, or every package refused with a stated error). A `submitting` or `submitted` record younger
+than 24 h refuses a new create (`LabelCreateGuardError`, nothing sent; preview blocker plus `priorAttempt`)
+even when the order still reads unshipped; the operator verifies the order with the read above, then passes the
+attempt id back as `acknowledgePriorAttemptId`, which is refused while the order lists a package (§23.6
+item 10). In MCP the ledger is per server process (in memory) and the tools surface it as
+`label_create_already_attempted`.
+
 **Cost ceiling (MCP only, on by default).** `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100; a plain decimal above 0 and at
 most 99,999.99, in the marketplace currency: USD on us/b2b, CAD on ca, and the number is compared as-is, with
 no currency conversion) mirrors `NEWEGG_MCP_MAX_REFUND_AMOUNT`. Leaving it unset or empty keeps the default;
@@ -3758,6 +3772,9 @@ blocked as an undeterminable cost. To recover a label after an indeterminate cre
 7. The `NeweggAPIRequest` + `SellerID` request envelope (other service-management writes in this repo send none); only the page samples show it.
 8. Rate-limit keying per operation and the 1,000/hr figure (never read from a live header).
 9. Every response shape (`ProcessResult` values, `Rate`, `EstimatedRate`) is from the page samples and has never been seen live.
+10. How long Newegg's order status lags a bought label (the premise of the create ledger, T-6212), and whether a
+    bought label shows up as a `PackageInfoList` entry at once. Unmeasured: buying a label to find out is
+    forbidden here, so the ledger assumes the lag can exist and treats an unknown outcome as a possible purchase.
 
 ## 24. Order Management — Get Additional Order Information (read)
 

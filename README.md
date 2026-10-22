@@ -260,7 +260,12 @@ if (plan.blockers.length === 0) await client.shippingLabels.create(plan.normaliz
 the seller's Newegg account and ships the order; `reprint` re-issues a label of a shipped order and is
 treated as billable. Both are non-idempotent POSTs with a read-only `preview*` twin, refuse to send on any
 blocker, and on an ambiguous failure throw `IndeterminateOrderWriteError` without resending (check the order
-and use `reprint`, never create a second label). `estimate` is a quote ("for estimation only"); because that is only the docs' word, it is sent once and never retried. The seller must
+and use `reprint`, never create a second label). Each `create` is also recorded per order in the client's
+`OperationStore` before it is dispatched, and a new `create` for an order whose earlier one was
+indeterminate or succeeded throws `LabelCreateGuardError` (nothing sent) for 24 hours, even when Newegg's
+order status still reads unshipped; after verifying the order, pass the error's `attempt.attemptId` as
+`acknowledgePriorAttemptId` to `previewCreate` / `create`. The MCP tools apply the same guard
+(`label_create_already_attempted`; contracts §23.5). `estimate` is a quote ("for estimation only"); because that is only the docs' word, it is sent once and never retried. The seller must
 have signed up for the service in the Seller Portal (error `SL027`). The MCP exposes
 `newegg_shipping_label_estimate` and the four preview / apply tools only with
 `NEWEGG_MCP_ALLOW_WRITES=true`. A spend ceiling, `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100 in the marketplace
