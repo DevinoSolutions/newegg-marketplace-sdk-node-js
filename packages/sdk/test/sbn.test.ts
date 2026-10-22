@@ -626,3 +626,44 @@ describe("sbn on Newegg Canada", () => {
     },
   );
 });
+
+describe("sbn.listShipments criteria dates are strict Pacific forms (T-5962 review)", () => {
+  const REJECTED = [
+    "1",
+    "20260901",
+    "Sept 1",
+    "-1",
+    "2026-02-31 00:00:00",
+    "2026-13-01 00:00:00",
+    "2026-09-01 99:99:99",
+    "13/45/2026 10:00:00",
+    "2026-09-01T00:00:00",
+    "09/01/2026",
+  ];
+
+  it.each(REJECTED)("rejects %j before sending", async (value) => {
+    const { client, calls } = makeClient("us", []);
+    for (const key of ["updatedFrom", "updatedTo"] as const) {
+      const error = await client.sbn.listShipments({ [key]: value }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(NeweggValidationError);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each(["2026-09-01 08:30:00", "2026-09-01 08:30", "09/01/2026 08:30:00", "2026-09-01"])(
+    "sends %j verbatim",
+    async (value) => {
+      const { client, calls } = makeClient(
+        "us",
+        route("PUT", paths.sbnShipmentList, () => ({
+          status: 200,
+          body: wrapped({ ShipmentList: [] }, "GetShipmentListResponse"),
+        })),
+      );
+      await client.sbn.listShipments({ updatedFrom: value, updatedTo: value });
+      expect(calls[0]!.bodyJson).toMatchObject({
+        RequestBody: { LastUpdateDateFrom: value, LastUpdateDateTo: value },
+      });
+    },
+  );
+});

@@ -160,4 +160,30 @@ describe("rma / refund / sbn date input is Pacific wall clock, independent of th
       });
     });
   }
+
+  describe("forms the SDK rejects are refused before any request, like the orders tool", () => {
+    for (const c of CASES) {
+      it(`${c.tool} refuses a zone-less ISO T form and a bare MM/DD/YYYY`, async () => {
+        for (const bad of ["2026-09-01T00:00:00", "09/01/2026"]) {
+          await withZone("Asia/Tokyo", async () => {
+            const harness = await startHarness({
+              ...(c.env ? { env: c.env } : {}),
+              routes: [route(c.method, c.path)],
+            });
+            try {
+              const result = await callTool(harness.mcp, c.tool, {
+                ...c.args,
+                [c.fromArg]: bad,
+                [c.toArg]: bad,
+              });
+              expect(result.isError, `${c.tool} ${bad}`).toBe(true);
+              expect(harness.calls, `${c.tool} ${bad}`).toHaveLength(0);
+            } finally {
+              await harness.close();
+            }
+          });
+        }
+      });
+    }
+  });
 });

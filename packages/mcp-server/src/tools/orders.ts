@@ -192,7 +192,7 @@ const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
  * bare `YYYY-MM-DD` is a Pacific calendar day: it expands to `00:00:00` (`edge` "start", the default)
  * or `23:59:59` (`edge` "end", for an upper bound). Any other zone-less string is a Pacific wall clock
  * and goes to the SDK untouched: parsing it with `new Date()` would read it in the MACHINE's zone and
- * shift the window on any non-Pacific host. The SDK validates the result and fails before any request.
+ * shift the window on any non-Pacific host. The SDK validates the result (a real Pacific date and time in a supported form) and fails before any request: the T form (2026-03-10T08:00:00) and MM/DD/YYYY without a time are rejected, not normalised.
  */
 export function toDateInput(
   value: string | undefined,
