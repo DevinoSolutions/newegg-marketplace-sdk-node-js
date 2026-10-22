@@ -4,6 +4,7 @@
  * serialization) from limits and HTTP settings so accidental logging of the config object can
  * never leak secrets. This module never imports the MCP SDK (ADR 0001).
  */
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { NeweggMarketplace } from "@devino/newegg-marketplace-sdk";
 
@@ -128,11 +129,15 @@ export interface McpServerConfig {
   /**
    * Opt-in (`NEWEGG_MCP_REPORT_FTPS=true`, exact literal): the built-in report file download uses
    * explicit FTPS (T-5668). Default is plain FTP: Newegg's server presents a self-signed
-   * certificate, so FTPS also needs `reportFtpsCertSha256` (`NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`,
-   * the SHA-256 fingerprint to trust). With FTPS on there is no fallback to clear text.
+   * certificate, so FTPS also needs `reportFtpsCa` (the certificate's PEM, read from
+   * `NEWEGG_MCP_REPORT_FTPS_CA_FILE`, so the chain validates) and `reportFtpsCertSha256`
+   * (`NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`, the fingerprint it must have). Certificate validation is
+   * never disabled. With FTPS on there is no fallback to clear text.
    */
   readonly reportFtps?: boolean;
   readonly reportFtpsCertSha256?: string;
+  /** PEM text of the certificate(s) trusted for the report FTPS handshake. */
+  readonly reportFtpsCa?: string;
   readonly credentials: McpCredentials;
   readonly limits: McpLimits;
   readonly http: McpHttpConfig;
@@ -374,6 +379,25 @@ function urlEnv(name: string) {
       }
       return trimmed;
     });
+}
+
+/**
+ * The PEM text of `NEWEGG_MCP_REPORT_FTPS_CA_FILE`, or undefined when unset/blank. A missing,
+ * unreadable or non-PEM file refuses to start; the message names the variable, never the content.
+ */
+function readReportFtpsCa(path: string | undefined): string | undefined {
+  const trimmed = path?.trim();
+  if (trimmed === undefined || trimmed === "") return undefined;
+  let text: string;
+  try {
+    text = readFileSync(trimmed, "utf8");
+  } catch {
+    throw new McpConfigError("NEWEGG_MCP_REPORT_FTPS_CA_FILE cannot be read.");
+  }
+  if (!text.includes("-----BEGIN CERTIFICATE-----")) {
+    throw new McpConfigError("NEWEGG_MCP_REPORT_FTPS_CA_FILE must hold a PEM certificate.");
+  }
+  return text;
 }
 
 /**
@@ -661,6 +685,13 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     );
   }
 
+  const reportFtpsCa = readReportFtpsCa(env["NEWEGG_MCP_REPORT_FTPS_CA_FILE"]);
+  if (parsed.NEWEGG_MCP_REPORT_FTPS_CERT_SHA256 !== undefined && reportFtpsCa === undefined) {
+    throw new McpConfigError(
+      "NEWEGG_MCP_REPORT_FTPS_CERT_SHA256 needs NEWEGG_MCP_REPORT_FTPS_CA_FILE (the PEM of the pinned certificate): certificate validation is never disabled, so a self-signed certificate must be trusted explicitly.",
+    );
+  }
+
   const limits: McpLimits = {
     maxItemsPerOperation: parsed.NEWEGG_MCP_MAX_ITEMS_PER_OPERATION,
     previewTtlSeconds: parsed.NEWEGG_MCP_PREVIEW_TTL_SECONDS,
@@ -693,6 +724,7 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     allowWrites: parsed.NEWEGG_MCP_ALLOW_WRITES,
     reportFtps: parsed.NEWEGG_MCP_REPORT_FTPS,
     reportFtpsCertSha256: parsed.NEWEGG_MCP_REPORT_FTPS_CERT_SHA256,
+    ...(reportFtpsCa === undefined ? {} : { reportFtpsCa }),
     credentials,
     limits,
     http,

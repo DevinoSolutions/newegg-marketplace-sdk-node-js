@@ -9,8 +9,10 @@
  * server offers `AUTH TLS` but presents a self-signed Serv-U certificate (CN `ftp.Serv-U.com`), so
  * default verification cannot succeed against it; plain FTP therefore stays the default. With
  * `ftps` the control connection is upgraded with `AUTH TLS` BEFORE `USER`/`PASS` is sent, the
- * server is authenticated by the default trust store + host name, by `tlsCa`, or by a pinned
- * certificate fingerprint (`tlsPinnedCertSha256`), and the data channel is protected (`PROT P`).
+ * server is authenticated by the default trust store + host name, or, for a self-signed server
+ * certificate, by `tlsCa` (the certificate's PEM, which makes it its own trust anchor so the chain
+ * validates) together with a pinned fingerprint (`tlsPinnedCertSha256`) that replaces the host
+ * name check; certificate validation is never disabled. The data channel is protected (`PROT P`).
  * There is never a silent fallback to plain FTP: with `ftps` a server that does not offer TLS, or
  * whose certificate does not verify, fails the download before any credential is sent. The URL
  * port is restricted to {@link DEFAULT_ALLOWED_PORTS} so a hostile report response cannot aim the
@@ -54,12 +56,16 @@ export interface FtpDownloadOptions {
    * fallback in either direction: with `ftps` a failed upgrade fails the download.
    */
   ftps?: boolean;
-  /** FTPS: extra trusted CA certificate(s) (PEM) on top of Node's defaults. */
+  /**
+   * FTPS: extra trusted CA certificate(s) (PEM) on top of Node's defaults. For a self-signed
+   * server certificate pass that certificate's own PEM: it then validates as its own anchor.
+   */
   tlsCa?: string | Buffer | ReadonlyArray<string | Buffer>;
   /**
-   * FTPS: authenticate the server by the SHA-256 fingerprint of its certificate (hex, colons
-   * optional) instead of a CA chain and host name. Needed for Newegg's self-signed certificate.
-   * The first fingerprint has to be obtained out of band; a changed certificate fails closed.
+   * FTPS: accept only the certificate with this SHA-256 fingerprint (hex, colons optional), in
+   * place of the host name check. The chain must still validate, so a self-signed certificate
+   * (Newegg's) also needs its PEM in `tlsCa`. The fingerprint has to be obtained out of band; a
+   * changed certificate fails closed.
    */
   tlsPinnedCertSha256?: string;
 }
@@ -230,10 +236,19 @@ interface TlsSettings {
 
 const normalizeFingerprint = (value: string): string => value.replace(/:/g, "").toUpperCase();
 
-/** True when `socket`'s peer certificate is the pinned one. */
-function matchesPin(socket: tls.TLSSocket, pin: string): boolean {
-  const presented = socket.getPeerCertificate().fingerprint256;
-  return typeof presented === "string" && normalizeFingerprint(presented) === pin;
+/**
+ * Host name check for pin mode: the certificate is accepted only when its SHA-256 fingerprint is
+ * the pinned one. Node calls it after the chain validated, and not at all for a resumed session
+ * (the data channel resumes the control session, which already passed this check).
+ */
+function pinnedIdentity(pin: string): NonNullable<tls.ConnectionOptions["checkServerIdentity"]> {
+  return (_host, cert) => {
+    const presented = cert.fingerprint256;
+    if (typeof presented === "string" && normalizeFingerprint(presented) === pin) return undefined;
+    return Object.assign(new Error("certificate does not match the pin"), {
+      code: "CERT_PIN_MISMATCH",
+    });
+  };
 }
 
 function extraCa(ca: NonNullable<FtpDownloadOptions["tlsCa"]>): Array<string | Buffer> {
@@ -242,10 +257,10 @@ function extraCa(ca: NonNullable<FtpDownloadOptions["tlsCa"]>): Array<string | B
 
 function tlsOptions(settings: TlsSettings, session?: Buffer): tls.ConnectionOptions {
   return {
-    // Without a pin, certificate verification stays ON (Node default); only trust anchors are
-    // added. With a pin the chain cannot validate (self-signed), so the fingerprint is checked
-    // right after the handshake instead (see `verifyPin`), before anything is sent.
-    ...(settings.pin === undefined ? {} : { rejectUnauthorized: false }),
+    // Certificate validation is ON in every mode (Node's default is never overridden). A pin
+    // only replaces the host name comparison; the chain still has to validate, which for a
+    // self-signed certificate means its own PEM is in `ca`.
+    ...(settings.pin === undefined ? {} : { checkServerIdentity: pinnedIdentity(settings.pin) }),
     host: settings.host,
     // SNI must not be an IP literal (RFC 6066); verification still checks the IP SAN.
     ...(net.isIP(settings.host) === 0 ? { servername: settings.host } : {}),
@@ -257,30 +272,11 @@ function tlsOptions(settings: TlsSettings, session?: Buffer): tls.ConnectionOpti
   };
 }
 
-/** Destroys `secure` with an error when a pinned certificate is not the one presented. */
-function verifyPin(secure: tls.TLSSocket, pin: string | undefined): boolean {
-  if (pin === undefined) return true;
-  // A resumed session (the data channel reusing the control session) presents no certificate: the
-  // resumption secret already proves it is the server whose pinned certificate the control
-  // connection verified.
-  if (secure.isSessionReused() || matchesPin(secure, pin)) return true;
-  secure.destroy(
-    Object.assign(new Error("certificate does not match the pin"), { code: "CERT_PIN_MISMATCH" }),
-  );
-  return false;
-}
-
 /** Wraps an established TCP socket in TLS and resolves once the handshake verified the peer. */
-function upgrade(
-  socket: net.Socket,
-  options: tls.ConnectionOptions,
-  pin: string | undefined,
-): Promise<tls.TLSSocket> {
+function upgrade(socket: net.Socket, options: tls.ConnectionOptions): Promise<tls.TLSSocket> {
   return new Promise<tls.TLSSocket>((resolve, reject) => {
     const secure = tls.connect({ ...options, socket });
-    secure.once("secureConnect", () => {
-      if (verifyPin(secure, pin)) resolve(secure);
-    });
+    secure.once("secureConnect", () => resolve(secure));
     secure.once("error", reject);
   });
 }
@@ -438,7 +434,7 @@ export async function downloadViaFtp(
       }
       if (!control.detach()) throw fail("TLS upgrade (unexpected data before the handshake)");
       try {
-        controlTls = await upgrade(controlSocket, tlsOptions(settings), settings.pin);
+        controlTls = await upgrade(controlSocket, tlsOptions(settings));
       } catch (error) {
         throw fail("TLS handshake (certificate or protocol error)", undefined, error, {
           ...tlsErrorCode(error),
@@ -506,8 +502,9 @@ export async function downloadViaFtp(
       sockets.push(secureData);
       const state: DataTlsState = { handshaken: false };
       dataTls = state;
+      // With validation on, `secureConnect` only fires for a verified peer or a resumed session.
       secureData.once("secureConnect", () => {
-        state.handshaken = verifyPin(secureData, settings.pin);
+        state.handshaken = true;
       });
       transferSocket = secureData;
     }

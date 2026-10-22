@@ -1,7 +1,11 @@
 import { X509Certificate } from "node:crypto";
+import { readFileSync } from "node:fs";
 import net from "node:net";
+import { dirname, resolve } from "node:path";
 import tls from "node:tls";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { createNeweggClient } from "../src/index.js";
 import { NeweggApiError } from "../src/errors/index.js";
 import { downloadViaFtp } from "../src/reportmgmt/ftp.js";
 import { makeTlsFixture, type TlsFixture } from "./tls-fixture.js";
@@ -282,10 +286,73 @@ describe("FTP report download is not plaintext and not port-hopping (T-5668 / L4
       allowedHost: ANY_HOST,
       allowedPorts: [stub.port],
       ftps: true,
+      tlsCa: FIXTURE.cert,
       tlsPinnedCertSha256: pin,
     });
     expect(Buffer.from(bytes).toString()).toBe("pinned rows");
     expect(stub.dataChannelSecure).toBe(true);
+  });
+
+  it("keeps certificate validation on in pin mode: the pinned PEM is needed in tlsCa", async () => {
+    const stub = await startStub({ tls: FIXTURE, files: { "x.csv": Buffer.from("rows") } });
+    const error = await downloadViaFtp(`ftp://user:pw@127.0.0.1:${stub.port}/x.csv`, {
+      maxBytes: 1024,
+      timeoutMs: 5000,
+      allowedHost: ANY_HOST,
+      allowedPorts: [stub.port],
+      ftps: true,
+      tlsPinnedCertSha256: new X509Certificate(FIXTURE.cert).fingerprint256,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect((error as Error).message).toMatch(/TLS handshake/);
+    expect(verbs(stub)).not.toContain("USER");
+  });
+
+  it("rejects a certificate that matches neither the pin nor the trusted CA", async () => {
+    const stub = await startStub({ tls: FIXTURE, files: { "x.csv": Buffer.from("rows") } });
+    const other = makeTlsFixture();
+    // The pin is the server's, but the chain is anchored on an unrelated certificate.
+    const error = await downloadViaFtp(`ftp://user:pw@127.0.0.1:${stub.port}/x.csv`, {
+      maxBytes: 1024,
+      timeoutMs: 5000,
+      allowedHost: ANY_HOST,
+      allowedPorts: [stub.port],
+      ftps: true,
+      tlsCa: other.cert,
+      tlsPinnedCertSha256: new X509Certificate(FIXTURE.cert).fingerprint256,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect((error as Error).message).toMatch(/TLS handshake/);
+    expect(verbs(stub)).not.toContain("USER");
+    expect(verbs(stub)).not.toContain("PASS");
+  });
+
+  it("never turns certificate validation off in the library source", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const files = [
+      resolve(here, "../src/reportmgmt/ftp.ts"),
+      resolve(here, "../src/reports/api.ts"),
+      resolve(here, "../src/client/config.ts"),
+    ];
+    for (const file of files) {
+      expect(readFileSync(file, "utf8")).not.toMatch(/rejectUnauthorized\s*:\s*false/);
+    }
+  });
+
+  it("refuses a client config that pins a certificate without trusting its PEM", () => {
+    const base = { sellerId: "S", apiKey: "k", secretKey: "s", marketplace: "ca" as const };
+    expect(() =>
+      createNeweggClient({
+        ...base,
+        reportFileFtp: { ftps: true, tlsPinnedCertSha256: "ab".repeat(32) },
+      }),
+    ).toThrow(/tlsCa/);
+    expect(() =>
+      createNeweggClient({
+        ...base,
+        reportFileFtp: { ftps: true, tlsPinnedCertSha256: "ab".repeat(32), tlsCa: FIXTURE.cert },
+      }),
+    ).not.toThrow();
   });
 
   it("rejects a certificate that does not match the pin before any credentials are sent", async () => {
@@ -296,6 +363,7 @@ describe("FTP report download is not plaintext and not port-hopping (T-5668 / L4
       allowedHost: ANY_HOST,
       allowedPorts: [stub.port],
       ftps: true,
+      tlsCa: FIXTURE.cert,
       tlsPinnedCertSha256: "00".repeat(32),
     }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(NeweggApiError);

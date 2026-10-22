@@ -325,8 +325,9 @@ daily reports return an FTP URL with embedded credentials; the SDK downloads the
 only) and never exposes or logs that URL. The transfer is **plain FTP by default**: Newegg's report
 server offers `AUTH TLS` but presents a self-signed certificate, so the credentials and the report data
 cross the network in clear text unless you opt in to **explicit FTPS with a pinned certificate**
-(`reportFileFtp: { ftps: true, tlsPinnedCertSha256 }`, MCP `NEWEGG_MCP_REPORT_FTPS=true` +
-`NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`; contracts §17.5 has the fingerprint and the live evidence). Be clear
+(`reportFileFtp: { ftps: true, tlsCa, tlsPinnedCertSha256 }`, MCP `NEWEGG_MCP_REPORT_FTPS=true` +
+`NEWEGG_MCP_REPORT_FTPS_CA_FILE` + `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`; certificate validation is never
+disabled; contracts §17.5 has the certificate PEM, the fingerprint and the live evidence). Be clear
 about what the pin buys: the certificate is Serv-U's stock self-signed one, whose key is probably shared by other Serv-U installs, so the pin stops passive eavesdropping, not an active man-in-the-middle. FTPS also requires the server to answer `SIZE`, because that is the only
 truncation check Node leaves us. Daily Price exists on Newegg.com only; on B2B/CA use the Daily
 Inventory report, which carries price and activation columns. Details: contracts §17.
@@ -516,8 +517,8 @@ Seller ID or a key from another platform is the usual cause), see
 
 > **Breaking (0.1.x, T-5665 to T-5675): security hardening.** (1) The report file download now only
 > connects to URL port 21 (`reportFileFtp.allowedPorts` widens it) and can use **explicit FTPS**, opt-in:
-> `reportFileFtp: { ftps: true, tlsPinnedCertSha256 }` (SDK) or `NEWEGG_MCP_REPORT_FTPS=true` +
-> `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256` (MCP). It is opt-in because Newegg's server certificate is
+> `reportFileFtp: { ftps: true, tlsCa, tlsPinnedCertSha256 }` (SDK) or `NEWEGG_MCP_REPORT_FTPS=true` +
+> `NEWEGG_MCP_REPORT_FTPS_CA_FILE` + `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256` (MCP). It is opt-in because Newegg's server certificate is
 > self-signed; the default stays plain FTP. (2) `NEWEGG_MCP_HTTP_BEARER_TOKEN`
 > must be **at least 32 characters with at least 8 different ones**; a weaker token makes the server refuse to
 > start (generate one with
@@ -573,7 +574,8 @@ Seller ID or a key from another platform is the usual cause), see
 | `NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS`      | `1800`                   | A session idle this long is closed.                                                                                                                                                                                                                                                                                         |
 | `NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY`          | unset (`false`)          | Exactly `true` confirms a TLS-terminating proxy fronts the plain-HTTP listener; otherwise a non-loopback bind logs a warning.                                                                                                                                                                                               |
 | `NEWEGG_MCP_REPORT_FTPS`                    | unset (`false`)          | Exactly `true` makes the report file download use explicit FTPS (no fallback to clear text).                                                                                                                                                                                                                                |
-| `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`        | empty                    | SHA-256 fingerprint of the server certificate to trust for FTPS (Newegg's is self-signed).                                                                                                                                                                                                                                  |
+| `NEWEGG_MCP_REPORT_FTPS_CA_FILE`            | empty                    | Path to the PEM of the server certificate to trust for FTPS (Newegg's is self-signed; contracts §17.5).                                                                                                                                                                                                                     |
+| `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`        | empty                    | SHA-256 fingerprint the FTPS server certificate must have (needs the CA file).                                                                                                                                                                                                                                              |
 | `NEWEGG_MCP_HTTP_BEARER_TOKEN`              | empty                    | Bearer token, **at least 32 characters, 8 different**; **required** before binding a non-loopback host.                                                                                                                                                                                                                     |
 | `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`           | empty = same-origin only | Comma-separated allowed browser `Origin` values.                                                                                                                                                                                                                                                                            |
 | `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`             | empty                    | Comma-separated allowed `Host` values (`host[:port]`); loopback always allowed.                                                                                                                                                                                                                                             |

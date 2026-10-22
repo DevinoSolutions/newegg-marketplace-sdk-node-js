@@ -173,6 +173,7 @@ function createClientFromConfig(config: McpServerConfig, logger: Logger): Newegg
       ...(config.reportFtpsCertSha256 === undefined
         ? {}
         : { tlsPinnedCertSha256: config.reportFtpsCertSha256 }),
+      ...(config.reportFtpsCa === undefined ? {} : { tlsCa: config.reportFtpsCa }),
     };
   }
   if (config.baseUrl !== undefined) {

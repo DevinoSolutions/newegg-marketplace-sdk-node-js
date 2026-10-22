@@ -864,9 +864,9 @@ export type ReportFileDownloader = (
 // self-signed one, so pin it (contracts §17.5: the pin stops passive eavesdropping, probably not an active MITM).
 export interface ReportFileFtpOptions {
   ftps?: boolean; // opt in to explicit FTPS; off by default
-  tlsPinnedCertSha256?: string; // SHA-256 fingerprint (hex) to trust instead of a CA chain
+  tlsPinnedCertSha256?: string; // SHA-256 fingerprint (hex) the certificate must have; replaces the host name check; needs tlsCa
   allowedPorts?: number[]; // default [21]
-  tlsCa?: string | string[]; // extra trusted CA certificate(s), PEM; verification is never disabled
+  tlsCa?: string | string[]; // extra trusted CA certificate(s), PEM (the server's own PEM for a self-signed cert); verification is never disabled
 }
 
 export interface ReportSubmission {

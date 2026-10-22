@@ -120,8 +120,8 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
   `waitForRequest` and `waitForResult` (`ReportTimeoutError` carries the `requestId` so you
   continue instead of resubmitting; 100 submissions/hour). The file URL embeds credentials and
   is never exposed or logged. The download is plain FTP on port 21 by default; `reportFileFtp: { ftps:
-true, tlsPinnedCertSha256 }` opts in to explicit FTPS (Newegg's certificate is self-signed, so it is
-  pinned by fingerprint, which stops passive eavesdropping but probably not an active man-in-the-middle
+tlsCa, tlsPinnedCertSha256 }` opts in to explicit FTPS (Newegg's certificate is self-signed, so its PEM is
+  trusted through `tlsCa` and its fingerprint pinned; validation is never disabled; the pin protects which stops passive eavesdropping but probably not an active man-in-the-middle
   because Serv-U's stock certificate key is likely shared; contracts §17.5).
   Settlement reports wait up to 300 s by default (a Settlement Summary took ~170 s live); the daily
   file reports 120 s; pass `timeoutMs` to override.

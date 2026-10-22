@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 import { loadMcpConfigFromEnv, McpConfigError } from "../src/index.js";
 import { makeEnv } from "./helpers.js";
 
@@ -55,15 +58,66 @@ describe("report FTPS opt-in (T-5668)", () => {
     expect(loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_REPORT_FTPS: "true" })).reportFtps).toBe(true);
   });
 
+  const dir = mkdtempSync(join(tmpdir(), "ftps-ca-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const pem = ["-----BEGIN CERTIFICATE-----", "MIIBtestonly", "-----END CERTIFICATE-----", ""].join(
+    "\n",
+  );
+  const pemFile = join(dir, "server.pem");
+  writeFileSync(pemFile, pem);
+
   it("validates the pinned certificate fingerprint without echoing it", () => {
     const pin = "ab".repeat(32);
-    expect(
-      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: pin }))
-        .reportFtpsCertSha256,
-    ).toBe(pin);
+    const config = loadMcpConfigFromEnv(
+      makeEnv({
+        NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: pin,
+        NEWEGG_MCP_REPORT_FTPS_CA_FILE: pemFile,
+      }),
+    );
+    expect(config.reportFtpsCertSha256).toBe(pin);
+    expect(config.reportFtpsCa).toBe(pem);
     expect(() =>
-      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: "not-a-fingerprint" })),
+      loadMcpConfigFromEnv(
+        makeEnv({
+          NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: "not-a-fingerprint",
+          NEWEGG_MCP_REPORT_FTPS_CA_FILE: pemFile,
+        }),
+      ),
     ).toThrow(McpConfigError);
+  });
+
+  it("refuses a pin without the certificate PEM, since validation is never disabled", () => {
+    expect(() =>
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: "ab".repeat(32) })),
+    ).toThrow(/NEWEGG_MCP_REPORT_FTPS_CA_FILE/);
+  });
+
+  it("rejects an unreadable or non-PEM CA file without echoing its content", () => {
+    const junk = join(dir, "junk.txt");
+    writeFileSync(junk, "SECRET-LOOKING-CONTENT");
+    for (const path of [junk, join(dir, "missing.pem")]) {
+      let thrown: unknown;
+      try {
+        loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_REPORT_FTPS_CA_FILE: path }));
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(McpConfigError);
+      expect((thrown as Error).message).toContain("NEWEGG_MCP_REPORT_FTPS_CA_FILE");
+      expect((thrown as Error).message).not.toContain("SECRET-LOOKING-CONTENT");
+    }
+  });
+
+  it("exposes the PEM and the pin for the SDK client config", () => {
+    const config = loadMcpConfigFromEnv(
+      makeEnv({
+        NEWEGG_MCP_REPORT_FTPS: "true",
+        NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: "ab".repeat(32),
+        NEWEGG_MCP_REPORT_FTPS_CA_FILE: pemFile,
+      }),
+    );
+    expect(config.reportFtps).toBe(true);
+    expect([config.reportFtpsCertSha256, config.reportFtpsCa]).toEqual(["ab".repeat(32), pem]);
   });
 });
 

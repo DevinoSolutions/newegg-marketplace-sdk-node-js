@@ -209,8 +209,9 @@ Low and informational findings from the security audit, closed together. Each is
 - **Report FTP is port-pinned, bounded and FTPS-capable (T-5668, T-5669).** Only URL port 21 is used; the
   control channel is capped at 64 KiB per line and 256 KiB per reply. Explicit FTPS (`AUTH TLS` before
   `USER`/`PASS`, protected data channel, no fallback to clear text) is **opt-in**
-  (`NEWEGG_MCP_REPORT_FTPS=true` + `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`): Newegg's server offers it but
-  presents a self-signed certificate, so it can only be authenticated by pinning its fingerprint. The pin is
+  (`NEWEGG_MCP_REPORT_FTPS=true` + `NEWEGG_MCP_REPORT_FTPS_CA_FILE` + `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`):
+  Newegg's server offers it but presents a self-signed certificate, so it is authenticated by trusting that
+  certificate's PEM explicitly (certificate validation is never disabled) and pinning its fingerprint. The pin is
   weaker than it sounds: the certificate is Serv-U's stock one and its key is probably shared by other Serv-U
   installs (not verified), so the pin protects against passive eavesdropping, **not** against an active
   man-in-the-middle. A transfer is also compared with `SIZE` (required over FTPS) to catch truncation. Until

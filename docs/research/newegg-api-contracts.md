@@ -2137,9 +2137,40 @@ connection.` (credential-free probe), so the server offers explicit FTPS (RFC 42
   chained to a public root, so a CA/host-name check cannot succeed.
 - With the certificate **pinned by fingerprint**, one real Item Basic Information report was downloaded over
   FTPS end to end (`AUTH TLS`, `PBSZ 0`, `PROT P`, `PASV` data channel over TLS, `RETR`; 87 rows parsed). The
-  data channel resumes the control session (`isSessionReused()`), which presents no certificate; the pin is
-  therefore checked on the control connection. After the review fixes (SIZE check, data-channel error
-  wrapping) the same pinned download was repeated once, read-only, and again returned 87 rows.
+  data channel resumes the control session, which presents no certificate; Node does not repeat the identity
+  check for a resumed session, so the pin is enforced on the control connection. After the review fixes (SIZE
+  check, data-channel error wrapping) and again after certificate validation was made unconditional (below),
+  the same download was repeated read-only and returned 87 rows each time.
+- **The observed certificate (public, not a secret; observed 2026-10-22).** Save it as a `.pem` file and use it
+  as `tlsCa` / `NEWEGG_MCP_REPORT_FTPS_CA_FILE`; the fingerprint above is its SHA-256. To re-fetch and compare it
+  yourself: `openssl s_client -starttls ftp -connect mktpftpreport.newegg.com:21 -showcerts </dev/null` (copy the
+  first `BEGIN CERTIFICATE` block), then `openssl x509 -noout -fingerprint -sha256 -in server.pem`.
+
+```
+-----BEGIN CERTIFICATE-----
+MIIDnzCCAoegAwIBAgIRAJtfHbElHQJeV1WXpubiDt8wDQYJKoZIhvcNAQELBQAw
+gYoxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEPMA0GA1UEBwwGQXVzdGlu
+MSIwIAYDVQQKDBlTb2xhcldpbmRzIFdvcmxkd2lkZSwgTExDMR0wGwYDVQQLDBRT
+b2Z0d2FyZSBEZXZlbG9wbWVudDEXMBUGA1UEAwwOZnRwLlNlcnYtVS5jb20wHhcN
+MjYwMzA1MDAxNDQ5WhcNMzEwMzA1MDAxNDQ5WjCBijELMAkGA1UEBhMCVVMxDjAM
+BgNVBAgMBVRleGFzMQ8wDQYDVQQHDAZBdXN0aW4xIjAgBgNVBAoMGVNvbGFyV2lu
+ZHMgV29ybGR3aWRlLCBMTEMxHTAbBgNVBAsMFFNvZnR3YXJlIERldmVsb3BtZW50
+MRcwFQYDVQQDDA5mdHAuU2Vydi1VLmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEP
+ADCCAQoCggEBAO/LShx/j/Maz3RO1J5k5Lw52GwfG3q3pCyUQI1cC6PwFP5d7W9L
+/IlQ4mBsbWosqbHmlBVMgUdof9us1sjbUAKuwWt3ReghUk/CM3Eq7j42kKQwAqOv
+mVLENN2wqmNzjUWU9+46/AHbVXShTcaea/2NiuTbYIGTWfzExxSNF44gFNd8BsfR
+Y2WNT3pa0ATA2e+2oOxx86rZJIAZpSIvoGFzE6lxTt8o7qx1mGBXFGKmQgeToQoW
+jngqyeakroZbO++C/hgKIzI+GCNGDxZrFU2UCbzfQ0mo6u3EnxW4ssCteRGPNSgc
+Ghsr//zPKYT9gAL8sBoXQKWsjV2blRo5WHsCAwEAATANBgkqhkiG9w0BAQsFAAOC
+AQEAtjJyxqtIOUs5DurX6xMVI/v05H9G/nzY1T/WmQ54F7F2OJ3BGYfl1sZPNO+5
+IhEVrLTxk1UI93I2o7aHRheTudHBK7/XxAVSHhkz3u9v9EqC5bUp0aO50aiLtXUy
+7oksut3CULw1NbLfVbJ4jCHywd/JbBqT+5hIO08ZjBoK5OHzt5Gav/zGcHNGmwGx
+SANN7FSOcQugDIdFtJj9GhXJrmRVcKj8IhUZfrjuA4g7e/zySz4sOvDzIRf01bh5
+QOfmkvwPl6pP2w9BTVvmQ1MLxmq2UNuW+hhL5o05x5IRXfkE7W/vBCXYjjDN0yIM
+jWP74eRe+m6MkGm3rM6BSTJ/0g==
+-----END CERTIFICATE-----
+```
+
 - **What the pin proves.** The certificate is Serv-U's stock self-signed certificate (`CN=ftp.Serv-U.com`),
   not one Newegg issued for its host. **ASSUMPTION (not verified): the private key of that stock certificate
   is shared by other Serv-U installs.** If so, anyone running Serv-U can present the same certificate, so the
@@ -2148,11 +2179,16 @@ connection.` (credential-free probe), so the server offers explicit FTPS (RFC 42
   own host name, or a Newegg-provided fingerprint, would be needed for that; ask Newegg.
 
 Because default verification cannot succeed, **plain FTP stays the default** and FTPS is opt-in
-(`NeweggClientConfig.reportFileFtp = { ftps: true, tlsPinnedCertSha256: "<hex>" }`; MCP
-`NEWEGG_MCP_REPORT_FTPS=true` + `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`). With `ftps` there is no fallback: a server
+(`NeweggClientConfig.reportFileFtp = { ftps: true, tlsCa: <PEM below>, tlsPinnedCertSha256: "<hex>" }`; MCP
+`NEWEGG_MCP_REPORT_FTPS=true` + `NEWEGG_MCP_REPORT_FTPS_CA_FILE=<path to the PEM>` +
+`NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`). **Certificate validation is never disabled** (no
+`rejectUnauthorized: false` anywhere): the self-signed certificate is trusted explicitly as its own anchor
+through `tlsCa`, so the chain validates, and the pin replaces only the host name comparison (a
+`checkServerIdentity` that accepts the certificate only when its SHA-256 fingerprint is the pinned one). A
+pin without `tlsCa` is a configuration error. With `ftps` there is no fallback: a server
 that does not answer `234` fails the download with nothing sent (`details.stage = "TLS upgrade (server does
 not offer FTPS, nothing was sent)"`), and a certificate that is neither trusted (`tlsCa` / default store) nor
-the pinned one fails it before `USER`/`PASS` (`details.stage = "TLS handshake (certificate or protocol
+the pinned one (or whose chain does not validate against `tlsCa`) fails it before `USER`/`PASS` (`details.stage = "TLS handshake (certificate or protocol
 error)"`, `details.tlsError`). A failed data-channel handshake or pin check is a `NeweggApiError` with
 `details.stage = "data channel TLS (certificate or protocol error)"`, and a data channel that ends before
 its handshake completed is `"data channel TLS (closed before the handshake completed)"`. The fingerprint has to be obtained out of band; a
