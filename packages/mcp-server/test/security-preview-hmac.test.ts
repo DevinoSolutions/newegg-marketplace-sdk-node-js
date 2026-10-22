@@ -7,6 +7,7 @@ import {
 } from "../src/index.js";
 import {
   hashInventoryPreview,
+  hashItemsPreview,
   hashLabelPreview,
   hashServicePreview,
   previewHashMatches,
@@ -252,5 +253,111 @@ describe("pricing apply tool description", () => {
     } finally {
       await harness.close();
     }
+  });
+});
+
+// T-6215: the MAC is taken over a key-sorted canonical form, so a store that does not keep object
+// key order (Postgres jsonb, some document stores) does not turn a good record into
+// preview_tampered, while any value change still does.
+describe("the MAC ignores object key order (T-6215)", () => {
+  const key = Buffer.from(KEY_A, "utf8");
+  const expiresAt = new Date("2026-01-01T00:10:00Z");
+  const seal: PreviewSeal = { key, previewId: "p-1", sessionId: "s-1", expiresAt };
+  const base = {
+    previewId: "p-1",
+    sessionId: "s-1",
+    marketplace: "ca",
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+    expiresAt,
+  } as const;
+
+  const input = {
+    orderNumber: "900000002",
+    shipFrom: { city: "Testville", stateCode: "ON", zipCode: "M5V 2T6" },
+    packages: [{ weightLb: 3.5, items: [{ sellerPartNumber: "SKU", quantity: 2 }] }],
+  };
+  const reordered = {
+    packages: [{ items: [{ quantity: 2, sellerPartNumber: "SKU" }], weightLb: 3.5 }],
+    shipFrom: { zipCode: "M5V 2T6", stateCode: "ON", city: "Testville" },
+    orderNumber: "900000002",
+  };
+
+  const label = (hash: string, recordInput: unknown): PreviewRecord =>
+    ({
+      ...base,
+      kind: "shippingLabelCreate",
+      hash,
+      input: recordInput,
+      costCents: 1250,
+    }) as unknown as PreviewRecord;
+
+  it("a label record whose nested input keys were reordered still verifies", () => {
+    const hash = hashLabelPreview(seal, "shippingLabelCreate", "ca", input, 1250);
+    expect(previewHashMatches(key, label(hash, reordered))).toBe(true);
+  });
+
+  it("a changed value is still refused, at any depth", () => {
+    const hash = hashLabelPreview(seal, "shippingLabelCreate", "ca", input, 1250);
+    const deep = structuredClone(reordered);
+    const item = deep.packages[0]?.items[0];
+    if (item === undefined) throw new Error("fixture");
+    item.quantity = 3;
+    expect(previewHashMatches(key, label(hash, deep))).toBe(false);
+  });
+
+  it("array order still counts", () => {
+    const twoItems = (order: string[]) => ({
+      packages: [
+        {
+          items: order.map((sellerPartNumber) => ({ sellerPartNumber, quantity: 1 })),
+        },
+      ],
+    });
+    const hash = hashLabelPreview(seal, "shippingLabelCreate", "ca", twoItems(["A", "B"]), 1250);
+    expect(previewHashMatches(key, label(hash, twoItems(["A", "B"])))).toBe(true);
+    expect(previewHashMatches(key, label(hash, twoItems(["B", "A"])))).toBe(false);
+  });
+
+  it("volume-discount items with reordered tier keys still verify, a changed price does not", () => {
+    const items = [
+      {
+        neweggItemNumber: "9SIAFAKE0000001",
+        sellerPartNumber: "FAKE-SKU-1",
+        tiers: [{ quantity: 5, sellingPrice: 95.5, freeShipping: true }],
+      },
+    ];
+    const hash = hashItemsPreview(seal, "volumeDiscountUpdate", "ca", items as never);
+    const record = (recordItems: unknown): PreviewRecord =>
+      ({ ...base, kind: "volumeDiscountUpdate", hash, items: recordItems }) as PreviewRecord;
+    const reorderedItems = [
+      {
+        tiers: [{ freeShipping: true, sellingPrice: 95.5, quantity: 5 }],
+        sellerPartNumber: "FAKE-SKU-1",
+        neweggItemNumber: "9SIAFAKE0000001",
+      },
+    ];
+    expect(previewHashMatches(key, record(reorderedItems))).toBe(true);
+    expect(
+      previewHashMatches(
+        key,
+        record([
+          { ...reorderedItems[0], tiers: [{ freeShipping: true, sellingPrice: 1, quantity: 5 }] },
+        ]),
+      ),
+    ).toBe(false);
+  });
+
+  it("treats an absent property like JSON does, and keeps a null distinct", () => {
+    const hash = hashServicePreview(seal, "courtesyRefundIssue", "ca", { amount: 5 }, 500);
+    const record = (recordInput: unknown): PreviewRecord =>
+      ({
+        ...base,
+        kind: "courtesyRefundIssue",
+        hash,
+        input: recordInput,
+        refundCents: 500,
+      }) as PreviewRecord;
+    expect(previewHashMatches(key, record({ amount: 5, note: undefined }))).toBe(true);
+    expect(previewHashMatches(key, record({ amount: 5, note: null }))).toBe(false);
   });
 });

@@ -337,7 +337,7 @@ describe("a trivially weak bearer token is refused at startup (T-5672 / L8)", ()
     const weak = "abcdefghijk".repeat(5);
     const error = await start(httpConfigWith({ bearerToken: weak })).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("different characters");
+    expect((error as Error).message).toContain("predictable");
     expect((error as Error).message).not.toContain(weak);
   });
 });
@@ -548,5 +548,71 @@ describe("Host / Sec-Fetch-Site hardening (T-6214)", () => {
       makeEnv({ NEWEGG_MCP_HTTP_ALLOWED_ORIGINS: "https://ok.example" }),
     );
     expect(ok.http.allowedOrigins).toEqual(["https://ok.example"]);
+  });
+});
+
+// T-6215 (review nits from T-6214): the origin allowlist rules also bind embedders, and an
+// allowlisted Origin is judged by the allowlist, whatever Sec-Fetch-Site says.
+describe("allowed origins for embedders and fetch metadata (T-6215)", () => {
+  it.each([["null"], ["*"], [" NuLl "], [" * "], ["https://ok.example", "*"]])(
+    "startHttpServer refuses allowedOrigins %j",
+    async (...origins) => {
+      const error = await start(httpConfigWith({ allowedOrigins: origins })).catch(
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/concrete origins/);
+    },
+  );
+
+  it("starts with concrete origins", async () => {
+    const { handle: h } = await start(httpConfigWith({ allowedOrigins: ["https://ok.example"] }));
+    expect(h.port).toBeGreaterThan(0);
+  });
+
+  it("refuses an OPTIONS preflight that is cross-site and has no Origin", async () => {
+    const { handle: h } = await start(httpConfigWith());
+    for (const site of ["cross-site", "same-site"]) {
+      const res = await rawRequest({
+        port: h.port,
+        method: "OPTIONS",
+        path: "/mcp",
+        headers: { "sec-fetch-site": site },
+      });
+      expect(res.status).toBe(403);
+      expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+    }
+  });
+
+  it("lets an allowlisted Origin through even when Sec-Fetch-Site is cross-site", async () => {
+    const origin = "https://ok.example";
+    const { handle: h } = await start(httpConfigWith({ allowedOrigins: [origin] }));
+    const preflight = await rawRequest({
+      port: h.port,
+      method: "OPTIONS",
+      path: "/mcp",
+      headers: { origin, "sec-fetch-site": "cross-site" },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers["access-control-allow-origin"]).toBe(origin);
+    const post = await rawRequest({
+      port: h.port,
+      method: "POST",
+      path: "/mcp",
+      headers: { ...MCP_HEADERS, origin, "sec-fetch-site": "cross-site" },
+      body: INIT_BODY,
+    });
+    expect(post.status).toBe(200);
+  });
+
+  it("still refuses an Origin that is not on the allowlist", async () => {
+    const { handle: h } = await start(httpConfigWith({ allowedOrigins: ["https://ok.example"] }));
+    const res = await rawRequest({
+      port: h.port,
+      method: "OPTIONS",
+      path: "/mcp",
+      headers: { origin: "https://evil.example", "sec-fetch-site": "cross-site" },
+    });
+    expect(res.status).toBe(403);
   });
 });
