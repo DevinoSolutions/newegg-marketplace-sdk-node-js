@@ -26,7 +26,7 @@ import {
 } from "./shared.js";
 import { identifierOutput, pricingOperationResultSchema } from "./pricing-result.js";
 import { TOOL_NAMES } from "./names.js";
-import { hashPricePreview } from "./preview-hash.js";
+import { hashPricePreview, sealFor } from "./preview-hash.js";
 import { enforceChangeLimit, previewedPrice } from "./pricing-guards.js";
 
 /** SDK per-call ceiling for price updates (one request each). */
@@ -141,7 +141,12 @@ async function handler(input: PreviewInput, ctx: ToolContext): Promise<ToolResul
     const record: PricePreviewRecord = {
       previewId,
       kind: "priceUpdate",
-      hash: hashPricePreview(preview.marketplace, eligible, previewedCurrentPrices),
+      hash: hashPricePreview(
+        sealFor(ctx, previewId, expiresAt),
+        preview.marketplace,
+        eligible,
+        previewedCurrentPrices,
+      ),
       marketplace: preview.marketplace,
       normalizedUpdates: eligible,
       previewedCurrentPrices,

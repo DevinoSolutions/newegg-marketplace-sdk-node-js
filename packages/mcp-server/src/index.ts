@@ -28,6 +28,7 @@ export {
   type McpCredentials,
   type McpHttpConfig,
   type McpLimits,
+  type McpPreviewIntegrity,
   type McpServerConfig,
 } from "./config/index.js";
 

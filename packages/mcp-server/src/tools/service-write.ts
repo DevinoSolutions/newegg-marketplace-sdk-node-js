@@ -5,7 +5,7 @@
  * preview time, in code) and a hash check that the stored input has not changed between preview
  * and apply. Per ADR 0001 this layer is MCP-SDK-free.
  */
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { IndeterminateServiceWriteError } from "@devino/newegg-marketplace-sdk";
 import type { ServiceWritePreview } from "@devino/newegg-marketplace-sdk";
@@ -25,6 +25,7 @@ import {
   type ToolResult,
 } from "./shared.js";
 import { appendConsumedNote, consumeTypedPreview } from "./preview-apply-core.js";
+import { hashServicePreview, sealFor } from "./preview-hash.js";
 
 const serviceWriteOperationSchema = z.enum([
   "rma.submit",
@@ -102,17 +103,6 @@ export const serviceApplyOutputSchema = z.object({
 /** Digit-string order / RMA number input (the SDK validates it further). */
 export const numberInputSchema = z.union([z.string().min(1).max(15), z.number().int().positive()]);
 
-function hashInput(
-  kind: ServiceWriteKind,
-  marketplace: string,
-  input: unknown,
-  refundCents: number | undefined,
-): string {
-  return createHash("sha256")
-    .update(JSON.stringify({ kind, marketplace, input, refundCents: refundCents ?? null }), "utf8")
-    .digest("hex");
-}
-
 const toCents = (amount: number): number => Math.round(amount * 100);
 
 const formatCents = (cents: number | undefined): string =>
@@ -162,7 +152,13 @@ export async function runServicePreview<K extends ServiceWriteKind>(
     const record = {
       previewId,
       kind,
-      hash: hashInput(kind, preview.marketplace, preview.normalized, refundCents),
+      hash: hashServicePreview(
+        sealFor(ctx, previewId, expiresAt),
+        kind,
+        preview.marketplace,
+        preview.normalized,
+        refundCents,
+      ),
       marketplace: preview.marketplace,
       input: preview.normalized,
       refundCents,
@@ -216,21 +212,10 @@ export async function runServiceApply<K extends ServiceWriteKind>(
   }
   const record = outcome.record as unknown as {
     kind: K;
-    hash: string;
     marketplace: string;
     input: ServiceWriteInputs[K];
     refundCents?: number;
   };
-
-  if (hashInput(kind, record.marketplace, record.input, record.refundCents) !== record.hash) {
-    return errorResult(
-      businessError(
-        "preview_tampered",
-        "The stored preview no longer matches the hash taken when it was created (the store altered or " +
-          "corrupted it), so nothing was sent. The preview has been consumed; create a new preview.",
-      ),
-    );
-  }
 
   if (recheck !== undefined) {
     let fresh: ServiceWritePreview<unknown>;

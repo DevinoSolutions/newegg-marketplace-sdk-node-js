@@ -13,7 +13,7 @@ deactivate a whole catalog. Tool descriptions and annotations are hints, not sec
 - Writes are a **two-step** flow: `newegg_inventory_preview_update` validates,
   normalizes, dedups, decides direct-vs-feed, surfaces zero-quantity counts and warnings,
   and stores the normalized operation under a cryptographically random `previewId`
-  (256-bit, `crypto.randomBytes(32)` base64url) together with a sha-256 hash of the
+  (256-bit, `crypto.randomBytes(32)` base64url) together with an integrity hash of the
   canonical payload and an expiry (default 600 s, `NEWEGG_MCP_PREVIEW_TTL_SECONDS`).
 - `newegg_inventory_apply_update` accepts only a `previewId`: it executes **exactly** the
   stored normalized operation (quantities cannot be altered at apply time), atomically
@@ -31,6 +31,11 @@ deactivate a whole catalog. Tool descriptions and annotations are hints, not sec
   replays exactly what was planned; the preview's **output** reports the SDK's **resolved**
   decision (`direct` | `feed` | `mixed`). `includeCurrentInventory` is accepted and forwarded
   to the SDK (reads only, still zero writes) but is not surfaced in the tool output.
+- The integrity hash is an HMAC-SHA256 under `NEWEGG_MCP_PREVIEW_HMAC_KEY` (a random per-process key
+  when unset), over the canonical payload plus the `previewId`, `sessionId` and `expiresAt`, and is
+  re-verified at apply (amended 2026-10-22, T-6218). It was a plain sha-256 over a public canonical form,
+  which anyone able to write a shared store could recompute over a forged record. Stores shared across
+  processes must set the same key everywhere; a mismatch refuses the preview (`preview_tampered`).
 - `PreviewStore` is an interface; in-memory implementation ships for stdio/dev, and the
   interface (get/put/consume with TTL) is documented for Redis/DB in multi-instance
   deployments.

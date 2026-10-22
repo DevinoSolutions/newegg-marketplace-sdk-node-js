@@ -8,7 +8,7 @@
  * Per ADR 0001 this layer is MCP-SDK-free.
  */
 import type { PreviewRecord } from "../preview-store/index.js";
-import { previewHashMatches } from "./preview-hash.js";
+import { previewHashMatches, previewKeyFor } from "./preview-hash.js";
 import {
   businessError,
   errorResult,
@@ -73,15 +73,17 @@ export async function consumeTypedPreview<K extends PreviewRecord["kind"]>(
       ),
     };
   }
-  // Re-verify the stored hash for the kinds that do not check it themselves (ADR 0005): a record
-  // altered in a shared or persistent store since the preview is refused, and nothing is sent.
-  if (!previewHashMatches(consumed.record)) {
+  // Re-verify the stored integrity MAC for every kind (ADR 0005, T-6218): a record altered in a
+  // shared or persistent store since the preview, or sealed under another key, is refused and
+  // nothing is sent. A malformed record (a hashed field missing) is refused the same way.
+  if (!previewHashMatches(previewKeyFor(ctx.config), consumed.record)) {
     return {
       error: errorResult(
         businessError(
           "preview_tampered",
-          "The stored preview no longer matches the hash taken when it was created (the store altered or " +
-            "corrupted it), so nothing was sent. The preview has been consumed; create a new preview.",
+          "The stored preview does not match its integrity MAC (the store altered or corrupted it, or it " +
+            "was created by a server with a different NEWEGG_MCP_PREVIEW_HMAC_KEY), so nothing was sent. " +
+            "The preview has been consumed; create a new preview.",
         ),
       ),
     };

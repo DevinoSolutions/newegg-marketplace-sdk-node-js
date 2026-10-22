@@ -1,26 +1,80 @@
 /**
- * Canonical hashes of the stored preview payloads, shared by the preview tools (which stamp the
- * hash on the record) and {@link previewHashMatches} (which re-checks it before an apply sends
+ * Integrity MACs of the stored preview payloads, shared by the preview tools (which stamp the MAC
+ * on the record) and {@link previewHashMatches} (which re-checks it before an apply sends
  * anything). Re-verifying at apply means a record that was changed in a persistent or shared
  * `PreviewStore` between preview and apply is refused instead of executed (ADR 0005).
  *
- * RMA / courtesy-refund and shipping-label records hash extra fields (refund and label cost) and
- * re-check themselves in `service-write.ts` / `shipping-label-write.ts`.
+ * The record's `hash` is an HMAC-SHA256 under a server secret, not a plain digest: the algorithm
+ * and canonical forms are public, so an unkeyed hash would let anyone who can write the store
+ * recompute a matching hash over a forged record (T-6218). The key is `NEWEGG_MCP_PREVIEW_HMAC_KEY`
+ * when set, otherwise a random per-process key (fine for the in-memory store; a store shared
+ * across processes MUST set the shared key, or each process refuses the other's previews). The
+ * MAC input also carries the previewId, sessionId and expiresAt, so a valid record cannot be
+ * re-filed under another id or session, or have its lifetime extended.
  */
-import { createHash } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type {
   NormalizedInventoryUpdate,
   InventoryUpdateStrategy,
 } from "@devino/newegg-marketplace-sdk";
+import type { McpServerConfig } from "../config/index.js";
 import type {
   ListingPreviewRecord,
   PreviewRecord,
   PricePreviewRecord,
+  ServiceWriteKind,
+  ShippingLabelKind,
   VolumeDiscountPreviewRecord,
 } from "../preview-store/index.js";
 
-const sha256 = (canonical: string): string =>
-  createHash("sha256").update(canonical, "utf8").digest("hex");
+/** Bumped if the MAC input layout ever changes; part of the MAC input. */
+const MAC_VERSION = 1;
+
+let processKey: Buffer | undefined;
+
+/**
+ * The key previews are sealed with: the configured `NEWEGG_MCP_PREVIEW_HMAC_KEY`, else a random
+ * 32-byte key generated once per process. Never logged or returned to a caller.
+ */
+export function previewKeyFor(config: Pick<McpServerConfig, "previewIntegrity">): Buffer {
+  const configured = config.previewIntegrity?.hmacKey;
+  if (configured !== undefined) return Buffer.from(configured, "utf8");
+  processKey ??= randomBytes(32);
+  return processKey;
+}
+
+/** What a MAC is bound to besides the payload: the record's identity, owner session and expiry. */
+export interface PreviewSeal {
+  readonly key: Buffer;
+  readonly previewId: string;
+  /** Undefined on stdio (a single implicit session). */
+  readonly sessionId: string | undefined;
+  readonly expiresAt: Date;
+}
+
+/** The seal for a record about to be stored by `ctx`'s session. */
+export function sealFor(
+  ctx: { readonly config: Pick<McpServerConfig, "previewIntegrity">; readonly sessionId?: string },
+  previewId: string,
+  expiresAt: Date,
+): PreviewSeal {
+  return { key: previewKeyFor(ctx.config), previewId, sessionId: ctx.sessionId, expiresAt };
+}
+
+function mac(seal: PreviewSeal, payload: unknown): string {
+  return createHmac("sha256", seal.key)
+    .update(
+      JSON.stringify({
+        v: MAC_VERSION,
+        previewId: seal.previewId,
+        sessionId: seal.sessionId ?? null,
+        expiresAt: seal.expiresAt.getTime(),
+        payload,
+      }),
+      "utf8",
+    )
+    .digest("hex");
+}
 
 function canonicalInventoryUpdate(update: NormalizedInventoryUpdate): Record<string, unknown> {
   return {
@@ -35,68 +89,139 @@ function canonicalInventoryUpdate(update: NormalizedInventoryUpdate): Record<str
 }
 
 export function hashInventoryPreview(
+  seal: PreviewSeal,
   marketplace: string,
   strategy: InventoryUpdateStrategy,
   updates: NormalizedInventoryUpdate[],
 ): string {
-  return sha256(
-    JSON.stringify({ marketplace, strategy, updates: updates.map(canonicalInventoryUpdate) }),
-  );
+  return mac(seal, {
+    kind: "inventoryUpdate",
+    marketplace,
+    strategy,
+    updates: updates.map(canonicalInventoryUpdate),
+  });
 }
 
 export function hashPricePreview(
+  seal: PreviewSeal,
   marketplace: string,
   updates: PricePreviewRecord["normalizedUpdates"],
   previewedCurrentPrices: PricePreviewRecord["previewedCurrentPrices"],
 ): string {
-  return sha256(
-    JSON.stringify({
-      marketplace,
-      updates: updates.map((update, position) => ({
-        inputIndex: update.inputIndex,
-        type: update.identifier.type,
-        value: update.identifier.value,
-        condition: update.identifier.type === "upc" ? (update.identifier.condition ?? null) : null,
-        sellingPrice: update.sellingPrice,
-        countryCode: update.countryCode ?? null,
-        currency: update.currency ?? null,
-        previewedCurrentPrice: previewedCurrentPrices[position] ?? null,
-      })),
-    }),
-  );
+  return mac(seal, {
+    kind: "priceUpdate",
+    marketplace,
+    updates: updates.map((update, position) => ({
+      inputIndex: update.inputIndex,
+      type: update.identifier.type,
+      value: update.identifier.value,
+      condition: update.identifier.type === "upc" ? (update.identifier.condition ?? null) : null,
+      sellingPrice: update.sellingPrice,
+      countryCode: update.countryCode ?? null,
+      currency: update.currency ?? null,
+      previewedCurrentPrice: previewedCurrentPrices[position] ?? null,
+    })),
+  });
 }
 
-/** Listing creations and volume-discount updates hash their normalized items as stored. */
+/** Listing creations and volume-discount updates MAC their normalized items as stored. */
 export function hashItemsPreview(
+  seal: PreviewSeal,
+  kind: ListingPreviewRecord["kind"] | VolumeDiscountPreviewRecord["kind"],
   marketplace: string,
   items: ListingPreviewRecord["items"] | VolumeDiscountPreviewRecord["items"],
 ): string {
-  return sha256(JSON.stringify({ marketplace, items }));
+  return mac(seal, { kind, marketplace, items });
 }
 
-/**
- * True when the record's stored hash matches its current content. Kinds whose hash is checked by
- * their own apply path (RMA / refund / shipping label) return true here.
- */
-export function previewHashMatches(record: PreviewRecord): boolean {
+/** RMA / courtesy-refund writes: the input plus the money the write moves (whole cents). */
+export function hashServicePreview(
+  seal: PreviewSeal,
+  kind: ServiceWriteKind,
+  marketplace: string,
+  input: unknown,
+  refundCents: number | undefined,
+): string {
+  return mac(seal, { kind, marketplace, input, refundCents: refundCents ?? null });
+}
+
+/** Shipping-label purchases and reprints: the input plus the quoted cost (whole cents). */
+export function hashLabelPreview(
+  seal: PreviewSeal,
+  kind: ShippingLabelKind,
+  marketplace: string,
+  input: unknown,
+  costCents: number | undefined,
+): string {
+  return mac(seal, { kind, marketplace, input, costCents: costCents ?? null });
+}
+
+/** Constant-time comparison of two hex MACs (length checked first). */
+function macEquals(expected: string, actual: unknown): boolean {
+  if (typeof actual !== "string") return false;
+  const a = Buffer.from(expected, "utf8");
+  const b = Buffer.from(actual, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function expectedHash(key: Buffer, record: PreviewRecord): string {
+  const seal: PreviewSeal = {
+    key,
+    previewId: record.previewId,
+    sessionId: record.sessionId,
+    expiresAt: record.expiresAt,
+  };
   switch (record.kind) {
     case "inventoryUpdate":
-      return (
-        hashInventoryPreview(record.marketplace, record.strategy, record.normalizedUpdates) ===
-        record.hash
+      return hashInventoryPreview(
+        seal,
+        record.marketplace,
+        record.strategy,
+        record.normalizedUpdates,
       );
     case "priceUpdate":
-      return (
-        hashPricePreview(
-          record.marketplace,
-          record.normalizedUpdates,
-          record.previewedCurrentPrices,
-        ) === record.hash
+      return hashPricePreview(
+        seal,
+        record.marketplace,
+        record.normalizedUpdates,
+        record.previewedCurrentPrices,
       );
     case "listingCreate":
     case "volumeDiscountUpdate":
-      return hashItemsPreview(record.marketplace, record.items) === record.hash;
-    default:
-      return true;
+      return hashItemsPreview(seal, record.kind, record.marketplace, record.items);
+    case "shippingLabelCreate":
+    case "shippingLabelReprint":
+      return hashLabelPreview(
+        seal,
+        record.kind,
+        record.marketplace,
+        record.input,
+        record.costCents,
+      );
+    case "rmaSubmit":
+    case "rmaEdit":
+    case "rmaProcess":
+    case "rmaReject":
+    case "courtesyRefundIssue":
+      return hashServicePreview(
+        seal,
+        record.kind,
+        record.marketplace,
+        record.input,
+        record.refundCents,
+      );
+  }
+}
+
+/**
+ * True when the record's stored MAC matches its current content under `key`. Fails closed: a
+ * record that is malformed (a hashed field missing, an unknown kind, a non-string hash) is
+ * reported as not matching rather than throwing.
+ */
+export function previewHashMatches(key: Buffer, record: PreviewRecord): boolean {
+  try {
+    return macEquals(expectedHash(key, record), record.hash);
+  } catch {
+    return false;
   }
 }
