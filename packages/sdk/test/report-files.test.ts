@@ -124,7 +124,10 @@ async function startFakeFtp(
         else if (verb === "PASS") {
           control.write(options.rejectPass ? "530 login incorrect\r\n" : "230 ok\r\n");
         } else if (verb === "TYPE") control.write("200 binary\r\n");
-        else if (verb === "PASV") {
+        else if (verb === "SIZE") {
+          const sized = files[arg];
+          control.write(sized ? `213 ${sized.length}\r\n` : "550 no such file\r\n");
+        } else if (verb === "PASV") {
           dataServer = net.createServer();
           dataSocketReady = new Promise((resolve) => {
             dataServer?.once("connection", (socket) => {
@@ -178,6 +181,7 @@ describe("downloadViaFtp", () => {
         maxBytes: 1024,
         timeoutMs: 5000,
         allowedHost: ANY_HOST,
+        allowedPorts: [ftp.port],
       });
       expect(Buffer.from(bytes).toString("utf8")).toBe(payload.toString("utf8"));
       expect(ftp.commands).toEqual(
@@ -210,6 +214,7 @@ describe("downloadViaFtp", () => {
         maxBytes: 1024,
         timeoutMs: 5000,
         allowedHost: ANY_HOST,
+        allowedPorts: [ftp.port],
       }).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(NeweggApiError);
       expect(JSON.stringify(error)).not.toContain("topsecretpw");
@@ -227,6 +232,7 @@ describe("downloadViaFtp", () => {
           maxBytes: 1000,
           timeoutMs: 5000,
           allowedHost: ANY_HOST,
+          allowedPorts: [ftp.port],
         }),
       ).rejects.toThrowError(/size limit/);
     } finally {
@@ -242,6 +248,7 @@ describe("downloadViaFtp", () => {
           maxBytes: 1000,
           timeoutMs: 5000,
           allowedHost: ANY_HOST,
+          allowedPorts: [ftp.port],
         }),
       ).rejects.toThrowError(/retrieval/);
     } finally {
@@ -257,6 +264,7 @@ describe("downloadViaFtp", () => {
         maxBytes: 10,
         timeoutMs: 1000,
         allowedHost: ANY_HOST,
+        allowedPorts: [1],
         signal: controller.signal,
       }),
     ).rejects.toBeDefined();

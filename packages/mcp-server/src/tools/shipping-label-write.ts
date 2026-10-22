@@ -393,8 +393,8 @@ async function runLabelApply<K extends ShippingLabelKind>(
     return errorResult(
       businessError(
         "preview_tampered",
-        "The stored preview no longer matches its hash, so nothing was sent. The preview has been " +
-          "consumed; create a new preview.",
+        "The stored preview no longer matches the hash taken when it was created (the store altered or " +
+          "corrupted it), so nothing was sent. The preview has been consumed; create a new preview.",
       ),
     );
   }

@@ -6,9 +6,8 @@
  * atomically consumes that previewId and submits the ITEM_DATA&v2 data feed — it registers only
  * when writes are enabled.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
-import type { NormalizedCreateListing } from "@devino/newegg-marketplace-sdk";
 import type { McpServerConfig } from "../config/index.js";
 import type { ListingPreviewRecord } from "../preview-store/index.js";
 import {
@@ -25,6 +24,7 @@ import {
 import { appendConsumedNote, consumeTypedPreview } from "./preview-apply-core.js";
 import { feedRequestStatusSchema } from "./operation-result.js";
 import { TOOL_NAMES } from "./names.js";
+import { hashItemsPreview } from "./preview-hash.js";
 
 // ---------------------------------------------------------------------------
 // input schema (mirrors the SDK's CreateListingInput; identifiers required)
@@ -188,14 +188,6 @@ const listingOperationResultSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// hashing
-// ---------------------------------------------------------------------------
-function hashPayload(marketplace: string, items: NormalizedCreateListing[]): string {
-  const canonical = JSON.stringify({ marketplace, items });
-  return createHash("sha256").update(canonical, "utf8").digest("hex");
-}
-
-// ---------------------------------------------------------------------------
 // newegg_listing_preview_create
 // ---------------------------------------------------------------------------
 async function previewHandler(input: PreviewInput, ctx: ToolContext): Promise<ToolResult> {
@@ -215,7 +207,7 @@ async function previewHandler(input: PreviewInput, ctx: ToolContext): Promise<To
   const record: ListingPreviewRecord = {
     previewId,
     kind: "listingCreate",
-    hash: hashPayload(preview.marketplace, preview.items),
+    hash: hashItemsPreview(preview.marketplace, preview.items),
     marketplace: preview.marketplace,
     items: preview.items,
     createdAt,

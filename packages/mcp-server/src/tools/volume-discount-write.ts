@@ -5,9 +5,8 @@
  * returns the plan. `newegg_volume_discount_apply_update` atomically consumes that previewId and
  * submits the VOLUME_DISCOUNT_DATA feed — it registers only when writes are enabled.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
-import type { NormalizedVolumeDiscountUpdate } from "@devino/newegg-marketplace-sdk";
 import type { McpServerConfig } from "../config/index.js";
 import type { VolumeDiscountPreviewRecord } from "../preview-store/index.js";
 import {
@@ -24,6 +23,7 @@ import {
 import { appendConsumedNote, consumeTypedPreview } from "./preview-apply-core.js";
 import { feedRequestStatusSchema } from "./operation-result.js";
 import { TOOL_NAMES } from "./names.js";
+import { hashItemsPreview } from "./preview-hash.js";
 
 // ---------------------------------------------------------------------------
 // input schema (mirrors the SDK's VolumeDiscountUpdate)
@@ -118,14 +118,6 @@ const operationResultSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// hashing
-// ---------------------------------------------------------------------------
-function hashPayload(marketplace: string, items: NormalizedVolumeDiscountUpdate[]): string {
-  const canonical = JSON.stringify({ marketplace, items });
-  return createHash("sha256").update(canonical, "utf8").digest("hex");
-}
-
-// ---------------------------------------------------------------------------
 // newegg_volume_discount_preview_update
 // ---------------------------------------------------------------------------
 async function previewHandler(input: PreviewInput, ctx: ToolContext): Promise<ToolResult> {
@@ -145,7 +137,7 @@ async function previewHandler(input: PreviewInput, ctx: ToolContext): Promise<To
   const record: VolumeDiscountPreviewRecord = {
     previewId,
     kind: "volumeDiscountUpdate",
-    hash: hashPayload(preview.marketplace, preview.items),
+    hash: hashItemsPreview(preview.marketplace, preview.items),
     marketplace: preview.marketplace,
     items: preview.items,
     createdAt,

@@ -10,7 +10,7 @@
  * restart (the limit starts over), and it is not shared between server processes. A reprint counts
  * from the moment it is attempted, whatever the outcome: an indeterminate send may have been billed.
  */
-import type { PreviewStore } from "../preview-store/index.js";
+import { underlyingPreviewStore, type PreviewStore } from "../preview-store/index.js";
 
 const HOUR_MS = 3_600_000;
 
@@ -64,14 +64,19 @@ export class ReprintLimiter {
   }
 }
 
-/** One limiter per preview store, i.e. per server instance, so both reset together on restart. */
+/**
+ * One limiter per underlying preview store, i.e. per server process, so both reset together on
+ * restart. Keyed on the store behind the per-session view: in HTTP mode every session gets its own
+ * view of the one shared store, and a limiter per view would reset by opening a new session.
+ */
 const limiters = new WeakMap<PreviewStore, ReprintLimiter>();
 
 export function reprintLimiterFor(store: PreviewStore, limits: ReprintLimits): ReprintLimiter {
-  let limiter = limiters.get(store);
+  const shared = underlyingPreviewStore(store);
+  let limiter = limiters.get(shared);
   if (limiter === undefined) {
     limiter = new ReprintLimiter(limits);
-    limiters.set(store, limiter);
+    limiters.set(shared, limiter);
   }
   return limiter;
 }

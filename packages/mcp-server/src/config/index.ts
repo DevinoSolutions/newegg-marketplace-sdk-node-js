@@ -4,6 +4,7 @@
  * serialization) from limits and HTTP settings so accidental logging of the config object can
  * never leak secrets. This module never imports the MCP SDK (ADR 0001).
  */
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { NeweggMarketplace } from "@devino/newegg-marketplace-sdk";
 
@@ -77,10 +78,42 @@ export interface McpLimits {
 export interface McpHttpConfig {
   readonly host: string;
   readonly port: number;
+  /** At least 32 characters when set (T-5672). */
   readonly bearerToken?: string;
   readonly allowedOrigins: string[];
   readonly allowedHosts: string[];
+  /** Concurrent MCP sessions accepted (default 32); the next initialize gets 503. */
+  readonly maxSessions?: number;
+  /** A session with no request for this many seconds is closed (default 1800). */
+  readonly sessionIdleTtlSeconds?: number;
+  /**
+   * Operator declaration that a TLS-terminating proxy fronts this listener. The transport itself is
+   * plain HTTP: without this flag a non-loopback bind logs a warning at startup.
+   */
+  readonly behindTlsProxy?: boolean;
 }
+
+/** Shortest accepted `NEWEGG_MCP_HTTP_BEARER_TOKEN` (e.g. `openssl rand -hex 16`). */
+const MIN_BEARER_TOKEN_LENGTH = 32;
+/** Fewest distinct characters a bearer token must contain (rejects `aaaa...` and `abab...`). */
+const MIN_BEARER_TOKEN_DISTINCT = 12;
+
+/**
+ * Why `token` is too weak to guard the HTTP transport, or undefined when it is acceptable: shorter
+ * than 32 characters, or fewer than 12 distinct characters. The reason never contains the token.
+ */
+export function weakBearerTokenReason(token: string): string | undefined {
+  if (token.length < MIN_BEARER_TOKEN_LENGTH) {
+    return `must be at least ${MIN_BEARER_TOKEN_LENGTH} characters`;
+  }
+  if (new Set(token).size < MIN_BEARER_TOKEN_DISTINCT) {
+    return `must contain at least ${MIN_BEARER_TOKEN_DISTINCT} different characters`;
+  }
+  return undefined;
+}
+/** Defaults for the HTTP session bounds (T-5670). */
+export const DEFAULT_MAX_HTTP_SESSIONS = 32;
+export const DEFAULT_SESSION_IDLE_TTL_SECONDS = 1800;
 
 export interface McpServerConfig {
   readonly marketplace: NeweggMarketplace;
@@ -93,6 +126,18 @@ export interface McpServerConfig {
   /** Trusted-config-only base URL override; never exposed through MCP tools/resources. */
   readonly baseUrl?: string;
   readonly allowWrites: boolean;
+  /**
+   * Opt-in (`NEWEGG_MCP_REPORT_FTPS=true`, exact literal): the built-in report file download uses
+   * explicit FTPS (T-5668). Default is plain FTP: Newegg's server presents a self-signed
+   * certificate, so FTPS also needs `reportFtpsCa` (the certificate's PEM, read from
+   * `NEWEGG_MCP_REPORT_FTPS_CA_FILE`, so the chain validates) and `reportFtpsCertSha256`
+   * (`NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`, the fingerprint it must have). Certificate validation is
+   * never disabled. With FTPS on there is no fallback to clear text.
+   */
+  readonly reportFtps?: boolean;
+  readonly reportFtpsCertSha256?: string;
+  /** PEM text of the certificate(s) trusted for the report FTPS handshake. */
+  readonly reportFtpsCa?: string;
   readonly credentials: McpCredentials;
   readonly limits: McpLimits;
   readonly http: McpHttpConfig;
@@ -336,14 +381,46 @@ function urlEnv(name: string) {
     });
 }
 
-/** Optional trimmed string, or undefined when unset/blank (used for the HTTP bearer token). */
-function optionalTrimmedEnv() {
+/**
+ * The PEM text of `NEWEGG_MCP_REPORT_FTPS_CA_FILE`, or undefined when unset/blank. A missing,
+ * unreadable or non-PEM file refuses to start; the message names the variable, never the content.
+ */
+function readReportFtpsCa(path: string | undefined): string | undefined {
+  const trimmed = path?.trim();
+  if (trimmed === undefined || trimmed === "") return undefined;
+  let text: string;
+  try {
+    text = readFileSync(trimmed, "utf8");
+  } catch {
+    throw new McpConfigError("NEWEGG_MCP_REPORT_FTPS_CA_FILE cannot be read.");
+  }
+  if (!text.includes("-----BEGIN CERTIFICATE-----")) {
+    throw new McpConfigError("NEWEGG_MCP_REPORT_FTPS_CA_FILE must hold a PEM certificate.");
+  }
+  return text;
+}
+
+/**
+ * Optional HTTP bearer token: undefined when unset/blank, otherwise a token that passes
+ * {@link weakBearerTokenReason}. The message names the variable and the rule only: a rejected token
+ * is never echoed back.
+ */
+function bearerTokenEnv(name: string) {
   return z
     .string()
     .optional()
-    .transform((raw) => {
+    .transform((raw, ctx) => {
       const trimmed = raw?.trim();
-      return trimmed !== undefined && trimmed.length > 0 ? trimmed : undefined;
+      if (trimmed === undefined || trimmed.length === 0) return undefined;
+      const weakness = weakBearerTokenReason(trimmed);
+      if (weakness !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: `${name} ${weakness} (generate one with \`openssl rand -hex 32\`).`,
+        });
+        return z.NEVER;
+      }
+      return trimmed;
     });
 }
 
@@ -357,6 +434,26 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((raw) => raw === "true"),
+  // SECURITY gate, same exact-literal rule as NEWEGG_MCP_ALLOW_WRITES: only "true" opts in.
+  NEWEGG_MCP_REPORT_FTPS: z
+    .string()
+    .optional()
+    .transform((raw) => raw === "true"),
+  NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: z
+    .string()
+    .optional()
+    .transform((raw, ctx) => {
+      const trimmed = raw?.trim();
+      if (trimmed === undefined || trimmed === "") return undefined;
+      if (!/^[0-9a-f]{2}(:?[0-9a-f]{2}){31}$/i.test(trimmed)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "NEWEGG_MCP_REPORT_FTPS_CERT_SHA256 must be a SHA-256 hex fingerprint.",
+        });
+        return z.NEVER;
+      }
+      return trimmed;
+    }),
   NEWEGG_MCP_ALLOWED_MARKETPLACES: marketplaceCsvEnv("NEWEGG_MCP_ALLOWED_MARKETPLACES"),
   NEWEGG_MCP_MAX_ITEMS_PER_OPERATION: intEnv(
     "NEWEGG_MCP_MAX_ITEMS_PER_OPERATION",
@@ -418,9 +515,24 @@ const envSchema = z.object({
     isPort,
     "an integer between 1 and 65535",
   ),
-  NEWEGG_MCP_HTTP_BEARER_TOKEN: optionalTrimmedEnv(),
+  NEWEGG_MCP_HTTP_BEARER_TOKEN: bearerTokenEnv("NEWEGG_MCP_HTTP_BEARER_TOKEN"),
   NEWEGG_MCP_HTTP_ALLOWED_ORIGINS: csvEnv(),
   NEWEGG_MCP_HTTP_ALLOWED_HOSTS: csvEnv(),
+  NEWEGG_MCP_HTTP_MAX_SESSIONS: strictCountEnv(
+    "NEWEGG_MCP_HTTP_MAX_SESSIONS",
+    DEFAULT_MAX_HTTP_SESSIONS,
+    10000,
+  ),
+  NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS: strictCountEnv(
+    "NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS",
+    DEFAULT_SESSION_IDLE_TTL_SECONDS,
+    86400,
+  ),
+  // Exact-literal opt-in, like the write gates: only "true" declares a TLS proxy in front.
+  NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY: z
+    .string()
+    .optional()
+    .transform((raw) => raw === "true"),
 });
 
 const CREDENTIAL_FIELDS = ["SELLER_ID", "API_KEY", "SECRET_KEY"] as const;
@@ -573,6 +685,21 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     );
   }
 
+  const reportFtpsCa = readReportFtpsCa(env["NEWEGG_MCP_REPORT_FTPS_CA_FILE"]);
+  if (
+    (reportFtpsCa !== undefined || parsed.NEWEGG_MCP_REPORT_FTPS_CERT_SHA256 !== undefined) &&
+    !parsed.NEWEGG_MCP_REPORT_FTPS
+  ) {
+    throw new McpConfigError(
+      "NEWEGG_MCP_REPORT_FTPS_CERT_SHA256 / NEWEGG_MCP_REPORT_FTPS_CA_FILE only apply with NEWEGG_MCP_REPORT_FTPS=true; without it the report download would silently stay plain FTP.",
+    );
+  }
+  if (parsed.NEWEGG_MCP_REPORT_FTPS_CERT_SHA256 !== undefined && reportFtpsCa === undefined) {
+    throw new McpConfigError(
+      "NEWEGG_MCP_REPORT_FTPS_CERT_SHA256 needs NEWEGG_MCP_REPORT_FTPS_CA_FILE (the PEM of the pinned certificate): certificate validation is never disabled, so a self-signed certificate must be trusted explicitly.",
+    );
+  }
+
   const limits: McpLimits = {
     maxItemsPerOperation: parsed.NEWEGG_MCP_MAX_ITEMS_PER_OPERATION,
     previewTtlSeconds: parsed.NEWEGG_MCP_PREVIEW_TTL_SECONDS,
@@ -593,6 +720,9 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     bearerToken: parsed.NEWEGG_MCP_HTTP_BEARER_TOKEN,
     allowedOrigins: parsed.NEWEGG_MCP_HTTP_ALLOWED_ORIGINS,
     allowedHosts: parsed.NEWEGG_MCP_HTTP_ALLOWED_HOSTS,
+    maxSessions: parsed.NEWEGG_MCP_HTTP_MAX_SESSIONS,
+    sessionIdleTtlSeconds: parsed.NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS,
+    behindTlsProxy: parsed.NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY,
   };
 
   return {
@@ -600,6 +730,9 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     credentialMarketplace: parsed.NEWEGG_MARKETPLACE,
     baseUrl: parsed.NEWEGG_API_BASE_URL,
     allowWrites: parsed.NEWEGG_MCP_ALLOW_WRITES,
+    reportFtps: parsed.NEWEGG_MCP_REPORT_FTPS,
+    reportFtpsCertSha256: parsed.NEWEGG_MCP_REPORT_FTPS_CERT_SHA256,
+    ...(reportFtpsCa === undefined ? {} : { reportFtpsCa }),
     credentials,
     limits,
     http,

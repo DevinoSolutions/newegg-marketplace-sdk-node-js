@@ -52,6 +52,8 @@ export interface NeweggClientConfig {
   maxQuantity?: number;
   /** Replaces the built-in FTP downloader of the file reports (Daily Inventory / Daily Price). Receives a credential-bearing URL: a secret. */
   reportFileDownloader?: ReportFileDownloader;
+  /** Transport settings of the built-in FTP downloader (ignored when reportFileDownloader is set). Plain FTP by default; FTPS is opt-in. */
+  reportFileFtp?: ReportFileFtpOptions;
 }
 
 export interface NeweggClient {
@@ -856,6 +858,17 @@ export type ReportFileDownloader = (
   options: { signal?: AbortSignal; maxBytes: number; timeoutMs: number },
 ) => Promise<Uint8Array>;
 
+// Built-in downloader: plain FTP by default; URL port 21 only, *.newegg.com only, control channel capped at
+// 64 KiB/line and 256 KiB/reply. ftps opts in to explicit FTPS (AUTH TLS before USER/PASS, PROT P, no fallback to
+// clear text; the transfer must also be length-checked with SIZE); Newegg's certificate is Serv-U's stock
+// self-signed one, so pin it (contracts §17.5: the pin stops passive eavesdropping, probably not an active MITM).
+export interface ReportFileFtpOptions {
+  ftps?: boolean; // opt in to explicit FTPS; off by default
+  tlsPinnedCertSha256?: string; // SHA-256 fingerprint (hex) the certificate must have; replaces the host name check; needs tlsCa
+  allowedPorts?: number[]; // default [21]
+  tlsCa?: string | string[]; // extra trusted CA certificate(s), PEM (the server's own PEM for a self-signed cert); verification is never disabled
+}
+
 export interface ReportSubmission {
   marketplace: NeweggMarketplace;
   requestId: string;
@@ -1388,7 +1401,7 @@ export interface RmaWriteItem {
   returnUnitPrice?: number; // refund RMA: required, > 0; replacement: forbidden
   refundShippingPrice?: number; // refund RMA: required, >= 0 (0 = none); replacement: forbidden
   unopened?: boolean; // required for incompatible / noLongerNeeded / orderedWrongItem / unsatisfied
-  imageUrls?: string[]; // 1-5 http(s); US and CA only (B2B: validation error)
+  imageUrls?: string[]; // 1-5 https URLs without user:password@; US and CA only (B2B: validation error)
   memo?: string; // <= 1000; US and CA only
 }
 export interface SubmitRmaInput {
@@ -2529,7 +2542,12 @@ export class NeweggError extends Error {
   readonly correlationId?: string;
   readonly retryable: boolean;
   readonly details?: unknown; // sanitized, JSON-safe
+  // `cause` (standard Error.cause) is sanitized too: URL credentials are removed from the cause's message, stack,
+  // string properties and nested causes, so util.inspect / console.log of the error cannot print them.
 }
+// Replaces the user:password@ part of any URL in `text` with ***@ - percent-encoded, schemeless on a Newegg FTP
+// host, scheme-relative, backslash, triple-slash and JSON-escaped forms included. Linear time. Never throws.
+export function redactUrlCredentials(text: string): string;
 export class NeweggConfigurationError extends NeweggError {}
 // Thrown by createNeweggClient when credentialMarketplace differs from marketplace (expectedMarketplace =
 // the client's marketplace, actualMarketplace = the credentials'), and by the orders currency guard when a

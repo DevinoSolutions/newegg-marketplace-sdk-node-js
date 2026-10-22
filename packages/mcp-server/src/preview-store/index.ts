@@ -31,6 +31,12 @@ export interface PreviewRecordBase {
   readonly marketplace: NeweggMarketplace;
   readonly createdAt: Date;
   readonly expiresAt: Date;
+  /**
+   * The MCP session that created the preview (HTTP transport; absent on stdio, which has a single
+   * implicit session). Set by the server, never by a caller. A session can only consume its own
+   * previews (T-5675).
+   */
+  readonly sessionId?: string;
 }
 
 /** A stored inventory update. Quantities here are authoritative at apply time. */
@@ -135,19 +141,86 @@ export type ConsumeResult =
   | { readonly status: "expired" }
   | { readonly status: "already_used" };
 
+/**
+ * Who is asking. When given, a store must only return or consume a record whose `sessionId`
+ * equals `scope.sessionId` (both undefined counts as equal) and otherwise answer as if the
+ * record did not exist, WITHOUT consuming it. The tool layer always passes a scope and also
+ * re-checks the returned record, so a store that ignores the scope is still safe, only less kind.
+ */
+export interface PreviewScope {
+  readonly sessionId: string | undefined;
+}
+
 export interface PreviewStore {
   /** Persists a preview record (overwrites any record with the same id). */
   put(record: PreviewRecord): Promise<void>;
   /** Returns a live (unconsumed, unexpired) record, or undefined otherwise. Never consumes. */
-  get(previewId: string): Promise<PreviewRecord | undefined>;
+  get(previewId: string, scope?: PreviewScope): Promise<PreviewRecord | undefined>;
   /** Atomically marks the preview used and returns it, or reports why it could not be consumed. */
-  consume(previewId: string): Promise<ConsumeResult>;
+  consume(previewId: string, scope?: PreviewScope): Promise<ConsumeResult>;
+}
+
+/**
+ * A view of `store` bound to one MCP session: records are stamped with `sessionId` on `put`, and
+ * `get` / `consume` only see that session's records. Used by the server so every tool handler is
+ * session-scoped without knowing about sessions.
+ */
+export function bindPreviewStoreToSession(
+  store: PreviewStore,
+  sessionId: string | undefined,
+): PreviewStore {
+  const scope: PreviewScope = { sessionId };
+  const bound: PreviewStore = {
+    put: (record) => store.put(sessionId === undefined ? record : { ...record, sessionId }),
+    get: (previewId) => store.get(previewId, scope),
+    consume: (previewId) => store.consume(previewId, scope),
+  };
+  underlyingStores.set(bound, store);
+  return bound;
+}
+
+const underlyingStores = new WeakMap<PreviewStore, PreviewStore>();
+
+/**
+ * The store a session-bound view was made from (the store itself when it is not a view). Server
+ * wide state that must survive opening a new session, such as the label-reprint limiter, is keyed
+ * on this and never on the per-session view.
+ */
+export function underlyingPreviewStore(store: PreviewStore): PreviewStore {
+  return underlyingStores.get(store) ?? store;
 }
 
 interface StoredEntry {
   record: PreviewRecord;
   consumed: boolean;
+  /** Epoch ms of consumption, for tombstone retention. */
+  consumedAt?: number;
 }
+
+export interface InMemoryPreviewStoreOptions {
+  /**
+   * Hard cap on stored records (live + tombstones). Consumed and expired records go first; a live
+   * record is only dropped from the session holding the most of them, oldest first, so one busy
+   * session cannot push another session's live preview out. Default 1000.
+   */
+  maxEntries?: number;
+  /**
+   * Cap on the records one session may hold (live + tombstones). Past it the session's own
+   * tombstones and expired records are dropped first, then its oldest live record. Default 200.
+   */
+  maxEntriesPerSession?: number;
+  /**
+   * How long a consumed or expired record is remembered so `consume` can answer `already_used` /
+   * `expired` instead of `not_found`. Default 10 minutes; afterwards the record is swept.
+   */
+  tombstoneRetentionMs?: number;
+}
+
+const DEFAULT_MAX_ENTRIES = 1000;
+const DEFAULT_MAX_ENTRIES_PER_SESSION = 200;
+const DEFAULT_TOMBSTONE_RETENTION_MS = 10 * 60_000;
+/** Sweeps run at most this often (amortized onto put / get / consume). */
+const SWEEP_INTERVAL_MS = 30_000;
 
 /**
  * In-memory `PreviewStore`. Entries are retained after consumption/expiry (as small
@@ -157,30 +230,44 @@ interface StoredEntry {
 export class InMemoryPreviewStore implements PreviewStore {
   private readonly entries = new Map<string, StoredEntry>();
   private readonly now: () => Date;
+  private readonly maxEntries: number;
+  private readonly maxEntriesPerSession: number;
+  private readonly retentionMs: number;
+  private lastSweepAt = 0;
 
-  constructor(now: () => Date = () => new Date()) {
+  constructor(now: () => Date = () => new Date(), options: InMemoryPreviewStoreOptions = {}) {
     this.now = now;
+    this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
+    this.maxEntriesPerSession = options.maxEntriesPerSession ?? DEFAULT_MAX_ENTRIES_PER_SESSION;
+    this.retentionMs = options.tombstoneRetentionMs ?? DEFAULT_TOMBSTONE_RETENTION_MS;
   }
 
   put(record: PreviewRecord): Promise<void> {
+    this.sweepIfDue();
+    // Re-inserting moves the record to the newest position of the eviction order.
+    this.entries.delete(record.previewId);
     this.entries.set(record.previewId, { record, consumed: false });
+    this.enforceCaps(record.sessionId);
     return Promise.resolve();
   }
 
-  get(previewId: string): Promise<PreviewRecord | undefined> {
+  get(previewId: string, scope?: PreviewScope): Promise<PreviewRecord | undefined> {
+    this.sweepIfDue();
     const entry = this.entries.get(previewId);
     if (entry === undefined || entry.consumed) {
       return Promise.resolve(undefined);
     }
-    if (this.isExpired(entry.record)) {
+    if (this.isExpired(entry.record) || !inScope(entry.record, scope)) {
       return Promise.resolve(undefined);
     }
     return Promise.resolve(entry.record);
   }
 
-  consume(previewId: string): Promise<ConsumeResult> {
+  consume(previewId: string, scope?: PreviewScope): Promise<ConsumeResult> {
+    this.sweepIfDue();
     const entry = this.entries.get(previewId);
-    if (entry === undefined) {
+    // A record that belongs to another session looks exactly like a missing one, and is left alone.
+    if (entry === undefined || !inScope(entry.record, scope)) {
       return Promise.resolve({ status: "not_found" });
     }
     if (entry.consumed) {
@@ -190,10 +277,90 @@ export class InMemoryPreviewStore implements PreviewStore {
       return Promise.resolve({ status: "expired" });
     }
     entry.consumed = true;
+    entry.consumedAt = this.now().getTime();
     return Promise.resolve({ status: "ok", record: entry.record });
+  }
+
+  /**
+   * Keeps the store within its caps. Dead records (consumed or expired) are always dropped before a
+   * live one; a live record is only ever dropped from the session that is over its own cap or, for
+   * the global cap, holds the most records. The newest record of a session is never the victim of
+   * its own put.
+   */
+  private enforceCaps(sessionId: string | undefined): void {
+    while (this.countFor(sessionId) > this.maxEntriesPerSession) {
+      if (!this.evictOne((entry) => entry.record.sessionId === sessionId)) break;
+    }
+    while (this.entries.size > this.maxEntries) {
+      const heaviest = this.heaviestSession();
+      if (!this.evictOne((entry) => entry.record.sessionId === heaviest.sessionId)) break;
+    }
+  }
+
+  private countFor(sessionId: string | undefined): number {
+    let count = 0;
+    for (const entry of this.entries.values()) if (entry.record.sessionId === sessionId) count += 1;
+    return count;
+  }
+
+  /** The session with the most stored records, or any dead record's session when one exists. */
+  private heaviestSession(): { sessionId: string | undefined } {
+    const counts = new Map<string | undefined, number>();
+    let dead: { sessionId: string | undefined } | undefined;
+    for (const entry of this.entries.values()) {
+      counts.set(entry.record.sessionId, (counts.get(entry.record.sessionId) ?? 0) + 1);
+      if (dead === undefined && this.isDead(entry)) dead = { sessionId: entry.record.sessionId };
+    }
+    if (dead !== undefined) return dead;
+    let best: { sessionId: string | undefined } = { sessionId: undefined };
+    let bestCount = -1;
+    for (const [sessionId, count] of counts) {
+      if (count > bestCount) {
+        best = { sessionId };
+        bestCount = count;
+      }
+    }
+    return best;
+  }
+
+  private isDead(entry: StoredEntry): boolean {
+    return entry.consumed || this.isExpired(entry.record);
+  }
+
+  /** Drops the oldest dead matching entry, else the oldest live matching one; false if none. */
+  private evictOne(matches: (entry: StoredEntry) => boolean): boolean {
+    let oldestLive: string | undefined;
+    for (const [id, entry] of this.entries) {
+      if (!matches(entry)) continue;
+      if (this.isDead(entry)) {
+        this.entries.delete(id);
+        return true;
+      }
+      oldestLive ??= id;
+    }
+    if (oldestLive === undefined) return false;
+    this.entries.delete(oldestLive);
+    return true;
   }
 
   private isExpired(record: PreviewRecord): boolean {
     return this.now().getTime() > record.expiresAt.getTime();
   }
+
+  /** Drops consumed records and expired-unapplied records once their retention has passed. */
+  private sweepIfDue(): void {
+    const nowMs = this.now().getTime();
+    if (nowMs - this.lastSweepAt < SWEEP_INTERVAL_MS) return;
+    this.lastSweepAt = nowMs;
+    for (const [id, entry] of this.entries) {
+      const goneAt = entry.consumed
+        ? (entry.consumedAt ?? nowMs)
+        : entry.record.expiresAt.getTime();
+      if (nowMs - goneAt > this.retentionMs) this.entries.delete(id);
+    }
+  }
+}
+
+function inScope(record: PreviewRecord, scope: PreviewScope | undefined): boolean {
+  return scope === undefined || record.sessionId === scope.sessionId;
 }

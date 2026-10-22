@@ -1442,6 +1442,50 @@ describe("label reprint limits (per-order cooldown and per-hour counter)", () =>
     }
   });
 
+  it("shares the cooldown and the hourly cap across sessions that share one preview store", async () => {
+    // HTTP mode gives every MCP session its own session-bound view of ONE shared store; opening a
+    // fresh session must not reset the limiter (T-5675 review: it keyed on the per-session wrapper).
+    const time = clock();
+    const previewStore = new InMemoryPreviewStore(time.now);
+    const open = (sessionId: string) =>
+      startHarness({
+        env: writesEnv({ NEWEGG_MCP_MAX_LABEL_REPRINTS_PER_HOUR: "2" }),
+        routes: [orderRoute(true), postRoute(REPRINT, 200, reprintBody)],
+        now: time.now,
+        previewStore,
+        sessionId,
+      });
+    const a = await open("session-a");
+    const b = await open("session-b");
+    try {
+      const first = await previewReprint(a);
+      expect((await applyReprint(a, first.json.previewId)).isError).toBe(false);
+
+      // Session B previews and applies the same order inside the cooldown: refused, nothing sent.
+      time.advance(30);
+      const viaB = await previewReprint(b);
+      expect(viaB.json.eligible).toBe(false);
+      expect((viaB.json.blockers as string[]).join("\n")).toContain(
+        "NEWEGG_MCP_LABEL_REPRINT_COOLDOWN_SECONDS",
+      );
+      expect(posts(b)).toHaveLength(0);
+
+      // The hourly cap is shared as well: a second order through B counts toward A's total.
+      time.advance(700);
+      const second = await previewReprint(b);
+      expect((await applyReprint(b, second.json.previewId)).isError).toBe(false);
+      time.advance(700);
+      const third = await previewReprint(a);
+      expect(third.json.eligible).toBe(false);
+      expect((third.json.blockers as string[]).join("\n")).toContain(
+        "NEWEGG_MCP_MAX_LABEL_REPRINTS_PER_HOUR=2",
+      );
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
   it("honours a configured cooldown and caps reprints per rolling hour", async () => {
     const time = clock();
     const env = writesEnv({

@@ -2120,8 +2120,97 @@ Submit `POST reportmgmt/report/submitrequest?sellerid=&version=310` (the page's 
 embedded (live-verified on the Item Basic Information report, CAN 2026-09-01). Never
 log it, put it in an error, return it from an MCP tool or store it in the repo. The SDK withholds the URL
 from every public type (`ReportFileInfo` exposes only the host and file name), redacts `user:pass@` in every
-`raw` payload (`includeRaw`), downloads over FTP itself (passive mode, host allow-list `*.newegg.com`, size
-caps) or through the caller's `reportFileDownloader`, and keeps the URL out of thrown errors.
+`raw` payload (`includeRaw`), downloads over FTP itself (passive mode, host allow-list `*.newegg.com`, URL
+port 21 only, size caps, explicit FTPS opt-in; see below) or through the caller's `reportFileDownloader`, and
+keeps the URL out of thrown errors.
+
+**FTP transport security (T-5668 / T-5669; live-verified 2026-10-21/22 on CAN, read-only).** Plain FTP puts
+`USER`/`PASS` and the report (order and customer data) on the wire in clear text. What the live checks found on
+`mktpftpreport.newegg.com:21`:
+
+- Greeting `220 Serv-U FTP Server ready...`; `AUTH TLS` is answered `234 AUTH command OK. Initializing SSL
+connection.` (credential-free probe), so the server offers explicit FTPS (RFC 4217).
+- The TLS handshake **fails default verification**: `DEPTH_ZERO_SELF_SIGNED_CERT`. The certificate is the
+  self-signed Serv-U default (subject = issuer `CN=ftp.Serv-U.com, O=SolarWinds Worldwide, LLC`, valid
+  2026-03-05 to 2031-03-05, no SAN, SHA-256 fingerprint
+  `952350b898339311c552e51e33a634070efd370eec848e90b3e3d7e94bfbc13d`). It is neither issued for the host nor
+  chained to a public root, so a CA/host-name check cannot succeed.
+- With the certificate **pinned by fingerprint**, one real Item Basic Information report was downloaded over
+  FTPS end to end (`AUTH TLS`, `PBSZ 0`, `PROT P`, `PASV` data channel over TLS, `RETR`; 87 rows parsed). The
+  data channel resumes the control session, which presents no certificate; Node does not repeat the identity
+  check for a resumed session, so the pin is enforced on the control connection. After the review fixes (SIZE
+  check, data-channel error wrapping) and again after certificate validation was made unconditional (below),
+  the same download was repeated read-only and returned 87 rows each time.
+- **The observed certificate (public, not a secret; observed 2026-10-22).** Save it as a `.pem` file and use it
+  as `tlsCa` / `NEWEGG_MCP_REPORT_FTPS_CA_FILE`; the fingerprint above is its SHA-256. To re-fetch and compare it
+  yourself: `openssl s_client -starttls ftp -connect mktpftpreport.newegg.com:21 -showcerts </dev/null` (copy the
+  first `BEGIN CERTIFICATE` block), then `openssl x509 -noout -fingerprint -sha256 -in server.pem`.
+
+```
+-----BEGIN CERTIFICATE-----
+MIIDnzCCAoegAwIBAgIRAJtfHbElHQJeV1WXpubiDt8wDQYJKoZIhvcNAQELBQAw
+gYoxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEPMA0GA1UEBwwGQXVzdGlu
+MSIwIAYDVQQKDBlTb2xhcldpbmRzIFdvcmxkd2lkZSwgTExDMR0wGwYDVQQLDBRT
+b2Z0d2FyZSBEZXZlbG9wbWVudDEXMBUGA1UEAwwOZnRwLlNlcnYtVS5jb20wHhcN
+MjYwMzA1MDAxNDQ5WhcNMzEwMzA1MDAxNDQ5WjCBijELMAkGA1UEBhMCVVMxDjAM
+BgNVBAgMBVRleGFzMQ8wDQYDVQQHDAZBdXN0aW4xIjAgBgNVBAoMGVNvbGFyV2lu
+ZHMgV29ybGR3aWRlLCBMTEMxHTAbBgNVBAsMFFNvZnR3YXJlIERldmVsb3BtZW50
+MRcwFQYDVQQDDA5mdHAuU2Vydi1VLmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEP
+ADCCAQoCggEBAO/LShx/j/Maz3RO1J5k5Lw52GwfG3q3pCyUQI1cC6PwFP5d7W9L
+/IlQ4mBsbWosqbHmlBVMgUdof9us1sjbUAKuwWt3ReghUk/CM3Eq7j42kKQwAqOv
+mVLENN2wqmNzjUWU9+46/AHbVXShTcaea/2NiuTbYIGTWfzExxSNF44gFNd8BsfR
+Y2WNT3pa0ATA2e+2oOxx86rZJIAZpSIvoGFzE6lxTt8o7qx1mGBXFGKmQgeToQoW
+jngqyeakroZbO++C/hgKIzI+GCNGDxZrFU2UCbzfQ0mo6u3EnxW4ssCteRGPNSgc
+Ghsr//zPKYT9gAL8sBoXQKWsjV2blRo5WHsCAwEAATANBgkqhkiG9w0BAQsFAAOC
+AQEAtjJyxqtIOUs5DurX6xMVI/v05H9G/nzY1T/WmQ54F7F2OJ3BGYfl1sZPNO+5
+IhEVrLTxk1UI93I2o7aHRheTudHBK7/XxAVSHhkz3u9v9EqC5bUp0aO50aiLtXUy
+7oksut3CULw1NbLfVbJ4jCHywd/JbBqT+5hIO08ZjBoK5OHzt5Gav/zGcHNGmwGx
+SANN7FSOcQugDIdFtJj9GhXJrmRVcKj8IhUZfrjuA4g7e/zySz4sOvDzIRf01bh5
+QOfmkvwPl6pP2w9BTVvmQ1MLxmq2UNuW+hhL5o05x5IRXfkE7W/vBCXYjjDN0yIM
+jWP74eRe+m6MkGm3rM6BSTJ/0g==
+-----END CERTIFICATE-----
+```
+
+- **What the pin proves.** The certificate is Serv-U's stock self-signed certificate (`CN=ftp.Serv-U.com`),
+  not one Newegg issued for its host. **ASSUMPTION (not verified): the private key of that stock certificate
+  is shared by other Serv-U installs.** If so, anyone running Serv-U can present the same certificate, so the
+  pin cannot tell Newegg's server from theirs. The pin then protects against a passive eavesdropper (the
+  traffic is encrypted) but **not against an active man-in-the-middle**. A certificate issued for Newegg's
+  own host name, or a Newegg-provided fingerprint, would be needed for that; ask Newegg.
+
+Because default verification cannot succeed, **plain FTP stays the default** and FTPS is opt-in
+(`NeweggClientConfig.reportFileFtp = { ftps: true, tlsCa: <PEM below>, tlsPinnedCertSha256: "<hex>" }`; MCP
+`NEWEGG_MCP_REPORT_FTPS=true` + `NEWEGG_MCP_REPORT_FTPS_CA_FILE=<path to the PEM>` +
+`NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`). **Certificate validation is never disabled** (no
+`rejectUnauthorized: false` anywhere): the self-signed certificate is trusted explicitly as its own anchor
+through `tlsCa`, so the chain validates, and the pin replaces only the host name comparison (a
+`checkServerIdentity` that accepts the certificate only when its SHA-256 fingerprint is the pinned one). A
+pin without `tlsCa` is a configuration error. With `ftps` there is no fallback: a server
+that does not answer `234` fails the download with nothing sent (`details.stage = "TLS upgrade (server does
+not offer FTPS, nothing was sent)"`), and a certificate that is neither trusted (`tlsCa` / default store) nor
+the pinned one (or whose chain does not validate against `tlsCa`) fails it before `USER`/`PASS` (`details.stage = "TLS handshake (certificate or protocol
+error)"`, `details.tlsError`). A failed data-channel handshake or pin check is a `NeweggApiError` with
+`details.stage = "data channel TLS (certificate or protocol error)"`, and a data channel that ends before
+its handshake completed is `"data channel TLS (closed before the handshake completed)"`. The fingerprint has to be obtained out of band; a
+certificate Newegg rotates (this one expires 2031) fails closed until the pin is updated. The downloader also:
+
+- connects only to URL port 21 (`reportFileFtp.allowedPorts` widens it), because the port comes from the
+  Newegg response and a hostile response must not aim the client at another TCP port on a `*.newegg.com` host;
+- caps one control line at 64 KiB and one (multi-line) reply at 256 KiB, and holds at most 64 complete
+  replies that no command asked for (single-line and multi-line alike), destroying the socket and failing the
+  download (also while the transfer is running) on overflow, so a hostile or intercepted server cannot grow
+  memory without bound;
+- compares the received byte count with `SIZE <file>` (RFC 3659, sent after `TYPE I`): a shorter or longer
+  transfer fails with `details.stage = "transfer (truncated: received N of M bytes)"`, and a `SIZE` above the
+  size cap fails before `RETR`. This is the only truncation check there is: Node's TLS layer does not report a
+  data channel dropped without `close_notify` (verified: abrupt close and clean close both end with a plain
+  `end`), so **over FTPS a server that cannot answer `SIZE` is refused**
+  (`"transfer setup (server cannot report the file size, ...)"`); plain FTP proceeds without it. Serv-U
+  answers `SIZE` (the live runs above).
+
+Status: the FTPS half of T-5668 is therefore PARTIAL by design (opt-in with a pin, not default); the port pin
+and the bounded control channel are complete. Other hosts (`ftp03.newegg.com` does not resolve) were not
+checked.
 
 ### 17.6 Order List and RMA List reports
 
@@ -2246,7 +2335,8 @@ reports (only CAN was exercised).
   (surfaced as `NeweggApiError`), so wait for FINISHED first. The FTP download of a Daily Inventory file
   is covered by mocked tests and a local fake FTP server only (**ASSUMPTION**: passive FTP to the documented
   `ftp03.newegg.com` URL); the SDK's downloader **was** verified live on the Item Basic Info report's
-  `mktpftpreport.newegg.com` URL (§17.8), which retires the "FTP download itself" assumption in general.
+  `mktpftpreport.newegg.com` URL (§17.8), which retires the "FTP download itself" assumption in general
+  (that live run used the plain-FTP downloader that preceded the FTPS upgrade described in §17.5).
 - **Empty lists (checked 2026-10-10, CAN):** servicemgmt answers an empty list with `""` (§18); the reports do
   NOT do that. An Order List with no matches omits the list key entirely (only `PageInfo` with
   `TotalCount: 0` is present). The SDK's report row reader also drops a `""` / `{}` list node and blank
@@ -2914,7 +3004,7 @@ Body (a refund RMA for one line; all values strings):
 - `RMAReason` (request side, 1-10): 1 item damaged, 2 defective, 3 incompatible, 4 no longer needed,
   5 not as described, 6 ordered wrong item, 7 sent wrong item, 8 unsatisfied, 9 extra item shipped, 10 item
   not received. Reasons **3, 4, 6, 8** additionally require `UnOpen` (`"0"`/`"1"`), 1-5 evidence image URLs
-  (`FileUrls > ImgUrl`) and a `Memo`. `FileUrls` and `Memo` are documented **US and CAN only**; the SDK
+  (`FileUrls > ImgUrl`; the SDK sends **https URLs without `user:password@` only**, since Newegg fetches them) and a `Memo`. `FileUrls` and `Memo` are documented **US and CAN only**; the SDK
   refuses them on B2B (`acceptsEvidenceFiles`).
 - `AutoReceiveMark` `"1"` marks the RMA received on creation (refund only). **The SDK supports it but the MCP
   never exposes it** (auto-receiving is the step before a refund pays out).
@@ -3040,7 +3130,8 @@ balance cannot be established. The write methods
 **MCP.** Both the preview and the apply tool of each pair register only when
 `NEWEGG_MCP_ALLOW_WRITES=true` (ADR 0005 and the pricing precedent). A preview with blockers returns no
 `previewId`; a clean one returns a single-use, TTL-bound, 256-bit `previewId`, and apply accepts only that
-id, re-hashes the stored request (`preview_tampered`) and refuses a replay, an expired id or one of another
+id, re-hashes the stored request (error code `preview_tampered`; the hash is unkeyed, so it detects
+a changed record rather than proving who changed it) and refuses a replay, an expired id or one of another
 kind. The ceiling `NEWEGG_MCP_MAX_REFUND_AMOUNT` (default 500, in the marketplace currency) applies to
 EVERY `refundTotal`: RMA submit, edit and process, and the courtesy refund. It is MCP-only and **per
 operation**, not cumulative across previews: SDK callers are the operator, so the SDK enforces only the

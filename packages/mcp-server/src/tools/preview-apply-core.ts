@@ -8,6 +8,7 @@
  * Per ADR 0001 this layer is MCP-SDK-free.
  */
 import type { PreviewRecord } from "../preview-store/index.js";
+import { previewHashMatches } from "./preview-hash.js";
 import {
   businessError,
   errorResult,
@@ -57,12 +58,30 @@ export async function consumeTypedPreview<K extends PreviewRecord["kind"]>(
     const mapped = CONSUME_ERRORS[consumed.status];
     return { error: errorResult(businessError(mapped.code, mapped.message)) };
   }
+  // Defense in depth for a store that ignored the session scope: the record must still be ours.
+  if (consumed.record.sessionId !== ctx.sessionId) {
+    const mapped = CONSUME_ERRORS.not_found;
+    return { error: errorResult(businessError(mapped.code, mapped.message)) };
+  }
   if (consumed.record.kind !== kind) {
     return {
       error: errorResult(
         businessError(
           "preview_kind_mismatch",
           "This previewId belongs to a different operation type; apply it with its matching tool.",
+        ),
+      ),
+    };
+  }
+  // Re-verify the stored hash for the kinds that do not check it themselves (ADR 0005): a record
+  // altered in a shared or persistent store since the preview is refused, and nothing is sent.
+  if (!previewHashMatches(consumed.record)) {
+    return {
+      error: errorResult(
+        businessError(
+          "preview_tampered",
+          "The stored preview no longer matches the hash taken when it was created (the store altered or " +
+            "corrupted it), so nothing was sent. The preview has been consumed; create a new preview.",
         ),
       ),
     };

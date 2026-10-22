@@ -23,6 +23,31 @@ export type ReportFileDownloader = (
   options: { signal?: AbortSignal; maxBytes: number; timeoutMs: number },
 ) => Promise<Uint8Array>;
 
+/**
+ * Transport settings of the built-in FTP downloader (`NeweggClientConfig.reportFileFtp`). The
+ * defaults are plain FTP (what Newegg's self-signed server allows without a pin), URL port 21
+ * only and `*.newegg.com` only; `ftps` opts in to explicit FTPS.
+ */
+export interface ReportFileFtpOptions {
+  /**
+   * Opt in to explicit FTPS (`AUTH TLS` before the login, protected data channel). Off by default:
+   * plain FTP exposes the credentials and the report to anyone on the network path, but Newegg's
+   * server presents a self-signed certificate, so FTPS needs that certificate's PEM in `tlsCa` and its
+   * fingerprint in `tlsPinnedCertSha256`.
+   * With `ftps` there is no fallback to clear text: a failed upgrade fails the download.
+   */
+  ftps?: boolean;
+  /**
+   * SHA-256 fingerprint (hex) the server certificate must have (FTPS); replaces the host name check
+   * and requires `tlsCa` to hold the certificate so the chain validates.
+   */
+  tlsPinnedCertSha256?: string;
+  /** URL ports the downloader may connect to. Default `[21]`. */
+  allowedPorts?: number[];
+  /** Extra trusted CA certificate(s), PEM, for the FTPS handshake (verification is never disabled). Pass the server's own PEM for a self-signed certificate. */
+  tlsCa?: string | string[];
+}
+
 export interface ReportSubmission {
   marketplace: NeweggMarketplace;
   /** Poll with `status(requestId)` / continue with `result` or `waitForRequest` - do NOT resubmit. */

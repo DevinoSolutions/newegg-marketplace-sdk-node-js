@@ -47,17 +47,22 @@ const nonNegativeAmountSchema = z
   .max(SERVICE_WRITE_MAX_AMOUNT, `must be <= ${SERVICE_WRITE_MAX_AMOUNT}`)
   .refine(twoDecimals, "must have at most 2 decimal places");
 
+/**
+ * Evidence images are fetched by Newegg from the URL we send: https only (no plain http, no other
+ * scheme) and no userinfo, so an agent-supplied URL cannot smuggle credentials to a third party.
+ * The message never echoes the value.
+ */
 const imageUrlSchema = z
   .string()
   .max(2048)
   .refine((value) => {
     try {
       const url = new URL(value);
-      return url.protocol === "https:" || url.protocol === "http:";
+      return url.protocol === "https:" && url.username === "" && url.password === "";
     } catch {
       return false;
     }
-  }, "must be an http(s) URL");
+  }, "must be an https URL without embedded credentials (user:password@)");
 
 const imageUrlsSchema = z.array(imageUrlSchema).min(1).max(5);
 

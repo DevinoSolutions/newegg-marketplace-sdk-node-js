@@ -410,8 +410,19 @@ class FileReportApiImpl<Input, Row> implements FileReportApi<Input, Row> {
       );
     }
     const config = this.core.http.config;
+    const ftp = config.reportFileFtp;
     const downloader =
-      config.reportFileDownloader ?? ((target, opts) => downloadViaFtp(target, { ...opts }));
+      config.reportFileDownloader ??
+      ((target, opts) =>
+        downloadViaFtp(target, {
+          ...opts,
+          ...(ftp?.ftps === undefined ? {} : { ftps: ftp.ftps }),
+          ...(ftp?.tlsPinnedCertSha256 === undefined
+            ? {}
+            : { tlsPinnedCertSha256: ftp.tlsPinnedCertSha256 }),
+          ...(ftp?.allowedPorts === undefined ? {} : { allowedPorts: ftp.allowedPorts }),
+          ...(ftp?.tlsCa === undefined ? {} : { tlsCa: ftp.tlsCa }),
+        }));
     let bytes: Uint8Array;
     try {
       bytes = await downloader(url, {

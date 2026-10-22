@@ -17,6 +17,7 @@ import type {
 } from "@devino/newegg-marketplace-sdk";
 import type { McpServerConfig } from "../config/index.js";
 import type { PreviewStore } from "../preview-store/index.js";
+import { redactLogText } from "./log-redact.js";
 
 // ---------------------------------------------------------------------------
 // logging + context
@@ -32,6 +33,11 @@ export interface ToolContext {
   readonly previewStore: PreviewStore;
   readonly logger: Logger;
   readonly now: () => Date;
+  /**
+   * The MCP session this context serves (HTTP transport), or undefined on stdio. Previews are
+   * bound to it: a record created in another session cannot be consumed here.
+   */
+  readonly sessionId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,10 +117,12 @@ export function mapErrorToPayload(error: unknown, logger: Logger): ToolErrorPayl
     return payload;
   }
   const correlationId = randomUUID();
+  // Unexpected errors can carry URLs (a failed fetch): drop credentials and query strings first.
   logger("error", "unexpected_tool_error", {
     correlationId,
-    message: error instanceof Error ? error.message : String(error),
-    stack: error instanceof Error ? error.stack : undefined,
+    message: redactLogText(error instanceof Error ? error.message : String(error)),
+    stack:
+      error instanceof Error && error.stack !== undefined ? redactLogText(error.stack) : undefined,
   });
   return { errorCode: "internal", message: "internal error", correlationId };
 }
