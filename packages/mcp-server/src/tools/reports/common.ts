@@ -17,7 +17,7 @@ import {
 } from "../shared.js";
 
 /** Default bounded wait before returning pending (seconds). */
-export const DEFAULT_WAIT_SECONDS = 55;
+const DEFAULT_WAIT_SECONDS = 55;
 /** Rows returned per call unless the caller asks for fewer/more (hard cap {@link MAX_LIMIT}). */
 export const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
