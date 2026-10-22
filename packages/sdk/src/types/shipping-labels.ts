@@ -4,6 +4,36 @@ import type { NeweggMarketplace, RequestOptions } from "./common.js";
 import type { RmaCurrency } from "./rma.js";
 import type { RateLimitInfo } from "./runtime.js";
 
+/**
+ * An earlier label create for the same order that blocks a new one (T-6212): dispatched with an
+ * unknown outcome (`submitting`) or confirmed bought (`submitted`). Kept per (marketplace, order)
+ * in the client's `OperationStore` for 24 hours.
+ */
+export interface LabelCreateAttempt {
+  state: "submitting" | "submitted";
+  /** Pass this as `acknowledgePriorAttemptId` once the order is verified to hold no label. */
+  attemptId: string;
+  /** When the attempt was last recorded (ISO 8601). */
+  atIso: string;
+}
+
+/** Options of {@link ShippingLabelsApi.previewCreate} / `create`. */
+export interface ShippingLabelCreateOptions extends RequestOptions {
+  /**
+   * The `attemptId` of the prior create attempt, passed back after the caller verified that the
+   * order holds no label. It clears ONLY that attempt, and only while the order lists no package;
+   * a newer attempt blocks again. This is NOT a human gate: any code holding the id (it is in the
+   * error and in `priorAttempt`) can pass it, so a caller that wants a human decision must keep
+   * the id away from the automated actor, as the MCP server does (it never offers this option).
+   */
+  acknowledgePriorAttemptId?: string;
+  /**
+   * Replaces the default remedy text of a prior-attempt blocker and error (which tells the caller
+   * to pass `acknowledgePriorAttemptId`) and leaves the attempt id out of the message.
+   */
+  priorAttemptGuidance?: string;
+}
+
 // ----------------------------------------------------------------------------
 // shipping labels (contracts §23)
 // ----------------------------------------------------------------------------
@@ -74,6 +104,8 @@ export interface ShippingLabelPreview<N> {
   /** Things worth a human look; they do not stop the write. */
   warnings: string[];
   correlationId: string;
+  /** Set by `previewCreate` when an earlier create for this order blocks (or was acknowledged for) this one. */
+  priorAttempt?: LabelCreateAttempt;
 }
 
 /** The carrier charge Newegg quotes (estimate) or bills (create) for one package. */
@@ -172,10 +204,26 @@ export interface ShippingLabelsApi {
   /** Read-only plan for {@link ShippingLabelsApi.create}; nothing is bought. */
   previewCreate(
     input: ShippingLabelInput,
-    options?: RequestOptions,
+    options?: ShippingLabelCreateOptions,
   ): Promise<ShippingLabelPreview<ShippingLabelInput>>;
-  /** WRITE: Shipping Label Request (1,000 req/hr). Buys the label(s) and ships the order. */
-  create(input: ShippingLabelInput, options?: RequestOptions): Promise<ShippingLabelResult>;
+  /**
+   * WRITE: Shipping Label Request (1,000 req/hr). Buys the label(s) and ships the order. Refuses
+   * with `LabelCreateGuardError` (nothing sent) while an earlier create for the same order was
+   * dispatched with an unknown outcome or succeeded; see {@link ShippingLabelCreateOptions}.
+   */
+  create(
+    input: ShippingLabelInput,
+    options?: ShippingLabelCreateOptions,
+  ): Promise<ShippingLabelResult>;
+  /**
+   * Throws `LabelCreateGuardError` when the create ledger blocks a create for this order. Reads
+   * only the ledger (the operation store): no Newegg request is made, so a blocked order costs
+   * nothing, not even an order read or an estimate.
+   */
+  assertCreateNotBlocked(
+    orderNumber: string | number,
+    options?: Pick<ShippingLabelCreateOptions, "priorAttemptGuidance">,
+  ): Promise<void>;
   /** Read-only plan for {@link ShippingLabelsApi.reprint}; nothing is requested. */
   previewReprint(
     orderNumber: string | number,

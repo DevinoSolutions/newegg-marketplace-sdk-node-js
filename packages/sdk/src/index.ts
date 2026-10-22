@@ -15,6 +15,9 @@ export * from "./errors/index.js";
 // Factory.
 export { createNeweggClient } from "./client/index.js";
 
+// Typed refusal of a second label purchase for an order (T-6212).
+export { LabelCreateGuardError } from "./shippinglabel/guard-error.js";
+
 // Store implementations.
 export { InMemoryRateLimitStore } from "./rate-limit/index.js";
 export { InMemoryOperationStore } from "./operation-store/index.js";

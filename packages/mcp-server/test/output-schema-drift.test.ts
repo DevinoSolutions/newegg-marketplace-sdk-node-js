@@ -67,6 +67,10 @@ const FEED_ENVELOPES =
   "Raw feed envelope bodies (the exact submission); `items` carries the structured plan.";
 
 const NORMALIZED_AS_REQUEST = "Returned as `request`, an open record, so it cannot drift.";
+const ATTEMPT_ID_WITHHELD = {
+  "priorAttempt.attemptId":
+    "SDK-only acknowledgement id: handing it to the agent being guarded would defeat the label create guard (T-6212).",
+};
 const RMA_RECEIPT =
   "The apply output is a write receipt (what was sent); full RMA detail is newegg_rma_get.";
 const AT_ENVELOPE_ROOT = "Reported on the envelope root, not inside this sub-object.";
@@ -463,12 +467,12 @@ const TABLE: Mapping[] = [
   {
     tool: "newegg_shipping_label_preview_create",
     sdk: ret("shippingLabels", "previewCreate"),
-    omit: { normalized: NORMALIZED_AS_REQUEST },
+    omit: { normalized: NORMALIZED_AS_REQUEST, ...ATTEMPT_ID_WITHHELD },
   },
   {
     tool: "newegg_shipping_label_preview_reprint",
     sdk: ret("shippingLabels", "previewReprint"),
-    omit: { normalized: NORMALIZED_AS_REQUEST },
+    omit: { normalized: NORMALIZED_AS_REQUEST, ...ATTEMPT_ID_WITHHELD },
   },
   { tool: "newegg_shipping_label_apply_create", sdk: ret("shippingLabels", "create") },
   { tool: "newegg_shipping_label_apply_reprint", sdk: ret("shippingLabels", "reprint") },

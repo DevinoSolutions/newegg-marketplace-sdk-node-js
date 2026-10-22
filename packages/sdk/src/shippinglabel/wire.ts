@@ -141,6 +141,12 @@ function succeededOf(pkg: unknown, hasEvidence: boolean): boolean {
   return result === "success" || result === "succeeded" || result === "true";
 }
 
+/** True only for a `ProcessResult` that plainly says the package failed. Pending or odd values are not. */
+function explicitlyFailedOf(pkg: unknown): boolean {
+  const result = asString(getField(pkg, "ProcessResult"))?.trim().toLowerCase();
+  return result === "failed" || result === "failure" || result === "fail" || result === "error";
+}
+
 function nonEmpty(value: string | undefined): string | undefined {
   return value === undefined || value.trim() === "" ? undefined : value.trim();
 }
@@ -211,13 +217,17 @@ export interface ParsedCreateLabel {
   orderNumber: string;
   shipDate?: { raw: string; iso?: string };
   packages: ShippingLabelPackageResult[];
+  /** Aligned with `packages`: Newegg's `ProcessResult` plainly said the package failed. */
+  explicitFailures: boolean[];
 }
 
 export function parseCreateLabelResponse(json: unknown, correlationId: string): ParsedCreateLabel {
   const shipment = shipmentOf(json, correlationId);
+  const rawPackages = packagesOf(shipment);
   const parsed: ParsedCreateLabel = {
     orderNumber: asString(getField(shipment, "OrderNumber")) ?? "",
-    packages: packagesOf(shipment).map((pkg) => packageResultOf(pkg, true)),
+    packages: rawPackages.map((pkg) => packageResultOf(pkg, true)),
+    explicitFailures: rawPackages.map(explicitlyFailedOf),
   };
   const shipDate = toTimestamp(asString(getField(shipment, "ShipDate")));
   if (shipDate !== undefined) parsed.shipDate = shipDate;

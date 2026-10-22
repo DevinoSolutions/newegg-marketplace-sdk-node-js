@@ -2667,6 +2667,21 @@ export interface ShippingLabelReprintInput {
   orderNumber: string;
 }
 export type ShippingLabelWriteOperation = "shippingLabels.create" | "shippingLabels.reprint";
+// An earlier create for the same order that blocks a new one (T-6212; recorded in the client's
+// OperationStore under label-create:<marketplace>:<order>, 24 h).
+export interface LabelCreateAttempt {
+  state: "submitting" | "submitted"; // submitting = dispatched, outcome unknown; submitted = bought
+  attemptId: string; // what acknowledgePriorAttemptId names; NOT secret from the code that receives it
+  atIso: string;
+}
+export interface ShippingLabelCreateOptions extends RequestOptions {
+  // Clears ONLY that attempt, and not while the order lists a package. NOT a human gate: any code that holds
+  // the id (it is in LabelCreateGuardError.attempt and ShippingLabelPreview.priorAttempt) can pass it. A caller
+  // that needs a human decision must keep the id from the automated actor, as the MCP does (it never offers this).
+  acknowledgePriorAttemptId?: string;
+  // Replaces the default remedy text of the blocker/error (which names acknowledgePriorAttemptId) and leaves the id out.
+  priorAttemptGuidance?: string;
+}
 export interface ShippingLabelPreview<N> {
   marketplace: NeweggMarketplace;
   operation: ShippingLabelWriteOperation;
@@ -2676,6 +2691,7 @@ export interface ShippingLabelPreview<N> {
   blockers: string[]; // non-empty => the write throws NeweggValidationError
   warnings: string[];
   correlationId: string;
+  priorAttempt?: LabelCreateAttempt; // previewCreate only: the earlier create that blocks (or was acknowledged for) this one
 }
 export interface ShippingLabelRate {
   shipWeight?: number;
@@ -2743,9 +2759,16 @@ export interface ShippingLabelsApi {
   estimate(input: ShippingLabelInput, options?: RequestOptions): Promise<ShippingLabelEstimate>; // 1,000/hr; single attempt (no retry)
   previewCreate(
     input: ShippingLabelInput,
-    options?: RequestOptions,
-  ): Promise<ShippingLabelPreview<ShippingLabelInput>>; // reads the order
-  create(input: ShippingLabelInput, options?: RequestOptions): Promise<ShippingLabelResult>; // WRITE, 1,000/hr
+    options?: ShippingLabelCreateOptions,
+  ): Promise<ShippingLabelPreview<ShippingLabelInput>>; // reads the order; a prior attempt becomes a blocker + priorAttempt
+  assertCreateNotBlocked(
+    orderNumber: string | number,
+    options?: Pick<ShippingLabelCreateOptions, "priorAttemptGuidance">,
+  ): Promise<void>; // ledger only, NO Newegg request; throws LabelCreateGuardError
+  create(
+    input: ShippingLabelInput,
+    options?: ShippingLabelCreateOptions,
+  ): Promise<ShippingLabelResult>; // WRITE, 1,000/hr; throws LabelCreateGuardError (nothing sent) after an indeterminate or successful create of the same order
   previewReprint(
     orderNumber: string | number,
     options?: RequestOptions,
@@ -2920,7 +2943,21 @@ export interface ShippingLabelsApi {
     abort after dispatch, HTTP 408 / any 5xx, or a 2xx with no (or another order's) package throws
     `IndeterminateOrderWriteError` and is never resent (check the order, then `reprint`). A request
     where some packages fail returns `failedCount > 0`; only an all-failed answer throws. There is no
-    void or refund of a label in the documented API. The MCP exposes
+    void or refund of a label in the documented API. **Duplicate-purchase ledger (T-6212):** `create`
+    records an attempt per (marketplace, order number) in the client's `OperationStore` BEFORE dispatch
+    (`submitting`), settles it `submitted` on a confirmed purchase and `failed` only when provably nothing was
+    bought (never dispatched, HTTP 4xx, every package refused); an indeterminate outcome stays `submitting`.
+    While a `submitting` or `submitted` record younger than 24 h exists, `previewCreate` adds a blocker and
+    `priorAttempt`, and `create` throws `LabelCreateGuardError` (exported value; a `NeweggValidationError`
+    with `orderNumber` and `attempt`) with nothing sent, re-checked after the order read and again by a
+    synchronous claim, kept per `OperationStore` (not per client), so concurrent creates send one request even
+    across clients on one store. `acknowledgePriorAttemptId` (the attempt's id, after the caller verified the
+    order) clears that attempt only, never while the order lists a package; it is **not a human gate** (any
+    code holding the id can pass it), which is why the MCP never offers it. Only a package that plainly says
+    `Failed` (`ProcessResult`) with an error text counts as a refusal; `Pending` or an unfamiliar status keeps
+    the record `submitting`. `assertCreateNotBlocked` checks the ledger alone, without any request. A
+    record that cannot be written stops the purchase. The store has no compare-and-set, so processes sharing
+    one store can race in the preview-to-claim window. The MCP exposes
     `newegg_shipping_label_estimate` and the four preview / apply tools only with
     `NEWEGG_MCP_ALLOW_WRITES=true`; it returns label links only for `https://*.newegg.com`. The SDK has no
     cost ceiling; the MCP has `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100, marketplace currency): the
