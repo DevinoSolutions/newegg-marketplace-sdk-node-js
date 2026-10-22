@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -16,6 +17,7 @@ import {
   startHarness,
   type Harness,
 } from "./helpers.js";
+import { courtesyIssueBody, readRoutes } from "./service-write-fixtures.js";
 
 // T-5674 (I2): the stored hash is re-verified at apply for every kind.
 // T-5675 (I3): previews are bound to the MCP session that created them.
@@ -396,5 +398,239 @@ describe("the in-memory preview store sweeps and bounds itself (T-5670 / L6)", (
     expect((await store.consume("p1")).status).toBe("not_found");
     expect((await store.consume("p2")).status).toBe("not_found");
     expect((await store.consume("p5")).status).toBe("ok");
+  });
+});
+
+// T-6218: the stored hash must be a keyed MAC. Anyone who can write a shared or persistent
+// PreviewStore knows the public canonical form, so a plain sha-256 recomputed over an altered
+// record must not pass.
+const sha256Of = (value: unknown): string =>
+  createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
+
+/** The pre-T-6218 inventory hash: plain sha-256 over the public canonical form. */
+function publicInventoryHash(stored: {
+  marketplace: string;
+  strategy: string;
+  normalizedUpdates: Array<Record<string, unknown>>;
+}): string {
+  return sha256Of({
+    marketplace: stored.marketplace,
+    strategy: stored.strategy,
+    updates: stored.normalizedUpdates.map((update) => {
+      const identifier = update["identifier"] as {
+        type: string;
+        value: string;
+        condition?: string;
+      };
+      return {
+        inputIndex: update["inputIndex"],
+        type: identifier.type,
+        value: identifier.value,
+        condition: identifier.type === "upc" ? (identifier.condition ?? null) : null,
+        quantity: update["quantity"],
+        warehouseLocation: update["warehouseLocation"] ?? null,
+        fulfillmentOption: update["fulfillmentOption"] ?? null,
+      };
+    }),
+  });
+}
+
+type Forgeable = Record<string, unknown> & { hash: string };
+
+const REFUND_ARGS = {
+  orderNumber: "900000002",
+  reason: "customerCourtesy",
+  amount: 25.5,
+  noteToCustomer: "Sorry for the trouble",
+};
+
+describe("a forged store record with a recomputed public hash is refused (T-6218)", () => {
+  it("inventory: altered quantity + plain sha-256 over the public form", async () => {
+    const harness = await startHarness({ env: writesEnv(), routes: [inventoryAndPriceRoute()] });
+    try {
+      const preview = await callTool(harness.mcp, "newegg_inventory_preview_update", PREVIEW_ARGS);
+      const id = preview.json.previewId as string;
+      const stored = (await harness.previewStore.get(id)) as unknown as Forgeable & Stored;
+      first(stored.normalizedUpdates).quantity = 999;
+      stored.hash = publicInventoryHash(stored as never);
+      const applied = await callTool(harness.mcp, "newegg_inventory_apply_update", {
+        previewId: id,
+      });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_tampered");
+      expect(harness.calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("listing: altered price + plain sha-256 over {marketplace, items}", async () => {
+    const harness = await startHarness({ env: writesEnv(), routes: [listingSubmitRoute] });
+    try {
+      const preview = await callTool(harness.mcp, "newegg_listing_preview_create", {
+        items: [LISTING_ITEM],
+      });
+      const id = preview.json.previewId as string;
+      const stored = (await harness.previewStore.get(id)) as unknown as Forgeable & Stored;
+      first(stored.items).sellingPrice = 1;
+      stored.hash = sha256Of({ marketplace: stored["marketplace"], items: stored.items });
+      const applied = await callTool(harness.mcp, "newegg_listing_apply_create", { previewId: id });
+      expect(applied.json.errorCode).toBe("preview_tampered");
+      expect(harness.calls.filter((call) => call.url.pathname.includes("submitfeed"))).toHaveLength(
+        0,
+      );
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("courtesy refund: altered amount + plain sha-256 over the public form", async () => {
+    const harness = await startHarness({
+      env: writesEnv(),
+      routes: [
+        ...readRoutes({}),
+        {
+          method: "POST",
+          pathPattern: /servicemgmt\/courtesyrefund\/new/,
+          reply: () => ({ status: 200, body: courtesyIssueBody }),
+        },
+      ],
+    });
+    try {
+      const preview = await callTool(harness.mcp, "newegg_refund_preview_issue", REFUND_ARGS);
+      const id = preview.json.previewId as string;
+      const stored = (await harness.previewStore.get(id)) as unknown as Forgeable & {
+        input: { amount: number };
+        refundCents?: number;
+      };
+      stored.input.amount = 90;
+      stored.refundCents = 9000;
+      stored.hash = sha256Of({
+        kind: stored["kind"],
+        marketplace: stored["marketplace"],
+        input: stored.input,
+        refundCents: 9000,
+      });
+      const applied = await callTool(harness.mcp, "newegg_refund_apply_issue", { previewId: id });
+      expect(applied.json.errorCode).toBe("preview_tampered");
+      expect(harness.calls.filter((call) => call.method === "POST")).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("pricing: altered price + plain sha-256 over the public form", async () => {
+    const harness = await startHarness({ env: writesEnv(), routes: priceRoutes });
+    try {
+      const preview = await callTool(harness.mcp, "newegg_pricing_preview_update", {
+        updates: [{ identifier: { type: "sellerPartNumber", value: "SKU-1" }, sellingPrice: 18 }],
+      });
+      const id = preview.json.previewId as string;
+      const stored = (await harness.previewStore.get(id)) as unknown as Forgeable & Stored;
+      first(stored.normalizedUpdates).sellingPrice = 1;
+      stored.hash = sha256Of({
+        marketplace: stored["marketplace"],
+        updates: stored.normalizedUpdates.map((update, position) => {
+          const identifier = update["identifier"] as { type: string; value: string };
+          return {
+            inputIndex: update["inputIndex"],
+            type: identifier.type,
+            value: identifier.value,
+            condition: null,
+            sellingPrice: update["sellingPrice"],
+            countryCode: update["countryCode"] ?? null,
+            currency: update["currency"] ?? null,
+            previewedCurrentPrice: stored.previewedCurrentPrices[position] ?? null,
+          };
+        }),
+      });
+      const applied = await callTool(harness.mcp, "newegg_pricing_apply_update", {
+        previewId: id,
+      });
+      expect(applied.json.errorCode).toBe("preview_tampered");
+      expect(harness.calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe("the MAC binds previewId, sessionId and expiresAt (T-6218)", () => {
+  it("a copy of a valid record under another previewId is refused", async () => {
+    const harness = await startHarness({ env: writesEnv(), routes: [inventoryAndPriceRoute()] });
+    try {
+      const preview = await callTool(harness.mcp, "newegg_inventory_preview_update", PREVIEW_ARGS);
+      const stored = (await harness.previewStore.get(
+        preview.json.previewId as string,
+      )) as unknown as PreviewRecord;
+      await harness.previewStore.put({ ...stored, previewId: "forged-copy" });
+      const applied = await callTool(harness.mcp, "newegg_inventory_apply_update", {
+        previewId: "forged-copy",
+      });
+      expect(applied.json.errorCode).toBe("preview_tampered");
+      expect(harness.calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("a record moved to another session is refused", async () => {
+    const store = new InMemoryPreviewStore();
+    const a = await connectSession(store, "session-a");
+    const b = await connectSession(store, "session-b");
+    try {
+      const preview = await callTool(a.mcp, "newegg_inventory_preview_update", PREVIEW_ARGS);
+      const stored = (await store.get(preview.json.previewId as string, {
+        sessionId: "session-a",
+      })) as PreviewRecord;
+      await store.put({ ...stored, previewId: "moved-to-b", sessionId: "session-b" });
+      const applied = await callTool(b.mcp, "newegg_inventory_apply_update", {
+        previewId: "moved-to-b",
+      });
+      expect(applied.json.errorCode).toBe("preview_tampered");
+      expect(b.calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
+  it("a record whose expiry was extended is refused", async () => {
+    const harness = await startHarness({ env: writesEnv(), routes: [inventoryAndPriceRoute()] });
+    try {
+      const preview = await callTool(harness.mcp, "newegg_inventory_preview_update", PREVIEW_ARGS);
+      const id = preview.json.previewId as string;
+      const stored = (await harness.previewStore.get(id)) as unknown as { expiresAt: Date };
+      stored.expiresAt = new Date(stored.expiresAt.getTime() + 24 * 3_600_000);
+      const applied = await callTool(harness.mcp, "newegg_inventory_apply_update", {
+        previewId: id,
+      });
+      expect(applied.json.errorCode).toBe("preview_tampered");
+      expect(harness.calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe("a record missing a hashed field is refused gracefully (T-6218)", () => {
+  it("a pricing record without previewedCurrentPrices gives preview_tampered, not a TypeError", async () => {
+    const harness = await startHarness({ env: writesEnv(), routes: priceRoutes });
+    try {
+      const preview = await callTool(harness.mcp, "newegg_pricing_preview_update", {
+        updates: [{ identifier: { type: "sellerPartNumber", value: "SKU-1" }, sellingPrice: 18 }],
+      });
+      const id = preview.json.previewId as string;
+      const stored = (await harness.previewStore.get(id)) as unknown as Partial<Stored>;
+      delete stored.previewedCurrentPrices;
+      const applied = await callTool(harness.mcp, "newegg_pricing_apply_update", {
+        previewId: id,
+      });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_tampered");
+      expect(harness.calls.filter((call) => call.method === "PUT")).toHaveLength(0);
+    } finally {
+      await harness.close();
+    }
   });
 });
