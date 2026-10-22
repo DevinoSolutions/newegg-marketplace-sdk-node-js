@@ -191,11 +191,15 @@ function createClientFromConfig(config: McpServerConfig, logger: Logger): Newegg
   return createNeweggClient(clientConfig);
 }
 
-/** The set of tool names actually registered for a given config (apply present only with writes). */
+/**
+ * The set of tool names actually registered for a given config. Every write flow is preview ->
+ * apply (ADR 0005), and BOTH halves exist only with `NEWEGG_MCP_ALLOW_WRITES=true`: a preview that
+ * registered with writes off would still fill the preview store and offer a plan nothing can apply.
+ */
 export function enabledToolNames(config: McpServerConfig): string[] {
-  const names: string[] = [TOOL_NAMES.inventoryGet, TOOL_NAMES.inventoryPreviewUpdate];
+  const names: string[] = [TOOL_NAMES.inventoryGet];
   if (config.allowWrites) {
-    names.push(TOOL_NAMES.inventoryApplyUpdate);
+    names.push(TOOL_NAMES.inventoryPreviewUpdate, TOOL_NAMES.inventoryApplyUpdate);
   }
   // Price reads (Get Item Price) are read-only and never write-gated.
   names.push(TOOL_NAMES.pricingGet);
@@ -246,16 +250,15 @@ export function enabledToolNames(config: McpServerConfig): string[] {
     TOOL_NAMES.reportsRmaList,
     TOOL_NAMES.reportsStatus,
   );
-  // Listing creation: preview is read-only; apply is write-gated.
-  names.push(TOOL_NAMES.listingPreviewCreate);
+  // Listing creation: BOTH the preview and the apply tool exist only with writes enabled.
   if (config.allowWrites) {
-    names.push(TOOL_NAMES.listingApplyCreate);
+    names.push(TOOL_NAMES.listingPreviewCreate, TOOL_NAMES.listingApplyCreate);
   }
-  // Volume discounts (contracts §22): the read and the offline preview are never write-gated;
-  // apply is write-gated.
-  names.push(TOOL_NAMES.volumeDiscountGet, TOOL_NAMES.volumeDiscountPreviewUpdate);
+  // Volume discounts (contracts §22): only the read is never write-gated; the preview and the
+  // apply tool exist only with writes enabled.
+  names.push(TOOL_NAMES.volumeDiscountGet);
   if (config.allowWrites) {
-    names.push(TOOL_NAMES.volumeDiscountApplyUpdate);
+    names.push(TOOL_NAMES.volumeDiscountPreviewUpdate, TOOL_NAMES.volumeDiscountApplyUpdate);
   }
   // Price updates: BOTH the preview and the apply tool exist only with writes enabled.
   if (config.allowWrites) {
@@ -408,8 +411,8 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   };
 
   registerToolDefinition(server, inventoryGetTool, ctx);
-  registerToolDefinition(server, createInventoryPreviewTool(config), ctx);
   if (config.allowWrites) {
+    registerToolDefinition(server, createInventoryPreviewTool(config), ctx);
     registerToolDefinition(server, inventoryApplyTool, ctx);
   }
   registerToolDefinition(server, pricingGetTool, ctx);
@@ -448,13 +451,13 @@ export function buildMcpServer(deps: ServerDeps): McpServer {
   registerToolDefinition(server, reportsOrderListTool, ctx);
   registerToolDefinition(server, reportsRmaListTool, ctx);
   registerToolDefinition(server, reportsStatusTool, ctx);
-  registerToolDefinition(server, createListingPreviewTool(config), ctx);
   if (config.allowWrites) {
+    registerToolDefinition(server, createListingPreviewTool(config), ctx);
     registerToolDefinition(server, listingApplyTool, ctx);
   }
   registerToolDefinition(server, volumeDiscountGetTool, ctx);
-  registerToolDefinition(server, createVolumeDiscountPreviewTool(config), ctx);
   if (config.allowWrites) {
+    registerToolDefinition(server, createVolumeDiscountPreviewTool(config), ctx);
     registerToolDefinition(server, volumeDiscountApplyTool, ctx);
   }
   if (config.allowWrites) {

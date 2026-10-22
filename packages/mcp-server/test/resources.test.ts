@@ -44,7 +44,7 @@ describe("resources", () => {
       expect(json.writesEnabled).toBe(false);
       expect(json.marketplace).toBe("ca");
       const tools = json.mcpTools as string[];
-      expect(tools).toHaveLength(41);
+      expect(tools).toHaveLength(38);
       expect(tools).not.toContain("newegg_shipping_label_estimate");
       expect(tools).toContain("newegg_rma_list");
       expect(tools).toContain("newegg_seller_status");
@@ -53,7 +53,9 @@ describe("resources", () => {
       expect(tools).toContain("newegg_orders_list");
       expect(tools).toContain("newegg_catalog_resolve");
       expect(tools).toContain("newegg_reports_settlement_summary");
-      expect(tools).toContain("newegg_listing_preview_create");
+      // T-6103: the preview half of preview -> apply is write-gated too.
+      expect(tools).not.toContain("newegg_listing_preview_create");
+      expect(tools).not.toContain("newegg_inventory_preview_update");
       expect(tools).not.toContain("newegg_inventory_apply_update");
       expect(tools).not.toContain("newegg_listing_apply_create");
     } finally {

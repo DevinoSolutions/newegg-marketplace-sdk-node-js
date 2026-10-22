@@ -172,14 +172,15 @@ describe("newegg_volume_discount_preview_update", () => {
     }
   });
 
-  it("is registered even when writes are disabled (it is offline)", async () => {
+  it("is not registered when writes are disabled (T-6103: the preview is the write flow)", async () => {
     const harness = await startHarness({ env: makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "false" }) });
     try {
       const tools = (
         (await harness.mcp.listTools()) as { tools: Array<{ name: string }> }
       ).tools.map((tool) => tool.name);
-      expect(tools).toContain("newegg_volume_discount_preview_update");
+      expect(tools).not.toContain("newegg_volume_discount_preview_update");
       expect(tools).not.toContain("newegg_volume_discount_apply_update");
+      expect(tools).toContain("newegg_volume_discount_get");
     } finally {
       await harness.close();
     }

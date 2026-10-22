@@ -27,7 +27,7 @@ async function listTools(env?: Record<string, string | undefined>): Promise<List
 }
 
 describe("tools/list", () => {
-  it("exposes exactly the 41 read tools when writes are disabled", async () => {
+  it("exposes exactly the 38 read tools when writes are disabled", async () => {
     const tools = await listTools(makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "false" }));
     const names = tools.map((tool) => tool.name).sort();
     expect(names).toEqual(
@@ -43,8 +43,6 @@ describe("tools/list", () => {
         "newegg_feed_status",
         "newegg_industries_list",
         "newegg_inventory_get",
-        "newegg_inventory_preview_update",
-        "newegg_listing_preview_create",
         "newegg_orders_get",
         "newegg_orders_get_additional_info",
         "newegg_orders_get_status",
@@ -71,13 +69,18 @@ describe("tools/list", () => {
         "newegg_service_status",
         "newegg_subcategories_list",
         "newegg_volume_discount_get",
-        "newegg_volume_discount_preview_update",
         "newegg_subcategory_properties",
       ].sort(),
     );
     // The estimate is a POST to a write-adjacent service (contracts �23.6): gated with the writes.
     expect(names).not.toContain("newegg_shipping_label_estimate");
+    // T-6103: with writes off NO preview_* or apply_* tool is listed (a preview fills the store and
+    // is half of the write flow, ADR 0005), so only the plain reads remain.
+    expect(names.filter((name) => /_(preview|apply)_/.test(name))).toEqual([]);
     expect(names).not.toContain("newegg_inventory_apply_update");
+    expect(names).not.toContain("newegg_inventory_preview_update");
+    expect(names).not.toContain("newegg_listing_preview_create");
+    expect(names).not.toContain("newegg_volume_discount_preview_update");
     expect(names).not.toContain("newegg_listing_apply_create");
     expect(names).not.toContain("newegg_volume_discount_apply_update");
     expect(names).not.toContain("newegg_pricing_preview_update");
@@ -91,8 +94,12 @@ describe("tools/list", () => {
     const tools = await listTools(makeEnv({ NEWEGG_MCP_ALLOW_WRITES: "true" }));
     const names = tools.map((tool) => tool.name);
     expect(names).toHaveLength(61);
+    // Every preview has its apply twin, and both exist only with writes (T-6103).
+    expect(names).toContain("newegg_inventory_preview_update");
     expect(names).toContain("newegg_inventory_apply_update");
+    expect(names).toContain("newegg_listing_preview_create");
     expect(names).toContain("newegg_listing_apply_create");
+    expect(names).toContain("newegg_volume_discount_preview_update");
     expect(names).toContain("newegg_volume_discount_apply_update");
     expect(names).toContain("newegg_pricing_preview_update");
     expect(names).toContain("newegg_pricing_apply_update");
