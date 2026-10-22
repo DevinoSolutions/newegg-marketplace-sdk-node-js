@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createNeweggMcpServer,
   loadMcpConfigFromEnv,
+  McpConfigError,
   startHttpServer,
   type HttpServerHandle,
   type McpHttpConfig,
@@ -449,5 +450,99 @@ describe("the HTTP transport needs a bearer token when writes are enabled (T-621
     for (const secret of Object.values(SENTINELS)) {
       expect(message).not.toContain(secret);
     }
+  });
+});
+
+// T-6214: /healthz and OPTIONS honour the Host allowlist, and a cross-site request with no
+// Origin (a no-cors probe) is refused. An absent Origin stays allowed: real MCP clients send none.
+describe("Host / Sec-Fetch-Site hardening (T-6214)", () => {
+  it("answers /healthz 403 for a disallowed Host and never echoes it", async () => {
+    const { handle: h } = await start(httpConfigWith());
+    const res = await rawRequest({
+      port: h.port,
+      method: "GET",
+      path: "/healthz",
+      headers: { host: "evil.example" },
+    });
+    expect(res.status).toBe(403);
+    expect(res.body).not.toContain("evil.example");
+    expect(res.body).not.toContain(SERVER_NAME);
+  });
+
+  it("still serves /healthz for loopback and for an allowlisted Host", async () => {
+    const { handle: h } = await start(httpConfigWith({ allowedHosts: ["mcp.example.com"] }));
+    for (const host of [`127.0.0.1:${h.port}`, "mcp.example.com"]) {
+      const res = await rawRequest({
+        port: h.port,
+        method: "GET",
+        path: "/healthz",
+        headers: { host },
+      });
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it("answers an OPTIONS preflight 403 for a disallowed Host", async () => {
+    const { handle: h } = await start(httpConfigWith());
+    const res = await rawRequest({
+      port: h.port,
+      method: "OPTIONS",
+      path: "/mcp",
+      headers: { host: "evil.example" },
+    });
+    expect(res.status).toBe(403);
+    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("refuses POST /mcp with Sec-Fetch-Site cross-site and no Origin", async () => {
+    const { handle: h } = await start(httpConfigWith());
+    for (const site of ["cross-site", "same-site"]) {
+      const res = await rawRequest({
+        port: h.port,
+        method: "POST",
+        path: "/mcp",
+        headers: { ...MCP_HEADERS, "sec-fetch-site": site },
+        body: INIT_BODY,
+      });
+      expect(res.status).toBe(403);
+      expect(res.body).not.toContain(site);
+    }
+  });
+
+  it("refuses /healthz with Sec-Fetch-Site cross-site and no Origin", async () => {
+    const { handle: h } = await start(httpConfigWith());
+    const res = await rawRequest({
+      port: h.port,
+      method: "GET",
+      path: "/healthz",
+      headers: { "sec-fetch-site": "cross-site" },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("still allows no Origin with no Sec-Fetch-Site, none, or same-origin", async () => {
+    const { handle: h } = await start(httpConfigWith());
+    for (const extra of [{}, { "sec-fetch-site": "none" }, { "sec-fetch-site": "same-origin" }]) {
+      const res = await rawRequest({
+        port: h.port,
+        method: "POST",
+        path: "/mcp",
+        headers: { ...MCP_HEADERS, ...extra },
+        body: INIT_BODY,
+      });
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it("rejects the literal origins null and * in the allowed-origins env", () => {
+    for (const bad of ["null", "*", "https://ok.example, NULL", " * "]) {
+      expect(() => loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_HTTP_ALLOWED_ORIGINS: bad }))).toThrow(
+        McpConfigError,
+      );
+    }
+    const ok = loadMcpConfigFromEnv(
+      makeEnv({ NEWEGG_MCP_HTTP_ALLOWED_ORIGINS: "https://ok.example" }),
+    );
+    expect(ok.http.allowedOrigins).toEqual(["https://ok.example"]);
   });
 });
