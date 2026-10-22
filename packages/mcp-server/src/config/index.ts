@@ -11,8 +11,8 @@ import type { NeweggMarketplace } from "@devino/newegg-marketplace-sdk";
 /** Thrown for any invalid/missing configuration. Messages name the offending variable and
  * never echo provided secret values. */
 export class McpConfigError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "McpConfigError";
   }
 }
@@ -125,6 +125,11 @@ export interface McpServerConfig {
   readonly credentialMarketplace: NeweggMarketplace;
   /** Trusted-config-only base URL override; never exposed through MCP tools/resources. */
   readonly baseUrl?: string;
+  /**
+   * `NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL=true`: lets `baseUrl` name a non-newegg.com https host.
+   * Off by default because the API keys and seller ID are sent to that host (T-6217).
+   */
+  readonly allowCustomBaseUrl?: boolean;
   readonly allowWrites: boolean;
   /**
    * Opt-in (`NEWEGG_MCP_REPORT_FTPS=true`, exact literal): the built-in report file download uses
@@ -428,6 +433,11 @@ const envSchema = z.object({
   // Credentials are resolved separately (see resolveCredentials): they depend on the marketplace.
   NEWEGG_MARKETPLACE: marketplaceEnv("NEWEGG_MARKETPLACE"),
   NEWEGG_API_BASE_URL: urlEnv("NEWEGG_API_BASE_URL"),
+  // SECURITY gate, same exact-literal rule as NEWEGG_MCP_ALLOW_WRITES: only "true" opts in.
+  NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL: z
+    .string()
+    .optional()
+    .transform((raw) => raw === "true"),
   // SECURITY gate: only the EXACT literal "true" enables writes. "1"/"TRUE"/" true "/unset all
   // stay false. Kept as a raw `=== "true"` (no trim/lowercase) so the surface can't widen by accident.
   NEWEGG_MCP_ALLOW_WRITES: z
@@ -729,6 +739,7 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     marketplace: parsed.NEWEGG_MARKETPLACE,
     credentialMarketplace: parsed.NEWEGG_MARKETPLACE,
     baseUrl: parsed.NEWEGG_API_BASE_URL,
+    allowCustomBaseUrl: parsed.NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL,
     allowWrites: parsed.NEWEGG_MCP_ALLOW_WRITES,
     reportFtps: parsed.NEWEGG_MCP_REPORT_FTPS,
     reportFtpsCertSha256: parsed.NEWEGG_MCP_REPORT_FTPS_CERT_SHA256,

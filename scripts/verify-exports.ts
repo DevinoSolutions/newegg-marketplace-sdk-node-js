@@ -28,6 +28,7 @@ const packages: PackageSpec[] = [
         "NeweggError",
         "NeweggConfigurationError",
         "NeweggMarketplaceMismatchError",
+        "NeweggBaseUrlNotAllowedError",
         "NeweggValidationError",
         "IndeterminateOrderWriteError",
         "IndeterminateServiceWriteError",

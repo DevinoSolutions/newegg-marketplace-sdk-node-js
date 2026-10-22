@@ -35,8 +35,19 @@ export interface NeweggClientConfig {
    * the MCP server always sets it. ADR 0006.
    */
   credentialMarketplace?: NeweggMarketplace;
-  /** Trusted-config-only override (tests, proxies). Never exposed via MCP. */
+  /**
+   * Trusted-config-only override (tests, proxies). Never exposed via MCP tools. Must end in `/`.
+   * Unless `allowCustomBaseUrl` is true it must be an `https` newegg.com host (the parsed hostname is
+   * `newegg.com` or ends in `.newegg.com`) or an `http` loopback host (`127.0.0.1`, `localhost`, `::1`, for tests; `https`
+   * loopback needs the flag). Any other host throws NeweggConfigurationError, because the API keys and seller ID are
+   * sent to it (T-6217).
+   */
   baseUrl?: string;
+  /**
+   * Opt in to a non-newegg.com `https` baseUrl (proxy, mock server). Default false. Accepting one logs a
+   * single `warn` (`config.custom_base_url`) naming the host only. Non-loopback `http` stays refused.
+   */
+  allowCustomBaseUrl?: boolean;
   timeoutMs?: number; // default 30_000
   userAgent?: string; // default "newegg-marketplace-sdk/<version> node/<version>"
   retry?: RetryOptions;
@@ -2570,6 +2581,10 @@ export class NeweggConfigurationError extends NeweggError {}
 // the client's marketplace, actualMarketplace = the credentials'), and by the orders currency guard when a
 // whole page of orders is in the wrong marketplace's currency (actualMarketplace inferred, or undefined).
 // code === "configuration"; messages and toJSON carry marketplace names only, never credential values.
+// Thrown by createNeweggClient ONLY when baseUrl is outside the newegg.com allowlist and allowCustomBaseUrl is not
+// set (T-6217). A missing trailing "/", an invalid URL and non-loopback http stay plain NeweggConfigurationErrors.
+// code === "configuration"; the message is static and never includes the URL or host.
+export class NeweggBaseUrlNotAllowedError extends NeweggConfigurationError {}
 export class NeweggMarketplaceMismatchError extends NeweggConfigurationError {
   readonly expectedMarketplace: NeweggMarketplace;
   readonly actualMarketplace?: NeweggMarketplace;
