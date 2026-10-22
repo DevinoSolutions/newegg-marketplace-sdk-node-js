@@ -472,8 +472,9 @@ newegg-marketplace-mcp --transport http
 ```
 
 By default it binds `127.0.0.1:3919`. It **refuses to bind a non-loopback host unless
-`NEWEGG_MCP_HTTP_BEARER_TOKEN` is set**, and validates `Host` and `Origin` headers (CORS is
-never treated as authentication).
+`NEWEGG_MCP_HTTP_BEARER_TOKEN` is set**, **refuses to start with `NEWEGG_MCP_ALLOW_WRITES=true` unless
+that token is set, even on loopback** (any local user or process could otherwise open its own session and
+spend money), and validates `Host` and `Origin` headers (CORS is never treated as authentication).
 
 MCP clients connect to the Streamable HTTP endpoint at **`POST http://127.0.0.1:3919/mcp`**;
 the session id is returned in the `Mcp-Session-Id` response header and must be echoed on
@@ -530,6 +531,14 @@ Seller ID or a key from another platform is the usual cause), see
 > (`NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS`, default 1800), delays failed bearer attempts per client address
 > and warns on a non-loopback bind unless `NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY=true`.
 
+> **Breaking (T-6211): HTTP writes need a token.** `newegg-marketplace-mcp --transport http` with
+> `NEWEGG_MCP_ALLOW_WRITES=true` now refuses to start unless `NEWEGG_MCP_HTTP_BEARER_TOKEN` is set, even on the
+> default loopback bind. Previously loopback ran with no authentication, so any other local user or process could
+> open its own session and spend money through the write tools (label purchases, price and listing writes). There is
+> no opt-out. Generate a token with `openssl rand -hex 32` and have clients send `Authorization: Bearer <token>`, or set
+> `NEWEGG_MCP_ALLOW_WRITES=false`. stdio and read-only HTTP on loopback are unaffected. `startHttpServer` gained a
+> required `writesEnabled` option.
+
 > **Breaking (0.1.x, T-5948): `orders.list` input validation is strict.** These now throw
 > `NeweggValidationError` before any request instead of being sent or silently dropped: a `dateFrom` /
 > `dateTo` string that is not `MM/DD/YYYY HH:mm:ss` or `YYYY-MM-DD HH:mm:ss` (Pacific), including a
@@ -576,7 +585,7 @@ Seller ID or a key from another platform is the usual cause), see
 | `NEWEGG_MCP_REPORT_FTPS`                    | unset (`false`)          | Exactly `true` makes the report file download use explicit FTPS (no fallback to clear text).                                                                                                                                                                                                                                |
 | `NEWEGG_MCP_REPORT_FTPS_CA_FILE`            | empty                    | Path to the PEM of the server certificate to trust for FTPS (Newegg's is self-signed; contracts §17.5).                                                                                                                                                                                                                     |
 | `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`        | empty                    | SHA-256 fingerprint the FTPS server certificate must have (needs the CA file).                                                                                                                                                                                                                                              |
-| `NEWEGG_MCP_HTTP_BEARER_TOKEN`              | empty                    | Bearer token, **at least 32 characters, 12 different**; **required** before binding a non-loopback host.                                                                                                                                                                                                                    |
+| `NEWEGG_MCP_HTTP_BEARER_TOKEN`              | empty                    | Bearer token, **at least 32 characters, 12 different**; **required** before binding a non-loopback host, and whenever `NEWEGG_MCP_ALLOW_WRITES=true` over HTTP (even on loopback).                                                                                                                                          |
 | `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`           | empty = same-origin only | Comma-separated allowed browser `Origin` values.                                                                                                                                                                                                                                                                            |
 | `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`             | empty                    | Comma-separated allowed `Host` values (`host[:port]`); loopback always allowed.                                                                                                                                                                                                                                             |
 
