@@ -157,7 +157,7 @@ describe("clientTypeProblems", () => {
       "ext.ts":
         'import type { NeweggClient } from "./types/client.js";\nexport interface ExtClient extends NeweggClient { rogue(): void }\n',
     });
-    expect(found.join("\n")).toContain("extends NeweggClient");
+    expect(found.join("\n")).toContain("which extends or implements NeweggClient");
   });
 
   it("fails on an interface extending a namespace-qualified NeweggClient", () => {
@@ -166,7 +166,9 @@ describe("clientTypeProblems", () => {
       "ext.ts":
         'import type * as T from "./types/client.js";\nexport interface X extends T.NeweggClient { rogue(): void }\n',
     });
-    expect(found.join("\n")).toContain("ext.ts declares X, which extends NeweggClient");
+    expect(found.join("\n")).toContain(
+      "ext.ts declares X, which extends or implements NeweggClient",
+    );
   });
 
   it("fails on a class implementing NeweggClient, bare, qualified or aliased", () => {
@@ -175,17 +177,62 @@ describe("clientTypeProblems", () => {
       "k1.ts":
         'import type { NeweggClient } from "./types/client.js";\nexport class K implements NeweggClient { marketplace = "us"; }\n',
     });
-    expect(bare.join("\n")).toContain("k1.ts declares K, which extends NeweggClient");
+    expect(bare.join("\n")).toContain("k1.ts declares K, which extends or implements NeweggClient");
     const qualified = problems({
       "k2.ts":
         'import type * as T from "./types/client.js";\nexport class K implements T.NeweggClient { marketplace = "us"; }\n',
     });
-    expect(qualified.join("\n")).toContain("k2.ts declares K, which extends NeweggClient");
+    expect(qualified.join("\n")).toContain(
+      "k2.ts declares K, which extends or implements NeweggClient",
+    );
     const aliased = problems({
       "k3.ts":
         'import type { NeweggClient as C } from "./types/client.js";\nexport class K implements C { marketplace = "us"; }\n',
     });
-    expect(aliased.join("\n")).toContain("k3.ts declares K, which extends NeweggClient");
+    expect(aliased.join("\n")).toContain(
+      "k3.ts declares K, which extends or implements NeweggClient",
+    );
+  });
+
+  describe("heritage of NeweggClient through every supported spelling", () => {
+    const MESSAGE = "which extends or implements NeweggClient";
+    const T_NS = 'import type * as T from "./types/client.js";\n';
+    const NAMED = 'import type { NeweggClient } from "./types/client.js";\n';
+    const cases: Array<[string, string]> = [
+      [
+        "an import-equals alias with interface extends",
+        `${T_NS}import U = T.NeweggClient;\nexport interface X extends U { rogue(): void }\n`,
+      ],
+      [
+        "an import-equals alias with class implements",
+        `${T_NS}import U = T.NeweggClient;\nexport class K implements U { marketplace = "us"; }\n`,
+      ],
+      [
+        "an alias of an import-equals alias",
+        `${T_NS}import U = T.NeweggClient;\nimport V = U;\nexport interface X extends V { rogue(): void }\n`,
+      ],
+      [
+        "an aliased named import with interface extends",
+        'import type { NeweggClient as C } from "./types/client.js";\nexport interface X extends C { rogue(): void }\n',
+      ],
+      ["a class extends clause", `${NAMED}export class K extends NeweggClient { rogue() {} }\n`],
+      [
+        "a generic heritage clause",
+        `${NAMED}export interface X extends NeweggClient<string> { rogue(): void }\nexport class K implements NeweggClient<string> { marketplace = "us"; }\n`,
+      ],
+    ];
+    it.each(cases)("fails on %s", (_name, source) => {
+      const found = problems({ ...ORDERS, "h.ts": source });
+      const text = found.join("\n");
+      expect(text).toContain("h.ts declares");
+      expect(text).toContain(MESSAGE);
+    });
+
+    // Known gaps, documented on strayClientDeclarations in live-readonly/surface.ts.
+    it.todo("fails on a local type alias of NeweggClient used in a heritage clause");
+    it.todo("fails on an intersection alias that includes NeweggClient");
+    it.todo("fails on a parenthesised heritage expression");
+    it.todo("fails on a class expression that implements NeweggClient");
   });
 
   it("does not flag an unrelated qualified heritage clause", () => {

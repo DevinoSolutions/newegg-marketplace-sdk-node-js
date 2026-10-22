@@ -234,7 +234,13 @@ export function classifiedInterfaceNames(typesSource: string): Set<string> {
  *   top-level class of the same name in a different module (an implementation class) does not
  *   merge with the interface and is allowed;
  * - in any file: an interface that `extends`, or a class that `extends` / `implements`, NeweggClient
- *   by bare, aliased-import or qualified (`T.NeweggClient`) name (defense in depth).
+ *   by bare, aliased-import (`import { NeweggClient as C }` or `import C = T.NeweggClient`) or
+ *   qualified (`T.NeweggClient`) name (defense in depth).
+ *
+ * Not detected (documented gaps): a local type alias of the client under another name
+ * (`type C = NeweggClient; interface X extends C {}`), an intersection alias
+ * (`type C = NeweggClient & Foo`), a parenthesised heritage expression, and class expressions
+ * (`const K = class implements NeweggClient {}`).
  */
 export function strayClientDeclarations(
   source: string,
@@ -247,9 +253,20 @@ export function strayClientDeclarations(
   const topLevelInterfaces = new Set(
     file.statements.filter(ts.isInterfaceDeclaration).map((d) => d.name.text),
   );
-  // Local names bound to NeweggClient by `import { NeweggClient as X }` / `import type ... as X`.
+  // Local names bound to NeweggClient by `import { NeweggClient as X }` / `import type ... as X`
+  // or by an import-equals alias (`import U = T.NeweggClient;`, or `import V = U;` of an alias).
   const clientAliases = new Set<string>(["NeweggClient"]);
   for (const stmt of file.statements) {
+    if (ts.isImportEqualsDeclaration(stmt)) {
+      const ref = stmt.moduleReference;
+      if (
+        (ts.isQualifiedName(ref) && ref.right.text === "NeweggClient") ||
+        (ts.isIdentifier(ref) && clientAliases.has(ref.text))
+      ) {
+        clientAliases.add(stmt.name.text);
+      }
+      continue;
+    }
     const bindings = ts.isImportDeclaration(stmt) ? stmt.importClause?.namedBindings : undefined;
     if (bindings === undefined || !ts.isNamedImports(bindings)) continue;
     for (const el of bindings.elements) {
@@ -276,9 +293,7 @@ export function strayClientDeclarations(
       (ts.isInterfaceDeclaration(node) || ts.isClassDeclaration(node)) &&
       heritageNamesClient(node)
     ) {
-      flag(
-        `declares ${node.name?.text ?? "a class"}, which extends NeweggClient (extends or implements clause)`,
-      );
+      flag(`declares ${node.name?.text ?? "a class"}, which extends or implements NeweggClient`);
     }
     if (ts.isInterfaceDeclaration(node)) {
       const name = node.name.text;
