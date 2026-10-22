@@ -307,11 +307,7 @@ interface DataTlsState {
   handshaken: boolean;
 }
 
-function collect(
-  socket: net.Socket,
-  maxBytes: number,
-  secure?: DataTlsState,
-): Promise<Uint8Array> {
+function collect(socket: net.Socket, maxBytes: number, secure?: DataTlsState): Promise<Uint8Array> {
   return new Promise<Uint8Array>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;

@@ -37,7 +37,7 @@ import {
 import {
   DEFAULT_MAX_HTTP_SESSIONS,
   DEFAULT_SESSION_IDLE_TTL_SECONDS,
-  MIN_BEARER_TOKEN_LENGTH,
+  weakBearerTokenReason,
   type McpHttpConfig,
 } from "../config/index.js";
 import type { Logger } from "../tools/index.js";
@@ -54,6 +54,12 @@ const DEFAULT_AUTH_BACKOFF = { baseMs: 250, maxMs: 5000 };
 const MAX_PENDING_FAILURES_PER_CLIENT = 8;
 /** A client's failure count is forgotten after this long without a failure. */
 const FAILURE_MEMORY_MS = 15 * 60_000;
+/**
+ * A good token lowers its address's failure count by one step, and at most once per this long. It
+ * must not reset the count: behind a shared address (a proxy) a legitimate client would otherwise
+ * erase an ongoing guessing run from another client with every request.
+ */
+const SUCCESS_DECAY_INTERVAL_MS = 1000;
 const MAX_TRACKED_CLIENTS = 10_000;
 
 export interface StartHttpServerOptions {
@@ -87,6 +93,8 @@ interface ClientFailures {
   failures: number;
   lastAt: number;
   pending: number;
+  /** When a good token last lowered `failures`. */
+  lastDecayAt: number;
 }
 
 type BodyOutcome =
@@ -194,13 +202,13 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
         "NEWEGG_MCP_HTTP_BEARER_TOKEN configured.",
     );
   }
-  if (
-    httpConfig.bearerToken !== undefined &&
-    httpConfig.bearerToken.length < MIN_BEARER_TOKEN_LENGTH
-  ) {
+  const weakness =
+    httpConfig.bearerToken === undefined
+      ? undefined
+      : weakBearerTokenReason(httpConfig.bearerToken);
+  if (weakness !== undefined) {
     throw new Error(
-      `Refusing to start the MCP HTTP transport: NEWEGG_MCP_HTTP_BEARER_TOKEN must be at least ` +
-        `${MIN_BEARER_TOKEN_LENGTH} characters.`,
+      `Refusing to start the MCP HTTP transport: NEWEGG_MCP_HTTP_BEARER_TOKEN ${weakness}.`,
     );
   }
 
@@ -340,7 +348,7 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
     const now = Date.now();
     let state = clientFailures.get(clientKey);
     if (state === undefined || now - state.lastAt > FAILURE_MEMORY_MS) {
-      state = { failures: 0, lastAt: now, pending: state?.pending ?? 0 };
+      state = { failures: 0, lastAt: now, pending: state?.pending ?? 0, lastDecayAt: 0 };
     }
     clientFailures.delete(clientKey);
     clientFailures.set(clientKey, state);
@@ -361,6 +369,16 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
       state.pending -= 1;
     }
     return 401;
+  }
+
+  /** A good token earns one step off its address's failure count, at most once per interval. */
+  function decayFailures(clientKey: string): void {
+    const state = clientFailures.get(clientKey);
+    if (state === undefined || state.failures === 0) return;
+    const now = Date.now();
+    if (now - state.lastDecayAt < SUCCESS_DECAY_INTERVAL_MS) return;
+    state.lastDecayAt = now;
+    state.failures -= 1;
   }
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -432,7 +450,7 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
         }
         return;
       }
-      clientFailures.delete(clientKey);
+      decayFailures(clientKey);
     }
 
     await handleMcp(req, res);

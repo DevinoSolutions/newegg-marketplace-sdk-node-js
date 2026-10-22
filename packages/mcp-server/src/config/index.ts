@@ -93,7 +93,23 @@ export interface McpHttpConfig {
 }
 
 /** Shortest accepted `NEWEGG_MCP_HTTP_BEARER_TOKEN` (e.g. `openssl rand -hex 16`). */
-export const MIN_BEARER_TOKEN_LENGTH = 32;
+const MIN_BEARER_TOKEN_LENGTH = 32;
+/** Fewest distinct characters a bearer token must contain (rejects `aaaa...` and `abab...`). */
+const MIN_BEARER_TOKEN_DISTINCT = 8;
+
+/**
+ * Why `token` is too weak to guard the HTTP transport, or undefined when it is acceptable: shorter
+ * than 32 characters, or fewer than 8 distinct characters. The reason never contains the token.
+ */
+export function weakBearerTokenReason(token: string): string | undefined {
+  if (token.length < MIN_BEARER_TOKEN_LENGTH) {
+    return `must be at least ${MIN_BEARER_TOKEN_LENGTH} characters`;
+  }
+  if (new Set(token).size < MIN_BEARER_TOKEN_DISTINCT) {
+    return `must contain at least ${MIN_BEARER_TOKEN_DISTINCT} different characters`;
+  }
+  return undefined;
+}
 /** Defaults for the HTTP session bounds (T-5670). */
 export const DEFAULT_MAX_HTTP_SESSIONS = 32;
 export const DEFAULT_SESSION_IDLE_TTL_SECONDS = 1800;
@@ -361,9 +377,9 @@ function urlEnv(name: string) {
 }
 
 /**
- * Optional HTTP bearer token: undefined when unset/blank, otherwise at least
- * `MIN_BEARER_TOKEN_LENGTH` characters. The message names the variable and the minimum only:
- * a rejected token is never echoed back.
+ * Optional HTTP bearer token: undefined when unset/blank, otherwise a token that passes
+ * {@link weakBearerTokenReason}. The message names the variable and the rule only: a rejected token
+ * is never echoed back.
  */
 function bearerTokenEnv(name: string) {
   return z
@@ -372,10 +388,11 @@ function bearerTokenEnv(name: string) {
     .transform((raw, ctx) => {
       const trimmed = raw?.trim();
       if (trimmed === undefined || trimmed.length === 0) return undefined;
-      if (trimmed.length < MIN_BEARER_TOKEN_LENGTH) {
+      const weakness = weakBearerTokenReason(trimmed);
+      if (weakness !== undefined) {
         ctx.addIssue({
           code: "custom",
-          message: `${name} must be at least ${MIN_BEARER_TOKEN_LENGTH} characters (generate one with \`openssl rand -hex 32\`).`,
+          message: `${name} ${weakness} (generate one with \`openssl rand -hex 32\`).`,
         });
         return z.NEVER;
       }

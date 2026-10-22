@@ -4,7 +4,8 @@ import { makeEnv } from "./helpers.js";
 
 // T-5672 (L8): the HTTP bearer token needs a minimum strength.
 
-const tokenOf = (length: number): string => "t".repeat(length);
+const tokenOf = (length: number): string =>
+  "0123456789abcdefghijklmnopqrstuvwxyz".slice(0, length).padEnd(length, "x");
 
 function loadWithToken(token: string | undefined) {
   return loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_HTTP_BEARER_TOKEN: token }));
@@ -79,6 +80,28 @@ describe("HTTP bearer token strength (T-5672 / L8)", () => {
     expect((thrown as Error).message).toContain("NEWEGG_MCP_HTTP_BEARER_TOKEN");
     expect((thrown as Error).message).toContain("32");
     expect((thrown as Error).message).not.toContain(weak);
+  });
+
+  it.each([
+    ["a single repeated character", "a".repeat(40)],
+    ["two alternating characters", "ab".repeat(20)],
+    ["seven distinct characters", "abcdefg".repeat(6)],
+  ])("rejects a long but trivially weak token: %s", (_label, weak) => {
+    let thrown: unknown;
+    try {
+      loadWithToken(weak);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(McpConfigError);
+    expect((thrown as Error).message).toContain("NEWEGG_MCP_HTTP_BEARER_TOKEN");
+    expect((thrown as Error).message).toContain("different characters");
+    expect((thrown as Error).message).not.toContain(weak);
+  });
+
+  it("accepts a token with eight distinct characters", () => {
+    const token = "abcdefgh".repeat(5);
+    expect(loadWithToken(token).http.bearerToken).toBe(token);
   });
 
   it("accepts a 32-character token", () => {

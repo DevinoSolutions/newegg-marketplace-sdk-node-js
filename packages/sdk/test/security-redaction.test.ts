@@ -192,7 +192,10 @@ describe("NeweggError.cause covers every shape a cause can take (T-5666 review)"
   });
 
   it("recurses into the errors of an AggregateError", () => {
-    const cause = new AggregateError([new Error(url), new TypeError(`again ${url}`)], `many ${url}`);
+    const cause = new AggregateError(
+      [new Error(url), new TypeError(`again ${url}`)],
+      `many ${url}`,
+    );
     const out = new NeweggError("api", "failed", { cause }).cause as AggregateError;
     expect(out).toBeInstanceOf(AggregateError);
     expect(out.errors).toHaveLength(2);

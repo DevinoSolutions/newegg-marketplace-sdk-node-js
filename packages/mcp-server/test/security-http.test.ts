@@ -263,7 +263,7 @@ describe("a malformed Host header is a 400, not a 500 (T-5671 / L7)", () => {
 describe("failed bearer attempts are throttled (T-5672 / L8)", () => {
   const bad = { authorization: "Bearer not-the-right-token-not-the-right-token" };
 
-  it("slows repeated bad tokens from one client and resets after a good one", async () => {
+  it("slows repeated bad tokens from one client", async () => {
     const { handle: h } = await start(httpConfigWith(), {
       authBackoff: { baseMs: 60, maxMs: 400 },
     });
@@ -282,18 +282,32 @@ describe("failed bearer attempts are throttled (T-5672 / L8)", () => {
     expect(times[0]).toBeGreaterThanOrEqual(45);
     expect(times[2]).toBeGreaterThanOrEqual(180);
     expect(times[3]).toBeGreaterThan(times[0] ?? 0);
+  });
 
-    const good = await initialize(h.port);
-    expect(good.status).toBe(200);
-    const after = await rawRequest({
-      port: h.port,
-      method: "POST",
-      path: "/mcp",
-      headers: { ...MCP_HEADERS, ...bad },
-      body: INIT_BODY,
+  it("does not let a good token erase the failure history of a shared address", async () => {
+    const { handle: h } = await start(httpConfigWith(), {
+      authBackoff: { baseMs: 60, maxMs: 400 },
     });
+    const failOnce = () =>
+      rawRequest({
+        port: h.port,
+        method: "POST",
+        path: "/mcp",
+        headers: { ...MCP_HEADERS, ...bad },
+        body: INIT_BODY,
+      });
+    // Four failures: the next one is delayed by min(400, 60 * 2^4) = 400 ms.
+    for (let attempt = 0; attempt < 4; attempt += 1) await failOnce();
+
+    // A legitimate client behind the same address succeeds, three times in a row.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect((await initialize(h.port)).status).toBe(200);
+    }
+
+    // At most one step was forgiven, so the guessing run is still slowed.
+    const after = await failOnce();
     expect(after.status).toBe(401);
-    expect(after.elapsedMs).toBeLessThan(250);
+    expect(after.elapsedMs).toBeGreaterThanOrEqual(240);
   });
 
   it("answers 429 instead of queueing unlimited concurrent failures", async () => {
@@ -313,6 +327,16 @@ describe("failed bearer attempts are throttled (T-5672 / L8)", () => {
     );
     expect(results.some((res) => res.status === 429)).toBe(true);
     expect(results.every((res) => res.status === 401 || res.status === 429)).toBe(true);
+  });
+});
+
+describe("a trivially weak bearer token is refused at startup (T-5672 / L8)", () => {
+  it("refuses a long token with fewer than 8 distinct characters, without echoing it", async () => {
+    const weak = "a".repeat(48);
+    const error = await start(httpConfigWith({ bearerToken: weak })).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("different characters");
+    expect((error as Error).message).not.toContain(weak);
   });
 });
 
