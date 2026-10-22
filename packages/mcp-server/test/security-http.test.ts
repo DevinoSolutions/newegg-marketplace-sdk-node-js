@@ -522,7 +522,11 @@ describe("Host / Sec-Fetch-Site hardening (T-6214)", () => {
 
   it("still allows no Origin with no Sec-Fetch-Site, none, or same-origin", async () => {
     const { handle: h } = await start(httpConfigWith());
-    for (const extra of [{}, { "sec-fetch-site": "none" }, { "sec-fetch-site": "same-origin" }]) {
+    for (const extra of [
+      {},
+      { "sec-fetch-site": "none" },
+      { "sec-fetch-site": "same-origin" },
+    ] as Record<string, string>[]) {
       const res = await rawRequest({
         port: h.port,
         method: "POST",
