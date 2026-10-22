@@ -558,7 +558,7 @@ describe("RMA write input validation (nothing is read or sent)", () => {
         ...submitInput,
         items: [{ ...line, imageUrls: ["ftp://example.invalid/a.png"] }],
       }),
-    ).toContain("http(s)");
+    ).toContain("https URL");
     expect(await reject({ ...submitInput, items: [{ ...line, returnQuantity: 0 }] })).toContain(
       "returnQuantity",
     );
