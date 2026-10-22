@@ -64,8 +64,16 @@ function resolveReportFileFtp(
   if (typeof options !== "object" || options === null) {
     fail('Configuration field "reportFileFtp" must be an object.');
   }
-  if (options.allowPlaintext !== undefined && typeof options.allowPlaintext !== "boolean") {
-    fail('Configuration field "reportFileFtp.allowPlaintext" must be a boolean.');
+  if (options.ftps !== undefined && typeof options.ftps !== "boolean") {
+    fail('Configuration field "reportFileFtp.ftps" must be a boolean.');
+  }
+  if (
+    options.tlsPinnedCertSha256 !== undefined &&
+    !/^[0-9a-f]{2}(:?[0-9a-f]{2}){31}$/i.test(options.tlsPinnedCertSha256)
+  ) {
+    fail(
+      'Configuration field "reportFileFtp.tlsPinnedCertSha256" must be a SHA-256 hex fingerprint.',
+    );
   }
   if (options.allowedPorts !== undefined) {
     const ports: unknown = options.allowedPorts;

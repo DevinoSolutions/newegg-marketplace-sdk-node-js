@@ -167,8 +167,13 @@ function createClientFromConfig(config: McpServerConfig, logger: Logger): Newegg
     credentialMarketplace: config.credentialMarketplace,
     logger: adaptLogger(logger),
   };
-  if (config.allowPlaintextReportFtp === true) {
-    clientConfig.reportFileFtp = { allowPlaintext: true };
+  if (config.reportFtps === true) {
+    clientConfig.reportFileFtp = {
+      ftps: true,
+      ...(config.reportFtpsCertSha256 === undefined
+        ? {}
+        : { tlsPinnedCertSha256: config.reportFtpsCertSha256 }),
+    };
   }
   if (config.baseUrl !== undefined) {
     clientConfig.baseUrl = config.baseUrl;

@@ -82,7 +82,9 @@ async function runStdio(config: McpServerConfig, logger: Logger): Promise<void> 
 }
 
 async function runHttp(config: McpServerConfig, logger: Logger): Promise<void> {
-  // A single preview store is shared across sessions; each session gets its own MCP server.
+  // One preview store backs every session, but previews are bound to the MCP session that created
+  // them (T-5675): each session gets its own MCP server stamped with its sessionId, and the store
+  // only returns or consumes a record for the session that owns it.
   const previewStore = new InMemoryPreviewStore();
   const handle = await startHttpServer({
     http: config.http,

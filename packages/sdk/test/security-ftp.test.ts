@@ -1,3 +1,4 @@
+import { X509Certificate } from "node:crypto";
 import net from "node:net";
 import tls from "node:tls";
 import { afterEach, describe, expect, it } from "vitest";
@@ -184,6 +185,7 @@ describe("FTP report download is not plaintext and not port-hopping (T-5668 / L4
       timeoutMs: 5000,
       allowedHost: ANY_HOST,
       allowedPorts: [stub.port],
+      ftps: true,
       tlsCa: FIXTURE.cert,
     });
     expect(Buffer.from(bytes).toString()).toBe("a,b\n1,2\n");
@@ -196,6 +198,7 @@ describe("FTP report download is not plaintext and not port-hopping (T-5668 / L4
       timeoutMs: 3000,
       allowedHost: ANY_HOST,
       allowedPorts: [stub.port],
+      ftps: true,
     }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(NeweggApiError);
     expect((error as Error).message).toMatch(/TLS|FTPS/);
@@ -212,6 +215,7 @@ describe("FTP report download is not plaintext and not port-hopping (T-5668 / L4
       timeoutMs: 5000,
       allowedHost: ANY_HOST,
       allowedPorts: [stub.port],
+      ftps: true,
       tlsCa: FIXTURE.cert,
     });
     expect(Buffer.from(bytes).toString()).toBe(payload.toString());
@@ -233,6 +237,7 @@ describe("FTP report download is not plaintext and not port-hopping (T-5668 / L4
       timeoutMs: 5000,
       allowedHost: ANY_HOST,
       allowedPorts: [stub.port],
+      ftps: true,
     }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(NeweggApiError);
     expect(verbs(stub)).not.toContain("USER");
@@ -240,14 +245,44 @@ describe("FTP report download is not plaintext and not port-hopping (T-5668 / L4
     expect(JSON.stringify(error)).not.toContain("pw");
   });
 
-  it("allows plaintext only through the explicit allowPlaintext opt-out", async () => {
+  it("authenticates a self-signed server by its pinned certificate fingerprint", async () => {
+    const stub = await startStub({ tls: FIXTURE, files: { "x.csv": Buffer.from("pinned rows") } });
+    const pin = new X509Certificate(FIXTURE.cert).fingerprint256;
+    const bytes = await downloadViaFtp(`ftp://user:pw@127.0.0.1:${stub.port}/x.csv`, {
+      maxBytes: 1024,
+      timeoutMs: 5000,
+      allowedHost: ANY_HOST,
+      allowedPorts: [stub.port],
+      ftps: true,
+      tlsPinnedCertSha256: pin,
+    });
+    expect(Buffer.from(bytes).toString()).toBe("pinned rows");
+    expect(stub.dataChannelSecure).toBe(true);
+  });
+
+  it("rejects a certificate that does not match the pin before any credentials are sent", async () => {
+    const stub = await startStub({ tls: FIXTURE, files: { "x.csv": Buffer.from("rows") } });
+    const error = await downloadViaFtp(`ftp://user:pw@127.0.0.1:${stub.port}/x.csv`, {
+      maxBytes: 1024,
+      timeoutMs: 5000,
+      allowedHost: ANY_HOST,
+      allowedPorts: [stub.port],
+      ftps: true,
+      tlsPinnedCertSha256: "00".repeat(32),
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NeweggApiError);
+    expect((error as Error).message).toMatch(/TLS handshake/);
+    expect(verbs(stub)).not.toContain("USER");
+    expect(JSON.stringify(error)).not.toContain("pw");
+  });
+
+  it("stays plain FTP unless ftps is requested (Newegg's certificate is self-signed)", async () => {
     const stub = await startStub({ files: { "x.csv": Buffer.from("plain rows") } });
     const bytes = await downloadViaFtp(`ftp://user:pw@127.0.0.1:${stub.port}/x.csv`, {
       maxBytes: 1024,
       timeoutMs: 5000,
       allowedHost: ANY_HOST,
       allowedPorts: [stub.port],
-      allowPlaintext: true,
     });
     expect(Buffer.from(bytes).toString()).toBe("plain rows");
     expect(verbs(stub)).not.toContain("AUTH");
@@ -313,7 +348,6 @@ describe("FTP control channel is bounded (T-5669 / L5)", () => {
       timeoutMs: 5000,
       allowedHost: ANY_HOST,
       allowedPorts: [flood.port],
-      allowPlaintext: true,
     }).catch((e: unknown) => e);
     flood.stop();
     expect(error).toBeInstanceOf(NeweggApiError);
@@ -332,7 +366,6 @@ describe("FTP control channel is bounded (T-5669 / L5)", () => {
       timeoutMs: 5000,
       allowedHost: ANY_HOST,
       allowedPorts: [flood.port],
-      allowPlaintext: true,
     }).catch((e: unknown) => e);
     flood.stop();
     expect(error).toBeInstanceOf(NeweggApiError);

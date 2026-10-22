@@ -179,7 +179,6 @@ describe("downloadViaFtp", () => {
         timeoutMs: 5000,
         allowedHost: ANY_HOST,
         allowedPorts: [ftp.port],
-        allowPlaintext: true,
       });
       expect(Buffer.from(bytes).toString("utf8")).toBe(payload.toString("utf8"));
       expect(ftp.commands).toEqual(
@@ -213,7 +212,6 @@ describe("downloadViaFtp", () => {
         timeoutMs: 5000,
         allowedHost: ANY_HOST,
         allowedPorts: [ftp.port],
-        allowPlaintext: true,
       }).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(NeweggApiError);
       expect(JSON.stringify(error)).not.toContain("topsecretpw");
@@ -232,7 +230,6 @@ describe("downloadViaFtp", () => {
           timeoutMs: 5000,
           allowedHost: ANY_HOST,
           allowedPorts: [ftp.port],
-          allowPlaintext: true,
         }),
       ).rejects.toThrowError(/size limit/);
     } finally {
@@ -249,7 +246,6 @@ describe("downloadViaFtp", () => {
           timeoutMs: 5000,
           allowedHost: ANY_HOST,
           allowedPorts: [ftp.port],
-          allowPlaintext: true,
         }),
       ).rejects.toThrowError(/retrieval/);
     } finally {

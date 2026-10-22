@@ -47,17 +47,22 @@ describe("HTTP session bounds and TLS-proxy declaration (T-5670 / T-5672)", () =
   });
 });
 
-describe("plaintext report FTP escape hatch (T-5668)", () => {
+describe("report FTPS opt-in (T-5668)", () => {
   it("is off by default and on only for the exact literal true", () => {
-    expect(loadMcpConfigFromEnv(makeEnv()).allowPlaintextReportFtp).toBe(false);
+    expect(loadMcpConfigFromEnv(makeEnv()).reportFtps).toBe(false);
+    expect(loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_REPORT_FTPS: "1" })).reportFtps).toBe(false);
+    expect(loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_REPORT_FTPS: "true" })).reportFtps).toBe(true);
+  });
+
+  it("validates the pinned certificate fingerprint without echoing it", () => {
+    const pin = "ab".repeat(32);
     expect(
-      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP: "1" }))
-        .allowPlaintextReportFtp,
-    ).toBe(false);
-    expect(
-      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP: "true" }))
-        .allowPlaintextReportFtp,
-    ).toBe(true);
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: pin }))
+        .reportFtpsCertSha256,
+    ).toBe(pin);
+    expect(() =>
+      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: "not-a-fingerprint" })),
+    ).toThrow(McpConfigError);
   });
 });
 

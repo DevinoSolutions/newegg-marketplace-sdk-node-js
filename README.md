@@ -321,11 +321,12 @@ the reports API and its MCP tools (`newegg_reports_settlement_summary`,
 `newegg_reports_settlement_transactions`, `newegg_reports_daily_inventory`,
 `newegg_reports_daily_price`, `newegg_reports_status`) are always available and read-only. If a
 wait times out, `ReportTimeoutError.requestId` lets you continue with `waitForRequest`. The
-daily reports return an FTP URL with embedded credentials; the SDK downloads the file itself over
-**explicit FTPS** (`AUTH TLS` before the login, verified certificate, port 21 only; **no plaintext
-fallback**) and never exposes or logs that URL. Plain FTP carries the credentials and the report data
-in clear text, so it is available only as an explicit opt-out
-(`reportFileFtp: { allowPlaintext: true }`, MCP `NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP=true`). Daily Price exists on Newegg.com only; on B2B/CA use the Daily
+daily reports return an FTP URL with embedded credentials; the SDK downloads the file itself (port 21
+only) and never exposes or logs that URL. The transfer is **plain FTP by default**: Newegg's report
+server offers `AUTH TLS` but presents a self-signed certificate, so the credentials and the report data
+cross the network in clear text unless you opt in to **explicit FTPS with a pinned certificate**
+(`reportFileFtp: { ftps: true, tlsPinnedCertSha256 }`, MCP `NEWEGG_MCP_REPORT_FTPS=true` +
+`NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`; contracts §17.5 has the fingerprint and the live evidence). Daily Price exists on Newegg.com only; on B2B/CA use the Daily
 Inventory report, which carries price and activation columns. Details: contracts §17.
 
 To enumerate every listing (there is no synchronous "list my products" call) use the Item Basic
@@ -511,11 +512,11 @@ Seller ID or a key from another platform is the usual cause), see
 > marketplace's set. SDK users should pass `credentialMarketplace` to `createNeweggClient`; omitting it
 > keeps the old, unsafe behaviour. See ADR 0006.
 
-> **Breaking (0.1.x, T-5665 to T-5675): security hardening.** (1) The report file download now requires
-> **explicit FTPS** and port 21: a server that does not offer `AUTH TLS` fails the download instead of
-> falling back to clear text. If your network or a proxy cannot do FTPS, set
-> `reportFileFtp: { allowPlaintext: true }` (SDK) or `NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP=true` (MCP),
-> knowing that credentials and report data then cross the network unencrypted. (2) `NEWEGG_MCP_HTTP_BEARER_TOKEN`
+> **Breaking (0.1.x, T-5665 to T-5675): security hardening.** (1) The report file download now only
+> connects to URL port 21 (`reportFileFtp.allowedPorts` widens it) and can use **explicit FTPS**, opt-in:
+> `reportFileFtp: { ftps: true, tlsPinnedCertSha256 }` (SDK) or `NEWEGG_MCP_REPORT_FTPS=true` +
+> `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256` (MCP). It is opt-in because Newegg's server certificate is
+> self-signed; the default stays plain FTP. (2) `NEWEGG_MCP_HTTP_BEARER_TOKEN`
 > must be **at least 32 characters**; a shorter token makes the server refuse to start (generate one with
 > `openssl rand -hex 32`). (3) RMA evidence `imageUrls` must be `https` and carry no `user:password@`.
 > (4) A preview can only be applied from the MCP session that created it; `startHttpServer`'s
@@ -568,7 +569,8 @@ Seller ID or a key from another platform is the usual cause), see
 | `NEWEGG_MCP_HTTP_MAX_SESSIONS`              | `32`                     | Concurrent HTTP sessions; the next `initialize` gets 503.                                                                                                                                                                                                                                                                   |
 | `NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS`      | `1800`                   | A session idle this long is closed.                                                                                                                                                                                                                                                                                         |
 | `NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY`          | unset (`false`)          | Exactly `true` confirms a TLS-terminating proxy fronts the plain-HTTP listener; otherwise a non-loopback bind logs a warning.                                                                                                                                                                                               |
-| `NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP`     | unset (`false`)          | Exactly `true` lets the report file download fall back to clear-text FTP (default: FTPS only).                                                                                                                                                                                                                              |
+| `NEWEGG_MCP_REPORT_FTPS`                    | unset (`false`)          | Exactly `true` makes the report file download use explicit FTPS (no fallback to clear text).                                                                                                                                                                                                                                |
+| `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`        | empty                    | SHA-256 fingerprint of the server certificate to trust for FTPS (Newegg's is self-signed).                                                                                                                                                                                                                                  |
 | `NEWEGG_MCP_HTTP_BEARER_TOKEN`              | empty                    | Bearer token, **at least 32 characters**; **required** before binding a non-loopback host.                                                                                                                                                                                                                                  |
 | `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`           | empty = same-origin only | Comma-separated allowed browser `Origin` values.                                                                                                                                                                                                                                                                            |
 | `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`             | empty                    | Comma-separated allowed `Host` values (`host[:port]`); loopback always allowed.                                                                                                                                                                                                                                             |

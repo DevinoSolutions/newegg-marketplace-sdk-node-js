@@ -110,11 +110,13 @@ export interface McpServerConfig {
   readonly baseUrl?: string;
   readonly allowWrites: boolean;
   /**
-   * Escape hatch (`NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP=true`, exact literal): lets the built-in
-   * report file download fall back to clear-text FTP. By default it speaks explicit FTPS only, so
-   * credentials and report contents never cross the network unencrypted (T-5668).
+   * Opt-in (`NEWEGG_MCP_REPORT_FTPS=true`, exact literal): the built-in report file download uses
+   * explicit FTPS (T-5668). Default is plain FTP: Newegg's server presents a self-signed
+   * certificate, so FTPS also needs `reportFtpsCertSha256` (`NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`,
+   * the SHA-256 fingerprint to trust). With FTPS on there is no fallback to clear text.
    */
-  readonly allowPlaintextReportFtp?: boolean;
+  readonly reportFtps?: boolean;
+  readonly reportFtpsCertSha256?: string;
   readonly credentials: McpCredentials;
   readonly limits: McpLimits;
   readonly http: McpHttpConfig;
@@ -392,10 +394,25 @@ const envSchema = z.object({
     .optional()
     .transform((raw) => raw === "true"),
   // SECURITY gate, same exact-literal rule as NEWEGG_MCP_ALLOW_WRITES: only "true" opts in.
-  NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP: z
+  NEWEGG_MCP_REPORT_FTPS: z
     .string()
     .optional()
     .transform((raw) => raw === "true"),
+  NEWEGG_MCP_REPORT_FTPS_CERT_SHA256: z
+    .string()
+    .optional()
+    .transform((raw, ctx) => {
+      const trimmed = raw?.trim();
+      if (trimmed === undefined || trimmed === "") return undefined;
+      if (!/^[0-9a-f]{2}(:?[0-9a-f]{2}){31}$/i.test(trimmed)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "NEWEGG_MCP_REPORT_FTPS_CERT_SHA256 must be a SHA-256 hex fingerprint.",
+        });
+        return z.NEVER;
+      }
+      return trimmed;
+    }),
   NEWEGG_MCP_ALLOWED_MARKETPLACES: marketplaceCsvEnv("NEWEGG_MCP_ALLOWED_MARKETPLACES"),
   NEWEGG_MCP_MAX_ITEMS_PER_OPERATION: intEnv(
     "NEWEGG_MCP_MAX_ITEMS_PER_OPERATION",
@@ -657,7 +674,8 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     credentialMarketplace: parsed.NEWEGG_MARKETPLACE,
     baseUrl: parsed.NEWEGG_API_BASE_URL,
     allowWrites: parsed.NEWEGG_MCP_ALLOW_WRITES,
-    allowPlaintextReportFtp: parsed.NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP,
+    reportFtps: parsed.NEWEGG_MCP_REPORT_FTPS,
+    reportFtpsCertSha256: parsed.NEWEGG_MCP_REPORT_FTPS_CERT_SHA256,
     credentials,
     limits,
     http,

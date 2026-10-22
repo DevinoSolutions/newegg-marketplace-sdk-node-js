@@ -416,7 +416,10 @@ class FileReportApiImpl<Input, Row> implements FileReportApi<Input, Row> {
       ((target, opts) =>
         downloadViaFtp(target, {
           ...opts,
-          ...(ftp?.allowPlaintext === undefined ? {} : { allowPlaintext: ftp.allowPlaintext }),
+          ...(ftp?.ftps === undefined ? {} : { ftps: ftp.ftps }),
+          ...(ftp?.tlsPinnedCertSha256 === undefined
+            ? {}
+            : { tlsPinnedCertSha256: ftp.tlsPinnedCertSha256 }),
           ...(ftp?.allowedPorts === undefined ? {} : { allowedPorts: ftp.allowedPorts }),
           ...(ftp?.tlsCa === undefined ? {} : { tlsCa: ftp.tlsCa }),
         }));

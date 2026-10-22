@@ -204,11 +204,13 @@ Low and informational findings from the security audit, closed together. Each is
 - **Logs are redacted (T-5667).** The unexpected-error log line and the default logger strip URL
   credentials and URL query strings (for example `?sellerid=...`) from every string field before writing to
   stderr.
-- **Report FTP is FTPS-only and port-pinned (T-5668, T-5669).** The SDK upgrades with `AUTH TLS` before
-  sending `USER`/`PASS`, verifies the certificate, protects the data channel and has no plaintext
-  fallback; only URL port 21 is used; the control channel is capped at 64 KiB per line and 256 KiB per
-  reply. Clear-text FTP is an explicit opt-out (`NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP=true`, exact
-  literal). See contracts §17.5.
+- **Report FTP is port-pinned, bounded and FTPS-capable (T-5668, T-5669).** Only URL port 21 is used; the
+  control channel is capped at 64 KiB per line and 256 KiB per reply. Explicit FTPS (`AUTH TLS` before
+  `USER`/`PASS`, protected data channel, no fallback to clear text) is **opt-in**
+  (`NEWEGG_MCP_REPORT_FTPS=true` + `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`): Newegg's server offers it but
+  presents a self-signed certificate, so it can only be authenticated by pinning its fingerprint. Until you
+  opt in, the credentials and report contents cross the network in clear text (residual risk, PARTIAL).
+  See contracts §17.5.
 - **HTTP transport DoS surface (T-5670).** At most `NEWEGG_MCP_HTTP_MAX_SESSIONS` (default 32)
   concurrent sessions (the next `initialize` gets 503); a session idle for
   `NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS` (default 1800) is closed; an oversize (> 4 MB) request body is

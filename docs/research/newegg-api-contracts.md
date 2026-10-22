@@ -2120,31 +2120,42 @@ Submit `POST reportmgmt/report/submitrequest?sellerid=&version=310` (the page's 
 embedded (live-verified on the Item Basic Information report, CAN 2026-09-01). Never
 log it, put it in an error, return it from an MCP tool or store it in the repo. The SDK withholds the URL
 from every public type (`ReportFileInfo` exposes only the host and file name), redacts `user:pass@` in every
-`raw` payload (`includeRaw`), downloads over FTP itself (explicit FTPS, passive mode, host allow-list
-`*.newegg.com`, URL port 21 only, size caps; see below) or through the caller's `reportFileDownloader`, and
+`raw` payload (`includeRaw`), downloads over FTP itself (passive mode, host allow-list `*.newegg.com`, URL
+port 21 only, size caps, explicit FTPS opt-in; see below) or through the caller's `reportFileDownloader`, and
 keeps the URL out of thrown errors.
 
-**FTP transport security (T-5668 / T-5669; probed 2026-10-21, read-only, no credentials sent).** A raw TCP
-connection to `mktpftpreport.newegg.com:21` is greeted `220 Serv-U FTP Server ready...`; `AUTH TLS` is answered
-`234 AUTH command OK. Initializing SSL connection.` and `QUIT` ended the session, so the server offers explicit
-FTPS (RFC 4217). Plain FTP puts `USER`/`PASS` and the report (order and customer data) on the wire in clear
-text, so the SDK's downloader now:
+**FTP transport security (T-5668 / T-5669; live-verified 2026-10-21/22 on CAN, read-only).** Plain FTP puts
+`USER`/`PASS` and the report (order and customer data) on the wire in clear text. What the live checks found on
+`mktpftpreport.newegg.com:21`:
 
-- sends `AUTH TLS` **before** `USER`/`PASS`, verifies the server certificate against the URL host (TLS 1.2+),
-  then `PBSZ 0` + `PROT P` and runs the data channel over TLS (reusing the control session);
-- has **no plaintext fallback**: a server that does not answer `234` fails the download with nothing sent
-  (`details.stage` is `TLS upgrade`); `NeweggClientConfig.reportFileFtp.allowPlaintext = true` (MCP:
-  `NEWEGG_MCP_ALLOW_PLAINTEXT_REPORT_FTP=true`) is the explicit, off-by-default opt-out;
+- Greeting `220 Serv-U FTP Server ready...`; `AUTH TLS` is answered `234 AUTH command OK. Initializing SSL
+connection.` (credential-free probe), so the server offers explicit FTPS (RFC 4217).
+- The TLS handshake **fails default verification**: `DEPTH_ZERO_SELF_SIGNED_CERT`. The certificate is the
+  self-signed Serv-U default (subject = issuer `CN=ftp.Serv-U.com, O=SolarWinds Worldwide, LLC`, valid
+  2026-03-05 to 2031-03-05, no SAN, SHA-256 fingerprint
+  `952350b898339311c552e51e33a634070efd370eec848e90b3e3d7e94bfbc13d`). It is neither issued for the host nor
+  chained to a public root, so a CA/host-name check cannot succeed.
+- With the certificate **pinned by fingerprint**, one real Item Basic Information report was downloaded over
+  FTPS end to end (`AUTH TLS`, `PBSZ 0`, `PROT P`, `PASV` data channel over TLS, `RETR`; 87 rows parsed). The
+  data channel resumes the control session (`isSessionReused()`), which presents no certificate; the pin is
+  therefore checked on the control connection.
+
+Because default verification cannot succeed, **plain FTP stays the default** and FTPS is opt-in
+(`NeweggClientConfig.reportFileFtp = { ftps: true, tlsPinnedCertSha256: "<hex>" }`; MCP
+`NEWEGG_MCP_REPORT_FTPS=true` + `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`). With `ftps` there is no fallback: a server
+that does not answer `234` fails the download with nothing sent (`details.stage = "TLS upgrade"`), and a
+certificate that is neither trusted (`tlsCa` / default store) nor the pinned one fails it before `USER`/`PASS`
+(`details.stage = "TLS handshake"`, `details.tlsError`). The fingerprint has to be obtained out of band; a
+certificate Newegg rotates (this one expires 2031) fails closed until the pin is updated. The downloader also:
+
 - connects only to URL port 21 (`reportFileFtp.allowedPorts` widens it), because the port comes from the
   Newegg response and a hostile response must not aim the client at another TCP port on a `*.newegg.com` host;
 - caps one control line at 64 KiB and one (multi-line) reply at 256 KiB, destroying the socket and failing the
   download on overflow, so a hostile or intercepted server cannot grow memory without bound.
 
-**ASSUMPTION (not proven live):** that the real server's certificate chains to a public root and that the
-`PROT P` data channel works against Serv-U. Only the `AUTH TLS` reply was observed; completing the handshake or
-a transfer needs credentials, which the probe did not use. If the handshake fails the download throws a
-`NeweggApiError` with `details.stage = "TLS handshake"` and `details.tlsError` (the Node error code);
-`reportFileFtp.tlsCa` adds a trusted CA, and `allowPlaintext` is the last resort.
+Status: the FTPS half of T-5668 is therefore PARTIAL by design (opt-in with a pin, not default); the port pin
+and the bounded control channel are complete. Other hosts (`ftp03.newegg.com` does not resolve) were not
+checked.
 
 ### 17.6 Order List and RMA List reports
 

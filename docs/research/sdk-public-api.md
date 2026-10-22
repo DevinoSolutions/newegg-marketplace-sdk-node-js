@@ -858,10 +858,12 @@ export type ReportFileDownloader = (
   options: { signal?: AbortSignal; maxBytes: number; timeoutMs: number },
 ) => Promise<Uint8Array>;
 
-// Built-in downloader: explicit FTPS (AUTH TLS before USER/PASS, verified certificate, PROT P), URL port 21 only,
-// *.newegg.com only, control channel capped at 64 KiB/line and 256 KiB/reply. No plaintext fallback (contracts §17.5).
+// Built-in downloader: plain FTP by default; URL port 21 only, *.newegg.com only, control channel capped at
+// 64 KiB/line and 256 KiB/reply. ftps opts in to explicit FTPS (AUTH TLS before USER/PASS, PROT P, no fallback to
+// clear text); Newegg's certificate is self-signed, so pin it (contracts §17.5).
 export interface ReportFileFtpOptions {
-  allowPlaintext?: boolean; // explicit opt-out of FTPS; off by default
+  ftps?: boolean; // opt in to explicit FTPS; off by default
+  tlsPinnedCertSha256?: string; // SHA-256 fingerprint (hex) to trust instead of a CA chain
   allowedPorts?: number[]; // default [21]
   tlsCa?: string | string[]; // extra trusted CA certificate(s), PEM; verification is never disabled
 }

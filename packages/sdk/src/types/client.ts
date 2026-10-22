@@ -66,9 +66,9 @@ export interface NeweggClientConfig {
    */
   reportFileDownloader?: ReportFileDownloader;
   /**
-   * Transport settings of the built-in FTP downloader. It speaks explicit FTPS by default and
-   * refuses a server that does not; set `allowPlaintext: true` only for an FTP endpoint that
-   * cannot do TLS. Ignored when {@link NeweggClientConfig.reportFileDownloader} is set.
+   * Transport settings of the built-in FTP downloader: plain FTP by default; set `ftps: true`
+   * (with `tlsPinnedCertSha256` for Newegg's self-signed certificate) to opt in to explicit FTPS.
+   * Ignored when {@link NeweggClientConfig.reportFileDownloader} is set.
    */
   reportFileFtp?: ReportFileFtpOptions;
 }

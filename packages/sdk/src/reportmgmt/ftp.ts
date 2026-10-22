@@ -5,13 +5,17 @@
  * as the control connection (the host in a PASV reply is never trusted, so a hostile reply
  * cannot redirect the transfer). Credentials never appear in errors or logs.
  *
- * Transport security (T-5668): explicit FTPS (RFC 4217). The control connection is upgraded with
- * `AUTH TLS` BEFORE `USER`/`PASS` is sent, the certificate is verified against the URL host, and
- * the data channel is protected (`PROT P`, with the control session offered for reuse). There is
- * no plaintext fallback: a server that does not offer FTPS fails the download, and only the
- * explicit {@link FtpDownloadOptions.allowPlaintext} opt-out skips TLS. The URL port is
- * restricted to {@link DEFAULT_ALLOWED_PORTS} so a hostile report response cannot aim the client
- * at another TCP port. The control channel is bounded (T-5669): see {@link MAX_CONTROL_LINE_BYTES}.
+ * Transport security (T-5668): explicit FTPS (RFC 4217) is OPT-IN (`ftps: true`). Newegg's report
+ * server offers `AUTH TLS` but presents a self-signed Serv-U certificate (CN `ftp.Serv-U.com`), so
+ * default verification cannot succeed against it; plain FTP therefore stays the default. With
+ * `ftps` the control connection is upgraded with `AUTH TLS` BEFORE `USER`/`PASS` is sent, the
+ * server is authenticated by the default trust store + host name, by `tlsCa`, or by a pinned
+ * certificate fingerprint (`tlsPinnedCertSha256`), and the data channel is protected (`PROT P`).
+ * There is never a silent fallback to plain FTP: with `ftps` a server that does not offer TLS, or
+ * whose certificate does not verify, fails the download before any credential is sent. The URL
+ * port is restricted to {@link DEFAULT_ALLOWED_PORTS} so a hostile report response cannot aim the
+ * client at another TCP port. The control channel is bounded (T-5669): see
+ * {@link MAX_CONTROL_LINE_BYTES}.
  */
 import net from "node:net";
 import tls from "node:tls";
@@ -45,15 +49,19 @@ export interface FtpDownloadOptions {
    */
   allowedPorts?: readonly number[];
   /**
-   * Extra trusted CA certificate(s) (PEM) for the FTPS handshake, on top of Node's defaults.
-   * Certificate verification is never disabled.
+   * Opt in to explicit FTPS: `AUTH TLS` before the login, protected data channel. Default false
+   * (plain FTP, the only mode Newegg's self-signed certificate allows without a pin). There is no
+   * fallback in either direction: with `ftps` a failed upgrade fails the download.
    */
+  ftps?: boolean;
+  /** FTPS: extra trusted CA certificate(s) (PEM) on top of Node's defaults. */
   tlsCa?: string | Buffer | ReadonlyArray<string | Buffer>;
   /**
-   * Explicit opt-out of FTPS: skips `AUTH TLS` and sends the credentials and the report in
-   * clear text. Off by default; there is no automatic fallback to it.
+   * FTPS: authenticate the server by the SHA-256 fingerprint of its certificate (hex, colons
+   * optional) instead of a CA chain and host name. Needed for Newegg's self-signed certificate.
+   * The first fingerprint has to be obtained out of band; a changed certificate fails closed.
    */
-  allowPlaintext?: boolean;
+  tlsPinnedCertSha256?: string;
 }
 
 interface Reply {
@@ -204,6 +212,16 @@ function connect(host: string, port: number): Promise<net.Socket> {
 interface TlsSettings {
   readonly host: string;
   readonly ca: FtpDownloadOptions["tlsCa"];
+  /** Normalized upper-case hex fingerprint, or undefined for CA / host name verification. */
+  readonly pin: string | undefined;
+}
+
+const normalizeFingerprint = (value: string): string => value.replace(/:/g, "").toUpperCase();
+
+/** True when `socket`'s peer certificate is the pinned one. */
+function matchesPin(socket: tls.TLSSocket, pin: string): boolean {
+  const presented = socket.getPeerCertificate().fingerprint256;
+  return typeof presented === "string" && normalizeFingerprint(presented) === pin;
 }
 
 function extraCa(ca: NonNullable<FtpDownloadOptions["tlsCa"]>): Array<string | Buffer> {
@@ -212,7 +230,10 @@ function extraCa(ca: NonNullable<FtpDownloadOptions["tlsCa"]>): Array<string | B
 
 function tlsOptions(settings: TlsSettings, session?: Buffer): tls.ConnectionOptions {
   return {
-    // Certificate verification stays ON (Node default); only extra trust anchors are added.
+    // Without a pin, certificate verification stays ON (Node default); only trust anchors are
+    // added. With a pin the chain cannot validate (self-signed), so the fingerprint is checked
+    // right after the handshake instead (see `verifyPin`), before anything is sent.
+    ...(settings.pin === undefined ? {} : { rejectUnauthorized: false }),
     host: settings.host,
     // SNI must not be an IP literal (RFC 6066); verification still checks the IP SAN.
     ...(net.isIP(settings.host) === 0 ? { servername: settings.host } : {}),
@@ -224,11 +245,30 @@ function tlsOptions(settings: TlsSettings, session?: Buffer): tls.ConnectionOpti
   };
 }
 
+/** Destroys `secure` with an error when a pinned certificate is not the one presented. */
+function verifyPin(secure: tls.TLSSocket, pin: string | undefined): boolean {
+  if (pin === undefined) return true;
+  // A resumed session (the data channel reusing the control session) presents no certificate: the
+  // resumption secret already proves it is the server whose pinned certificate the control
+  // connection verified.
+  if (secure.isSessionReused() || matchesPin(secure, pin)) return true;
+  secure.destroy(
+    Object.assign(new Error("certificate does not match the pin"), { code: "CERT_PIN_MISMATCH" }),
+  );
+  return false;
+}
+
 /** Wraps an established TCP socket in TLS and resolves once the handshake verified the peer. */
-function upgrade(socket: net.Socket, options: tls.ConnectionOptions): Promise<tls.TLSSocket> {
+function upgrade(
+  socket: net.Socket,
+  options: tls.ConnectionOptions,
+  pin: string | undefined,
+): Promise<tls.TLSSocket> {
   return new Promise<tls.TLSSocket>((resolve, reject) => {
     const secure = tls.connect({ ...options, socket });
-    secure.once("secureConnect", () => resolve(secure));
+    secure.once("secureConnect", () => {
+      if (verifyPin(secure, pin)) resolve(secure);
+    });
     secure.once("error", reject);
   });
 }
@@ -326,7 +366,14 @@ export async function downloadViaFtp(
   });
 
   const work = (async (): Promise<Uint8Array> => {
-    const settings: TlsSettings = { host: parsed.hostname, ca: options.tlsCa };
+    const settings: TlsSettings = {
+      host: parsed.hostname,
+      ca: options.tlsCa,
+      pin:
+        options.tlsPinnedCertSha256 === undefined
+          ? undefined
+          : normalizeFingerprint(options.tlsPinnedCertSha256),
+    };
     let controlSocket: net.Socket;
     try {
       controlSocket = await connect(parsed.hostname, port);
@@ -341,7 +388,7 @@ export async function downloadViaFtp(
 
     await expect(control, "greeting", (code) => code === 220);
 
-    if (options.allowPlaintext !== true) {
+    if (options.ftps === true) {
       control.send("AUTH TLS");
       const answer = await control.reply();
       if (answer.code !== 234) {
@@ -349,7 +396,7 @@ export async function downloadViaFtp(
       }
       if (!control.detach()) throw fail("TLS upgrade (unexpected data before the handshake)");
       try {
-        controlTls = await upgrade(controlSocket, tlsOptions(settings));
+        controlTls = await upgrade(controlSocket, tlsOptions(settings), settings.pin);
       } catch (error) {
         throw fail("TLS handshake (certificate or protocol error)", undefined, error, {
           ...tlsErrorCode(error),
@@ -398,6 +445,7 @@ export async function downloadViaFtp(
         socket: dataSocket,
       });
       sockets.push(secureData);
+      secureData.once("secureConnect", () => verifyPin(secureData, settings.pin));
       transferSocket = secureData;
     }
     const transfer = collect(transferSocket, options.maxBytes);

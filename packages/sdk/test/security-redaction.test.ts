@@ -113,6 +113,15 @@ describe("NeweggError.cause (T-5666 / L2)", () => {
     expectNoSecret(inspect({ wrapped: error }, { depth: 10 }));
   });
 
+  it("redacts the stack of the cause, not only its message", () => {
+    const cause = new Error(secretUrl);
+    expect(cause.stack).toContain(PASS_A);
+    const error = new NeweggApiError("download failed", { cause });
+    const sanitized = error.cause as Error;
+    expectNoSecret(sanitized.stack ?? "");
+    expectNoSecret(inspect(error, { depth: 10 }));
+  });
+
   it("sanitizes nested causes and string properties of the cause", () => {
     const inner = Object.assign(new Error(secretUrl), { url: `ftp://${USER}:${PASS_A}@${HOST}/` });
     const cause = new Error("outer", { cause: inner });

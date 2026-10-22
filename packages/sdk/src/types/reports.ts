@@ -25,15 +25,19 @@ export type ReportFileDownloader = (
 
 /**
  * Transport settings of the built-in FTP downloader (`NeweggClientConfig.reportFileFtp`). The
- * defaults are the safe ones: explicit FTPS (`AUTH TLS` before any credential is sent, verified
- * certificate, protected data channel), URL port 21 only, `*.newegg.com` only.
+ * defaults are plain FTP (what Newegg's self-signed server allows without a pin), URL port 21
+ * only and `*.newegg.com` only; `ftps` opts in to explicit FTPS.
  */
 export interface ReportFileFtpOptions {
   /**
-   * Opt out of FTPS and use clear-text FTP. Credentials and report contents are then readable by
-   * anyone on the network path. Off by default; there is no automatic fallback to it.
+   * Opt in to explicit FTPS (`AUTH TLS` before the login, protected data channel). Off by default:
+   * plain FTP exposes the credentials and the report to anyone on the network path, but Newegg's
+   * server presents a self-signed certificate, so FTPS needs `tlsPinnedCertSha256` (or `tlsCa`).
+   * With `ftps` there is no fallback to clear text: a failed upgrade fails the download.
    */
-  allowPlaintext?: boolean;
+  ftps?: boolean;
+  /** SHA-256 fingerprint (hex) of the server certificate to trust instead of a CA chain (FTPS). */
+  tlsPinnedCertSha256?: string;
   /** URL ports the downloader may connect to. Default `[21]`. */
   allowedPorts?: number[];
   /** Extra trusted CA certificate(s), PEM, for the FTPS handshake (verification is never disabled). */

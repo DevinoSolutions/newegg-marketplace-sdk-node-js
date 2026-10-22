@@ -119,8 +119,9 @@ console.log(batch.items, batch.missingIdentifiers, batch.failures);
   file the SDK downloads and parses for you. Each has `submit`, `status`, `result`,
   `waitForRequest` and `waitForResult` (`ReportTimeoutError` carries the `requestId` so you
   continue instead of resubmitting; 100 submissions/hour). The file URL embeds credentials and
-  is never exposed or logged. The download uses explicit FTPS (port 21, verified certificate, no
-  plaintext fallback); `reportFileFtp: { allowPlaintext: true }` is the explicit opt-out.
+  is never exposed or logged. The download is plain FTP on port 21 by default; `reportFileFtp: { ftps:
+true, tlsPinnedCertSha256 }` opts in to explicit FTPS (Newegg's certificate is self-signed, so it is
+  pinned by fingerprint; contracts §17.5).
   Settlement reports wait up to 300 s by default (a Settlement Summary took ~170 s live); the daily
   file reports 120 s; pass `timeoutMs` to override.
   Also: `itemBasicInfo` (file report listing **every listing** - SKU, Newegg item number, MPN, UPC,
