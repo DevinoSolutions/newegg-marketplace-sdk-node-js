@@ -19,8 +19,9 @@ deactivate a whole catalog. Tool descriptions and annotations are hints, not sec
   stored normalized operation (quantities cannot be altered at apply time), atomically
   consumes the preview (single use; replay rejected), rejects expired previews, and
   records the outcome.
-- The apply tool is **registered only when `NEWEGG_MCP_ALLOW_WRITES=true`** (omitted
-  otherwise, so it never appears in `tools/list`). Additional guards:
+- Both halves of the flow are **registered only when `NEWEGG_MCP_ALLOW_WRITES=true`** (the
+  preview and the apply tool are omitted otherwise, so neither appears in `tools/list` and a
+  read-only deployment cannot fill the preview store; amended 2026-10-22, T-6103). Additional guards:
   `NEWEGG_MCP_MAX_ITEMS_PER_OPERATION` (enforced **declaratively** — the preview tool's
   `updates` array carries `.max(maxItemsPerOperation)`, default 500, so an oversized request
   is rejected by the input schema itself), `NEWEGG_MCP_ALLOW_ZERO_QUANTITY`,
