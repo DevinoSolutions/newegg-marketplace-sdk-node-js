@@ -260,9 +260,9 @@ describe("NeweggError.cause covers every shape a cause can take (T-5666 review)"
     expect(sanitizedDate.getTime()).toBe(date.getTime());
     expectNoSecret(leaks(date));
 
-    const regexp = Object.assign(/a+b/gi, { u: url });
+    const regexp = Object.assign(/abc/gi, { u: url });
     const sanitizedRegexp = new NeweggError("api", "failed", { cause: regexp }).cause as RegExp;
-    expect(sanitizedRegexp.source).toBe("a+b");
+    expect(sanitizedRegexp.source).toBe("abc");
     expect(sanitizedRegexp.flags).toBe("gi");
     expectNoSecret(leaks(regexp));
 
