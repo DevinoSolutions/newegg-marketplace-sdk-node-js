@@ -35,7 +35,9 @@ deactivate a whole catalog. Tool descriptions and annotations are hints, not sec
   when unset), over the canonical payload plus the `previewId`, `sessionId` and `expiresAt`, and is
   re-verified at apply (amended 2026-10-22, T-6218). It was a plain sha-256 over a public canonical form,
   which anyone able to write a shared store could recompute over a forged record. Stores shared across
-  processes must set the same key everywhere; a mismatch refuses the preview (`preview_tampered`).
+  processes must set the same key everywhere; a mismatch refuses the preview (`preview_tampered`). The MAC
+  is taken over a key-sorted canonical JSON (T-6215), so a store that reorders object keys does not cause
+  a false `preview_tampered`; the key itself must pass the same strength rule as the HTTP bearer token.
 - `PreviewStore` is an interface; in-memory implementation ships for stdio/dev, and the
   interface (get/put/consume with TTL) is documented for Redis/DB in multi-instance
   deployments.

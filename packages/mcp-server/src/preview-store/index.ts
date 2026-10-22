@@ -1,6 +1,6 @@
 /**
  * Preview store for the two-step write flow (ADR 0005). `newegg_inventory_preview_update`
- * stores a normalized, hashed operation under a cryptographically random `previewId`;
+ * stores a normalized, MAC-sealed operation under a cryptographically random `previewId`;
  * `newegg_inventory_apply_update` atomically consumes it. The store is an interface so a
  * Redis/DB implementation can back multi-instance deployments; the in-memory implementation
  * ships for stdio/dev and single-process HTTP.
@@ -26,7 +26,10 @@ import type {
 /** Fields common to every stored, ready-to-apply operation. */
 export interface PreviewRecordBase {
   readonly previewId: string;
-  /** sha-256 (hex) of the canonical payload for this operation kind. */
+  /**
+   * HMAC-SHA256 (hex, keyed by `NEWEGG_MCP_PREVIEW_HMAC_KEY` or a per-process key) over the
+   * key-sorted canonical JSON of this record's kind, id, session, expiry and payload.
+   */
   readonly hash: string;
   readonly marketplace: NeweggMarketplace;
   readonly createdAt: Date;
@@ -87,7 +90,7 @@ export type ServiceWriteKind = keyof ServiceWriteInputs;
 
 /**
  * A stored RMA or courtesy-refund write. These move customer money or change a return, so the
- * `input` here is authoritative at apply time and `hash` (sha-256 of the canonical kind +
+ * `input` here is authoritative at apply time and `hash` (the keyed HMAC over the canonical kind +
  * marketplace + input + refundCents) is re-checked before anything is sent.
  */
 export type ServiceWritePreviewRecord = {
@@ -114,8 +117,8 @@ export type ShippingLabelKind = keyof ShippingLabelInputs;
 
 /**
  * A stored label purchase or reprint. Buying a label charges the seller's account and ships the
- * order, so the `input` here is authoritative at apply time and `hash` (sha-256 of the canonical
- * kind + marketplace + input + costCents) is re-checked before anything is sent.
+ * order, so the `input` here is authoritative at apply time and `hash` (the keyed HMAC over the
+ * canonical kind + marketplace + input + costCents) is re-checked before anything is sent.
  */
 export type ShippingLabelPreviewRecord = {
   [K in ShippingLabelKind]: PreviewRecordBase & {

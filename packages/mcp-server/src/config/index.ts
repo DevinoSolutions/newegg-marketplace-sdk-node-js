@@ -7,6 +7,9 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { NeweggMarketplace } from "@devino/newegg-marketplace-sdk";
+import { weakBearerTokenReason } from "./token-strength.js";
+
+export { weakBearerTokenReason };
 
 /** Thrown for any invalid/missing configuration. Messages name the offending variable and
  * never echo provided secret values. */
@@ -17,8 +20,9 @@ export class McpConfigError extends Error {
   }
 }
 
-/** Credentials holder. Field access yields raw values (needed to build the SDK client), but
- * `toJSON` redacts every field so `JSON.stringify(config)` cannot leak secrets. */
+/** Credentials holder. Field access yields raw values (needed to build the SDK client), but the
+ * fields are accessors, so `util.inspect` / `console.error` print `[Getter]`, and `toJSON` redacts every
+ * field so `JSON.stringify(config)` cannot leak secrets. */
 export interface McpCredentials {
   readonly sellerId: string;
   readonly apiKey: string;
@@ -77,10 +81,11 @@ export interface McpLimits {
 
 /**
  * Secret that keys the integrity MAC of stored previews (T-6218). Field access yields the raw
- * value (needed to key the HMAC); `toJSON` redacts it so `JSON.stringify(config)` cannot leak it.
+ * value (needed to key the HMAC); the field is an accessor (`util.inspect` prints `[Getter]`) and
+ * `toJSON` redacts it, so neither printing nor `JSON.stringify(config)` can leak it.
  */
 export interface McpPreviewIntegrity {
-  /** `NEWEGG_MCP_PREVIEW_HMAC_KEY` (at least 32 characters, 12 different); undefined = per-process random key. */
+  /** `NEWEGG_MCP_PREVIEW_HMAC_KEY` (32+ characters that pass the strength rule); undefined = per-process random key. */
   readonly hmacKey: string | undefined;
   toJSON(): Record<string, string>;
 }
@@ -88,7 +93,11 @@ export interface McpPreviewIntegrity {
 export interface McpHttpConfig {
   readonly host: string;
   readonly port: number;
-  /** At least 32 characters when set (T-5672). */
+  /**
+   * At least 32 characters that pass the strength rule when set (T-5672, T-6215). On a config from
+   * `loadMcpConfigFromEnv` it is an accessor, so printing the config shows `[Getter]` and
+   * `JSON.stringify` shows a redaction.
+   */
   readonly bearerToken?: string;
   readonly allowedOrigins: string[];
   readonly allowedHosts: string[];
@@ -103,24 +112,6 @@ export interface McpHttpConfig {
   readonly behindTlsProxy?: boolean;
 }
 
-/** Shortest accepted `NEWEGG_MCP_HTTP_BEARER_TOKEN` (e.g. `openssl rand -hex 16`). */
-const MIN_BEARER_TOKEN_LENGTH = 32;
-/** Fewest distinct characters a bearer token must contain (rejects `aaaa...` and `abab...`). */
-const MIN_BEARER_TOKEN_DISTINCT = 12;
-
-/**
- * Why `token` is too weak to guard the HTTP transport, or undefined when it is acceptable: shorter
- * than 32 characters, or fewer than 12 distinct characters. The reason never contains the token.
- */
-export function weakBearerTokenReason(token: string): string | undefined {
-  if (token.length < MIN_BEARER_TOKEN_LENGTH) {
-    return `must be at least ${MIN_BEARER_TOKEN_LENGTH} characters`;
-  }
-  if (new Set(token).size < MIN_BEARER_TOKEN_DISTINCT) {
-    return `must contain at least ${MIN_BEARER_TOKEN_DISTINCT} different characters`;
-  }
-  return undefined;
-}
 /** Defaults for the HTTP session bounds (T-5670). */
 export const DEFAULT_MAX_HTTP_SESSIONS = 32;
 export const DEFAULT_SESSION_IDLE_TTL_SECONDS = 1800;
@@ -171,15 +162,31 @@ const MARKETPLACES = ["us", "b2b", "ca"] as const;
 
 const REDACTED = "***redacted***";
 
+/**
+ * Exposes `value` as an enumerable accessor: readers get the raw value, but `util.inspect` (even with
+ * `showHidden` or `customInspect: false`) prints `[Getter]` without calling it, and spreading the
+ * holder copies the plain value only into the copy the caller asked for.
+ */
+function defineSecret(holder: object, name: string, value: string | undefined): void {
+  Object.defineProperty(holder, name, { enumerable: true, configurable: false, get: () => value });
+}
+
 function makeCredentials(sellerId: string, apiKey: string, secretKey: string): McpCredentials {
-  return {
-    sellerId,
-    apiKey,
-    secretKey,
+  const credentials = {
     toJSON(): Record<string, string> {
       return { sellerId: REDACTED, apiKey: REDACTED, secretKey: REDACTED };
     },
-  };
+  } as McpCredentials;
+  defineSecret(credentials, "sellerId", sellerId);
+  defineSecret(credentials, "apiKey", apiKey);
+  defineSecret(credentials, "secretKey", secretKey);
+  return credentials;
+}
+
+/** True for an origin entry that can never identify a trusted origin: `*` and `null` (any case, padded). */
+export function isUnsafeOriginEntry(entry: string): boolean {
+  const normalized = entry.trim().toLowerCase();
+  return normalized === "*" || normalized === "null";
 }
 
 // ---------------------------------------------------------------------------
@@ -357,7 +364,7 @@ function originsCsvEnv(name: string) {
     .optional()
     .transform((raw, ctx) => {
       const out = splitCsv(raw);
-      if (out.some((entry) => entry === "*" || entry.toLowerCase() === "null")) {
+      if (out.some(isUnsafeOriginEntry)) {
         ctx.addIssue({
           code: "custom",
           message: `${name} must list concrete origins; "null" and "*" are never accepted.`,
@@ -424,8 +431,8 @@ function readReportFtpsCa(path: string | undefined): string | undefined {
 
 /**
  * Optional secret (HTTP bearer token, preview HMAC key): undefined when unset/blank, otherwise a
- * value that passes {@link weakBearerTokenReason}. The message names the variable and the rule only: a rejected token
- * is never echoed back.
+ * value that passes {@link weakBearerTokenReason}. The message names the variable and the rule only: a
+ * rejected token is never echoed back.
  */
 function strongSecretEnv(name: string) {
   return z
@@ -438,7 +445,7 @@ function strongSecretEnv(name: string) {
       if (weakness !== undefined) {
         ctx.addIssue({
           code: "custom",
-          message: `${name} ${weakness} (generate one with \`openssl rand -hex 32\`).`,
+          message: `${name} ${weakness} (generate one with \`newegg-marketplace-mcp --generate-token\` or \`openssl rand -hex 32\`).`,
         });
         return z.NEVER;
       }
@@ -735,13 +742,30 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
   const http: McpHttpConfig = {
     host: parsed.NEWEGG_MCP_HTTP_HOST,
     port: parsed.NEWEGG_MCP_HTTP_PORT,
-    bearerToken: parsed.NEWEGG_MCP_HTTP_BEARER_TOKEN,
     allowedOrigins: parsed.NEWEGG_MCP_HTTP_ALLOWED_ORIGINS,
     allowedHosts: parsed.NEWEGG_MCP_HTTP_ALLOWED_HOSTS,
     maxSessions: parsed.NEWEGG_MCP_HTTP_MAX_SESSIONS,
     sessionIdleTtlSeconds: parsed.NEWEGG_MCP_HTTP_SESSION_IDLE_SECONDS,
     behindTlsProxy: parsed.NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY,
   };
+  if (parsed.NEWEGG_MCP_HTTP_BEARER_TOKEN !== undefined) {
+    defineSecret(http, "bearerToken", parsed.NEWEGG_MCP_HTTP_BEARER_TOKEN);
+  }
+  // Not enumerable, so it stays out of printed configs; JSON.stringify still finds it.
+  Object.defineProperty(http, "toJSON", {
+    enumerable: false,
+    value: (): Record<string, unknown> => ({
+      ...http,
+      ...(http.bearerToken === undefined ? {} : { bearerToken: REDACTED }),
+    }),
+  });
+
+  const previewIntegrity = {
+    toJSON(): Record<string, string> {
+      return { hmacKey: REDACTED };
+    },
+  } as McpPreviewIntegrity;
+  defineSecret(previewIntegrity, "hmacKey", parsed.NEWEGG_MCP_PREVIEW_HMAC_KEY);
 
   return {
     marketplace: parsed.NEWEGG_MARKETPLACE,
@@ -753,12 +777,7 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     reportFtpsCertSha256: parsed.NEWEGG_MCP_REPORT_FTPS_CERT_SHA256,
     ...(reportFtpsCa === undefined ? {} : { reportFtpsCa }),
     credentials,
-    previewIntegrity: {
-      hmacKey: parsed.NEWEGG_MCP_PREVIEW_HMAC_KEY,
-      toJSON(): Record<string, string> {
-        return { hmacKey: REDACTED };
-      },
-    },
+    previewIntegrity,
     limits,
     http,
   };

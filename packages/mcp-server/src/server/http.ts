@@ -40,6 +40,7 @@ import {
 import {
   DEFAULT_MAX_HTTP_SESSIONS,
   DEFAULT_SESSION_IDLE_TTL_SECONDS,
+  isUnsafeOriginEntry,
   weakBearerTokenReason,
   type McpHttpConfig,
 } from "../config/index.js";
@@ -221,6 +222,12 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
         "NEWEGG_MCP_HTTP_BEARER_TOKEN: write tools must not be reachable without authentication, " +
         "even on a loopback bind. Set NEWEGG_MCP_HTTP_BEARER_TOKEN (generate one with " +
         "`openssl rand -hex 32`), or disable writes (NEWEGG_MCP_ALLOW_WRITES=false).",
+    );
+  }
+  // The env loader refuses these; an embedder that builds the config by hand gets the same rule.
+  if (httpConfig.allowedOrigins.some(isUnsafeOriginEntry)) {
+    throw new Error(
+      'Refusing to start the MCP HTTP transport: allowedOrigins must list concrete origins; "null" and "*" are never accepted.',
     );
   }
   const weakness =

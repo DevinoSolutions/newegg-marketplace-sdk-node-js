@@ -4,7 +4,9 @@
  * anything). Re-verifying at apply means a record that was changed in a persistent or shared
  * `PreviewStore` between preview and apply is refused instead of executed (ADR 0005).
  *
- * The record's `hash` is an HMAC-SHA256 under a server secret, not a plain digest: the algorithm
+ * The record's `hash` is an HMAC-SHA256 under a server secret, not a plain digest, taken over a
+ * key-sorted canonical JSON so a store that does not preserve object key order (Postgres jsonb, some
+ * document stores) cannot turn a good record into a false `preview_tampered` (T-6215): the algorithm
  * and canonical forms are public, so an unkeyed hash would let anyone who can write the store
  * recompute a matching hash over a forged record (T-6218). The key is `NEWEGG_MCP_PREVIEW_HMAC_KEY`
  * when set, otherwise a random per-process key (fine for the in-memory store; a store shared
@@ -28,7 +30,7 @@ import type {
 } from "../preview-store/index.js";
 
 /** Bumped if the MAC input layout ever changes; part of the MAC input. */
-const MAC_VERSION = 1;
+const MAC_VERSION = 2;
 
 let processKey: Buffer | undefined;
 
@@ -61,16 +63,44 @@ export function sealFor(
   return { key: previewKeyFor(ctx.config), previewId, sessionId: ctx.sessionId, expiresAt };
 }
 
+/**
+ * The JSON.stringify view of `value` with every object's keys in sorted order (arrays keep their
+ * order). A store may hand objects back with their keys reordered; sorting makes the MAC independent
+ * of that. `toJSON` is honoured and `undefined` properties are dropped, exactly as JSON.stringify
+ * would, so a value that serializes the same MACs the same.
+ */
+function canonicalize(value: unknown): unknown {
+  const plain =
+    value !== null &&
+    typeof value === "object" &&
+    "toJSON" in value &&
+    typeof value.toJSON === "function"
+      ? (value.toJSON as () => unknown)()
+      : value;
+  if (Array.isArray(plain)) return plain.map((entry) => canonicalize(entry));
+  if (plain !== null && typeof plain === "object") {
+    // A null prototype keeps a "__proto__" key an ordinary property.
+    const sorted = Object.create(null) as Record<string, unknown>;
+    for (const key of Object.keys(plain).sort()) {
+      sorted[key] = canonicalize((plain as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return plain;
+}
+
 function mac(seal: PreviewSeal, payload: unknown): string {
   return createHmac("sha256", seal.key)
     .update(
-      JSON.stringify({
-        v: MAC_VERSION,
-        previewId: seal.previewId,
-        sessionId: seal.sessionId ?? null,
-        expiresAt: seal.expiresAt.getTime(),
-        payload,
-      }),
+      JSON.stringify(
+        canonicalize({
+          v: MAC_VERSION,
+          previewId: seal.previewId,
+          sessionId: seal.sessionId ?? null,
+          expiresAt: seal.expiresAt.getTime(),
+          payload,
+        }),
+      ),
       "utf8",
     )
     .digest("hex");

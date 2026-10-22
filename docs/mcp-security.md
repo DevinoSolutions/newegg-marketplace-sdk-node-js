@@ -244,6 +244,12 @@ Low and informational findings from the security audit, closed together. Each is
 - **Logs are redacted (T-5667).** The unexpected-error log line and the default logger strip URL
   credentials and URL query strings (for example `?sellerid=...`) from every string field before writing to
   stderr.
+- **A printed config reveals no secrets (T-6215).** `JSON.stringify(config)` was already redacted; the config from
+  `loadMcpConfigFromEnv` now also hides the API credentials, the bearer token and the preview HMAC key from
+  `util.inspect` / `console.error(config)` (including `showHidden` and `customInspect: false`): they are accessors,
+  printed as `[Getter]`, and `config.http` redacts the token in `toJSON`. Code that needs a value still reads the
+  property. Only `util.inspect(config, { getters: true })` calls the accessors, so do not pass that for a config. A
+  config you build by hand is plain data and is not protected.
 - **Report FTP is port-pinned, bounded and FTPS-capable (T-5668, T-5669).** Only URL port 21 is used; the
   control channel is capped at 64 KiB per line and 256 KiB per reply. Explicit FTPS (`AUTH TLS` before
   `USER`/`PASS`, protected data channel, no fallback to clear text) is **opt-in**
@@ -264,8 +270,14 @@ Low and informational findings from the security audit, closed together. Each is
   session that is over its own cap, so one session cannot push another's live preview out.
 - **Malformed `Host` is a 400 (T-5671).** The header is validated before URL parsing, auth or logging, so it
   can no longer produce a 500 or an `http_request_failed` log line.
-- **Bearer token strength and throttling (T-5672).** The token must be at least 32 characters with at least 12
-  different ones (the server refuses to start otherwise). `openssl rand -hex 32` is the supported way to make one. Failed bearer attempts are delayed per client
+- **Bearer token strength and throttling (T-5672).** The token must be at least 32 characters and not patterned
+  (T-6215: the server estimates how many bits of the token are unpredictable, counting a repeat of earlier text, a
+  run that steps by one character code such as `abcd` or `4321`, or a keyboard-row run such as `asdf` as one
+  cheap piece, and refuses to start under 80 bits, so `"abcdefghijkl".repeat(3)` and keyboard rows are refused while
+  `openssl rand -hex 32` / `-base64 32` output is not). The supported way to make one is
+  `newegg-marketplace-mcp --generate-token` (prints one fresh random token to stdout and exits; needs no configuration)
+  or `openssl rand -hex 32`. No heuristic can recognise a non-repeating dictionary phrase, so generate the secret
+  rather than choosing it. Failed bearer attempts are delayed per client
   address (250 ms doubling to 5 s) and answered 429 once eight delayed failures are in flight. A good token
   lowers the address's failure count by one step, at most once a second, instead of clearing it, so a
   legitimate client behind a shared address (a proxy) cannot erase another client's guessing run. The listener speaks plain HTTP: a
@@ -278,13 +290,20 @@ Low and informational findings from the security audit, closed together. Each is
   treats anything other than `false` (including an omitted option from a JS embedder) as writes-on, so it fails
   closed. The CLI logs the refusal as a structured `http_start_refused` error (no secret values) and exits with code 1.
   Read-only HTTP on loopback without a token and stdio are unaffected.
+- **Embedders get the same origin rule (T-6215).** `startHttpServer({ http: { allowedOrigins } })` refuses `null` and
+  `*` (any case, padded) just as the env loader does, and a present `Origin` is judged by the allowlist alone: an
+  allowlisted origin is served even when the browser sends `Sec-Fetch-Site: cross-site` (the normal case for a
+  browser MCP client on another origin), while a cross-site request with no `Origin` is still a `403`, `OPTIONS`
+  preflights included.
 - **RMA evidence URLs (T-5673).** `imageUrls` accept `https` only and no `user:password@`.
 - **Hash re-verified at apply for every kind (T-5674).** Inventory, listing, price and volume-discount
   applies recompute the stored hash and refuse a changed record (error code `preview_tampered`) before
   anything is sent, for RMA/refund and shipping-label applies too.
 - **The stored hash is a keyed MAC (T-6218).** It is an HMAC-SHA256 of the canonical request plus the `previewId`,
-  `sessionId` and `expiresAt` of the record, under `NEWEGG_MCP_PREVIEW_HMAC_KEY` (at least 32 characters, 12 different;
-  `openssl rand -hex 32`) or, when unset, a random 32-byte key generated per process. The algorithm and canonical form
+  `sessionId` and `expiresAt` of the record, under `NEWEGG_MCP_PREVIEW_HMAC_KEY` (at least 32 characters, same strength rule as the
+  bearer token; `--generate-token`) or, when unset, a random 32-byte key generated per process. The MAC is taken
+  over a key-sorted canonical JSON, so a store that does not preserve object key order (Postgres `jsonb`) does not
+  cause a false `preview_tampered`; any changed value, or a reordered array, still does. The algorithm and canonical form
   are public, so a plain digest would let anyone with write access to a shared or persistent `PreviewStore` (Redis, a
   database) alter quantities, prices, a refund or a label input and recompute a matching hash; without the key they
   cannot. Binding the id, session and expiry means a valid record also cannot be re-filed under another id or session
@@ -366,8 +385,9 @@ Stdio is the default transport (a subprocess launched by the MCP client).
 
 - [ ] Keep the default bind `127.0.0.1:3919` unless remote access is genuinely required.
 - [ ] To bind a non-loopback host, you **must** set `NEWEGG_MCP_HTTP_BEARER_TOKEN`; the
-      server refuses to bind otherwise. The token must be **at least 32 characters, with at least 12 different ones** (the server
-      refuses to start with a weaker one): generate it with `openssl rand -hex 32` and rotate it.
+      server refuses to bind otherwise. The token must be **at least 32 characters and not patterned** (the server
+      refuses to start with a weaker one): generate it with `newegg-marketplace-mcp --generate-token` (or
+      `openssl rand -hex 32`) and rotate it.
 - [ ] If `NEWEGG_MCP_ALLOW_WRITES=true`, you **must** set `NEWEGG_MCP_HTTP_BEARER_TOKEN` even on the default
       loopback bind; the server refuses to start otherwise (there is no opt-out). Read-only loopback does not need one.
 - [ ] Set `NEWEGG_MCP_HTTP_ALLOWED_HOSTS` (expected `Host` header values) and

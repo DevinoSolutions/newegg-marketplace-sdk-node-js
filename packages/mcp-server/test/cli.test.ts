@@ -5,17 +5,33 @@ import { callTool, makeEnv, SENTINELS, serviceStatusRoute, startHarness } from "
 
 describe("parseCliArgs", () => {
   it("defaults to the stdio transport", () => {
-    expect(parseCliArgs([])).toEqual({ transport: "stdio", help: false });
+    expect(parseCliArgs([])).toEqual({
+      transport: "stdio",
+      help: false,
+      generateToken: false,
+    });
   });
 
   it("parses --transport http (space and = forms)", () => {
-    expect(parseCliArgs(["--transport", "http"])).toEqual({ transport: "http", help: false });
-    expect(parseCliArgs(["--transport=http"])).toEqual({ transport: "http", help: false });
+    expect(parseCliArgs(["--transport", "http"])).toEqual({
+      transport: "http",
+      help: false,
+      generateToken: false,
+    });
+    expect(parseCliArgs(["--transport=http"])).toEqual({
+      transport: "http",
+      help: false,
+      generateToken: false,
+    });
   });
 
   it("parses help flags", () => {
     expect(parseCliArgs(["--help"]).help).toBe(true);
     expect(parseCliArgs(["-h"]).help).toBe(true);
+  });
+
+  it("parses --generate-token", () => {
+    expect(parseCliArgs(["--generate-token"]).generateToken).toBe(true);
   });
 
   it("throws on an invalid transport or unknown argument", () => {
@@ -198,5 +214,50 @@ describe("main --transport http refuses to start cleanly (T-6211)", () => {
     const lines = await runHttpMain({ NEWEGG_MCP_HTTP_HOST: "0.0.0.0" });
     expect(process.exitCode).toBe(1);
     expect(lines.some((line) => line.includes('"http_start_refused"'))).toBe(true);
+  });
+});
+
+describe("main --generate-token (T-6215)", () => {
+  const originalExitCode = process.exitCode;
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    process.exitCode = originalExitCode;
+  });
+
+  async function runGenerate(): Promise<{ stdout: string; stderr: string }> {
+    let stdout = "";
+    let stderr = "";
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stdout += String(chunk);
+      return true;
+    });
+    vi.spyOn(console, "error").mockImplementation((line: unknown) => {
+      stderr += `${String(line)}\n`;
+    });
+    await main(["--generate-token"]);
+    return { stdout, stderr };
+  }
+
+  it("prints exactly one fresh token to stdout, with no configuration needed", async () => {
+    for (const name of Object.keys(process.env)) {
+      if (name.startsWith("NEWEGG_")) vi.stubEnv(name, "");
+    }
+    const first = await runGenerate();
+    expect(first.stdout).toMatch(/^[0-9a-f]{64}\n$/);
+    expect(first.stderr).toBe("");
+    expect(process.exitCode).toBe(originalExitCode);
+    const second = await runGenerate();
+    expect(second.stdout).not.toBe(first.stdout);
+  });
+
+  it("prints a token that the strength rule accepts for both secrets", async () => {
+    const { stdout } = await runGenerate();
+    const token = stdout.trim();
+    const config = loadMcpConfigFromEnv(
+      makeEnv({ NEWEGG_MCP_HTTP_BEARER_TOKEN: token, NEWEGG_MCP_PREVIEW_HMAC_KEY: token }),
+    );
+    expect(config.http.bearerToken).toBe(token);
+    expect(config.previewIntegrity?.hmacKey).toBe(token);
   });
 });

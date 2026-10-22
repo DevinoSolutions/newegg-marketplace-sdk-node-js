@@ -2,13 +2,16 @@
 /**
  * Command-line entry point (the package `bin`). Chooses a transport (`--transport stdio|http`,
  * default stdio), loads configuration from the environment, wires graceful shutdown, and logs
- * exclusively to stderr — it never writes to stdout, which the stdio transport owns.
+ * exclusively to stderr — it never writes to stdout, which the stdio transport owns. The one
+ * exception is `--generate-token`, which prints a fresh secret to stdout and exits before any
+ * transport starts.
  *
  * `main` is guarded so importing this module (e.g. to unit-test `parseCliArgs`) has no side
  * effects.
  */
 import { pathToFileURL } from "node:url";
 import { loadMcpConfigFromEnv, type McpServerConfig } from "./config/index.js";
+import { generateSecretToken } from "./config/token-strength.js";
 import { InMemoryPreviewStore } from "./preview-store/index.js";
 import { createNeweggMcpServer, defaultLogger } from "./server/build.js";
 import { connectStdioTransport } from "./server/stdio.js";
@@ -21,15 +24,20 @@ export type TransportName = "stdio" | "http";
 export interface CliArgs {
   readonly transport: TransportName;
   readonly help: boolean;
+  /** Print one fresh random secret to stdout and exit (no configuration needed). */
+  readonly generateToken: boolean;
 }
 
 const USAGE = `newegg-marketplace-mcp — Newegg Marketplace MCP server
 
 Usage:
   newegg-marketplace-mcp [--transport stdio|http]
+  newegg-marketplace-mcp --generate-token
 
 Options:
   --transport <stdio|http>   Transport to serve (default: stdio)
+  --generate-token           Print a fresh random secret (64 hex characters) to stdout and exit; use
+                             it for NEWEGG_MCP_HTTP_BEARER_TOKEN or NEWEGG_MCP_PREVIEW_HMAC_KEY
   -h, --help                 Show this help
 
 Configuration is read from environment variables (see .env.example). All logging goes to
@@ -39,6 +47,7 @@ stderr; the stdio transport uses stdout exclusively for protocol messages.`;
 export function parseCliArgs(argv: string[]): CliArgs {
   let transport: TransportName = "stdio";
   let help = false;
+  let generateToken = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -47,6 +56,8 @@ export function parseCliArgs(argv: string[]): CliArgs {
     }
     if (arg === "--help" || arg === "-h") {
       help = true;
+    } else if (arg === "--generate-token") {
+      generateToken = true;
     } else if (arg === "--transport") {
       const value = argv[index + 1];
       index += 1;
@@ -58,7 +69,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     }
   }
 
-  return { transport, help };
+  return { transport, help, generateToken };
 }
 
 function parseTransportValue(value: string | undefined): TransportName {
@@ -158,6 +169,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
   if (args.help) {
     console.error(USAGE);
+    return;
+  }
+
+  if (args.generateToken) {
+    // The only stdout write in this file: no transport is running, and the caller captures it.
+    process.stdout.write(`${generateSecretToken()}\n`);
     return;
   }
 

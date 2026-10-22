@@ -186,19 +186,20 @@ describe("HTTP bearer token strength (T-5672 / L8)", () => {
     }
     expect(thrown).toBeInstanceOf(McpConfigError);
     expect((thrown as Error).message).toContain("NEWEGG_MCP_HTTP_BEARER_TOKEN");
-    expect((thrown as Error).message).toContain("different characters");
+    expect((thrown as Error).message).toContain("predictable");
     expect((thrown as Error).message).not.toContain(weak);
   });
 
-  it("accepts a token with twelve distinct characters, and a hex one from openssl rand -hex 32", () => {
-    const token = "abcdefghijkl".repeat(3);
-    expect(loadWithToken(token).http.bearerToken).toBe(token);
+  it("accepts a hex token from openssl rand -hex 32 and a base64 one from openssl rand -base64 32", () => {
     const hex = "9f2c4e6a1b7d3085c2e49a6f01d8b37e5a4c9d20f6b18e73a0c5d4b92e6f1a37";
     expect(loadWithToken(hex).http.bearerToken).toBe(hex);
+    const base64 = "q3Vn7mZs0Xb9Lk2Yt4RwHc8EaJd5PfUo1GiN6TyBxvM=";
+    expect(loadWithToken(base64).http.bearerToken).toBe(base64);
   });
 
-  it("accepts a 32-character token", () => {
-    expect(loadWithToken(tokenOf(32)).http.bearerToken).toBe(tokenOf(32));
+  it("accepts a random 32-character token", () => {
+    const token = "9f2c4e6a1b7d3085c2e49a6f01d8b37e";
+    expect(loadWithToken(token).http.bearerToken).toBe(token);
   });
 
   it("still treats an unset or blank token as no token", () => {
