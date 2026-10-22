@@ -295,8 +295,8 @@ Low and informational findings from the security audit, closed together. Each is
 
 The API keys and seller ID are sent on every request, so `NEWEGG_API_BASE_URL` is allowlisted: the
 parsed hostname must be `newegg.com` or end in `.newegg.com` (userinfo tricks such as
-`https://newegg.com@evil.example/` and lookalikes such as `evilnewegg.com` are refused), or be
-loopback (`127.0.0.1`, `localhost`, `::1`, `http` allowed). Anything else fails startup with a
+`https://newegg.com@evil.example/` and lookalikes such as `evilnewegg.com` are refused), or be an
+`http` loopback host (`127.0.0.1`, `::1`, `localhost`) for tests; `https` loopback needs the opt-in. Anything else fails startup with a
 configuration error unless `NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL=true`, which logs one `warn` naming the
 host only (no path, query or credentials). Non-loopback `http` is refused either way.
 

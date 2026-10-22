@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { NeweggConfigurationError } from "@devino/newegg-marketplace-sdk";
-import { createNeweggMcpServer, loadMcpConfigFromEnv, type Logger } from "../src/index.js";
+import {
+  createNeweggMcpServer,
+  loadMcpConfigFromEnv,
+  McpConfigError,
+  type Logger,
+} from "../src/index.js";
 import { makeEnv, SENTINELS } from "./helpers.js";
 
 // T-6217: NEWEGG_API_BASE_URL is allowlisted to Newegg hosts; a custom host needs an explicit opt-in.
@@ -54,10 +58,11 @@ describe("NEWEGG_API_BASE_URL allowlist (T-6217)", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(NeweggConfigurationError);
+    expect(thrown).toBeInstanceOf(McpConfigError);
     const message = (thrown as Error).message;
-    expect(message).toContain("allowCustomBaseUrl");
+    expect(message).toContain("NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL");
     for (const secret of Object.values(SENTINELS)) expect(message).not.toContain(secret);
+    expect(message).not.toContain(new URL(url).hostname);
   });
 
   it("allows a custom host with NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL=true and warns once with the host only", async () => {
@@ -101,8 +106,20 @@ describe("NEWEGG_API_BASE_URL allowlist (T-6217)", () => {
       loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL: "true" }))
         .allowCustomBaseUrl,
     ).toBe(true);
+    // Exact literal only, like NEWEGG_MCP_ALLOW_WRITES: anything else is simply not honoured.
+    for (const raw of ["TRUE", " true ", "True", "yes", "1", "false", ""]) {
+      expect(
+        loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL: raw })).allowCustomBaseUrl,
+      ).toBe(false);
+    }
+  });
+
+  it("does not honour a non-literal opt-in when starting the server", () => {
     expect(() =>
-      loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL: "yes" })),
-    ).toThrow(/NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL/);
+      build({
+        NEWEGG_API_BASE_URL: "https://proxy.example/marketplace/",
+        NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL: " true ",
+      }),
+    ).toThrow(McpConfigError);
   });
 });

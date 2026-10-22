@@ -38,8 +38,8 @@ export interface NeweggClientConfig {
   /**
    * Trusted-config-only override (tests, proxies). Never exposed via MCP tools. Must end in `/`.
    * Unless `allowCustomBaseUrl` is true it must be an `https` newegg.com host (the parsed hostname is
-   * `newegg.com` or ends in `.newegg.com`) or a loopback host (`127.0.0.1`, `localhost`, `::1`; `http`
-   * allowed). Any other host throws NeweggConfigurationError, because the API keys and seller ID are
+   * `newegg.com` or ends in `.newegg.com`) or an `http` loopback host (`127.0.0.1`, `localhost`, `::1`, for tests; `https`
+   * loopback needs the flag). Any other host throws NeweggConfigurationError, because the API keys and seller ID are
    * sent to it (T-6217).
    */
   baseUrl?: string;

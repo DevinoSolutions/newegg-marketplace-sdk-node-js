@@ -433,7 +433,11 @@ const envSchema = z.object({
   // Credentials are resolved separately (see resolveCredentials): they depend on the marketplace.
   NEWEGG_MARKETPLACE: marketplaceEnv("NEWEGG_MARKETPLACE"),
   NEWEGG_API_BASE_URL: urlEnv("NEWEGG_API_BASE_URL"),
-  NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL: boolEnv("NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL", false),
+  // SECURITY gate, same exact-literal rule as NEWEGG_MCP_ALLOW_WRITES: only "true" opts in.
+  NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL: z
+    .string()
+    .optional()
+    .transform((raw) => raw === "true"),
   // SECURITY gate: only the EXACT literal "true" enables writes. "1"/"TRUE"/" true "/unset all
   // stay false. Kept as a raw `=== "true"` (no trim/lowercase) so the surface can't widen by accident.
   NEWEGG_MCP_ALLOW_WRITES: z

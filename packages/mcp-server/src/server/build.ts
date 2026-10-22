@@ -13,7 +13,7 @@ import type {
   NeweggLogger,
   OperationStore,
 } from "@devino/newegg-marketplace-sdk";
-import type { McpServerConfig } from "../config/index.js";
+import { McpConfigError, type McpServerConfig } from "../config/index.js";
 import {
   bindPreviewStoreToSession,
   InMemoryPreviewStore,
@@ -196,7 +196,23 @@ function createClientFromConfig(
     clientConfig.baseUrl = config.baseUrl;
     clientConfig.allowCustomBaseUrl = config.allowCustomBaseUrl === true;
   }
-  return createNeweggClient(clientConfig);
+  try {
+    return createNeweggClient(clientConfig);
+  } catch (err) {
+    if (
+      err instanceof NeweggConfigurationError &&
+      config.baseUrl !== undefined &&
+      config.allowCustomBaseUrl !== true &&
+      err.message.includes('"baseUrl"')
+    ) {
+      // Name the env var; the SDK message names only its own field. No values are echoed.
+      throw new McpConfigError(
+        "NEWEGG_API_BASE_URL must be an https newegg.com host (or http loopback); " +
+          "set NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL=true to use another https host.",
+      );
+    }
+    throw err;
+  }
 }
 
 /**
