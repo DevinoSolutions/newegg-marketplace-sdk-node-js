@@ -10,13 +10,12 @@ import { redactUrlCredentials } from "@devino/newegg-marketplace-sdk";
 const URL_PART_END = /[\s?#"'<>]/;
 /** Ends a query string. */
 const QUERY_END = /[\s#"'<>]/;
-/** Longest scheme-to-`?` run still treated as one URL. */
-const MAX_URL_RUN = 8192;
 
 /**
  * `http(s)://host/path?query#frag` -> `http(s)://host/path?[redacted]#frag`. One forward pass with
  * `indexOf` (no backtracking regex), so a pathological input such as `a://` repeated cannot make
- * it quadratic: each scanned stretch starts where the previous one ended.
+ * it quadratic: each scanned stretch starts where the previous one ended. There is no cap on how
+ * far the part before the `?` may run, so a very long path cannot keep its query in a log.
  */
 function redactQueryStrings(text: string): string {
   if (!text.includes("?")) return text;
@@ -27,10 +26,9 @@ function redactQueryStrings(text: string): string {
     const separator = text.indexOf("://", from);
     if (separator < 0) break;
     const start = separator + 3;
-    const limit = Math.min(text.length, start + MAX_URL_RUN);
     let end = start;
-    while (end < limit && !URL_PART_END.test(text.charAt(end))) end += 1;
-    if (end < limit && text.charAt(end) === "?") {
+    while (end < text.length && !URL_PART_END.test(text.charAt(end))) end += 1;
+    if (end < text.length && text.charAt(end) === "?") {
       let queryEnd = end + 1;
       while (queryEnd < text.length && !QUERY_END.test(text.charAt(queryEnd))) queryEnd += 1;
       out += `${text.slice(copied, end + 1)}[redacted]`;

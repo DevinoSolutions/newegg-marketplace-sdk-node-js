@@ -2552,10 +2552,18 @@ export class NeweggError extends Error {
   readonly retryable: boolean;
   readonly details?: unknown; // sanitized, JSON-safe
   // `cause` (standard Error.cause) is sanitized too: URL credentials are removed from the cause's message, stack,
-  // string properties and nested causes, so util.inspect / console.log of the error cannot print them.
+  // string properties and nested causes, so util.inspect / console.log of the error cannot print them. Functions
+  // (own properties), URLSearchParams (names and values) and Headers are rebuilt from redacted entries, own
+  // properties included (string-keyed only: a secret stored under a SYMBOL key on these four types is not redacted,
+  // low risk, documented). A Response or Request becomes a redacted util.inspect text only when redaction changes
+  // something (its text or an own property); otherwise the original is kept. The same text form replaces any object
+  // whose copy would not work (#private fields).
 }
 // Replaces the user:password@ part of any URL in `text` with ***@ - percent-encoded, schemeless on a Newegg FTP
 // host, scheme-relative, backslash, triple-slash and JSON-escaped forms included. Linear time. Never throws.
+// There is no limit on userinfo or password length (the reserved-character-password pass still bounds the Newegg
+// host to labels of at most 63 characters, at most 9 labels, in a 600-character window). Known limits: a password
+// containing whitespace and a schemeless credential on a host other than a Newegg FTP report host.
 export function redactUrlCredentials(text: string): string;
 export class NeweggConfigurationError extends NeweggError {}
 // Thrown by createNeweggClient when credentialMarketplace differs from marketplace (expectedMarketplace =

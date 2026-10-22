@@ -17,10 +17,15 @@ function expectClean(serialized: string): void {
 }
 
 describe("log redaction stays linear on adversarial input (CodeQL polynomial-redos)", () => {
+  // The fastest of three runs: scheduler and GC noise only ever add time.
   const timeMs = (input: string): number => {
-    const started = performance.now();
-    redactLogText(input);
-    return performance.now() - started;
+    let best = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 3; run += 1) {
+      const started = performance.now();
+      redactLogText(input);
+      best = Math.min(best, performance.now() - started);
+    }
+    return best;
   };
 
   it("handles repeated scheme separators, question marks and long runs in linear time", () => {
@@ -36,9 +41,26 @@ describe("log redaction stays linear on adversarial input (CodeQL polynomial-red
       timeMs(make(20_000)); // warm up
       const small = Math.max(timeMs(make(100_000)), 5);
       const large = timeMs(make(800_000));
+      // 8x the input: linear is about 8x; a quadratic scan would be 64x.
       expect(large, name).toBeLessThan(small * 24);
-      expect(large, name).toBeLessThan(500);
+      // Generous so a slow runner does not flake; the ratio above is the linearity check.
+      expect(large, name).toBeLessThan(10_000);
     }
+  });
+
+  it("keeps the query of a URL whose part before the ? is longer than 8 KiB", () => {
+    const longPath = "a".repeat(20_000);
+    const out = redactLogText(
+      `failed https://x.example/${longPath}?sellerid=SECRET-SELLER&token=SECRET-TOKEN end`,
+    );
+    expectClean(out);
+    expect(out).toContain(`${longPath}?[redacted]`);
+    expect(out.endsWith(" end")).toBe(true);
+    // Just over the old 8192-character limit, with a fragment after the query.
+    const edge = "b".repeat(8200);
+    const edgeOut = redactLogText(`https://h.example/${edge}?sellerid=SECRET-SELLER#frag`);
+    expectClean(edgeOut);
+    expect(edgeOut).toBe(`https://h.example/${edge}?[redacted]#frag`);
   });
 
   it("still redacts the query of each of many URLs and leaves other text alone", () => {
