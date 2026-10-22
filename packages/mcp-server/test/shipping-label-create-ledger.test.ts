@@ -80,6 +80,8 @@ interface Scenario {
   creates: Array<{ status: number; body: unknown }>;
   /** Whether the order read already lists a package. */
   orderHasPackage?: () => boolean;
+  /** Also answer the estimate request (needed while the label cap is active). */
+  estimate?: boolean;
 }
 
 function harnessFor(scenario: Scenario, envOverrides = {}): Promise<Harness> {
@@ -102,6 +104,31 @@ function harnessFor(scenario: Scenario, envOverrides = {}): Promise<Harness> {
       },
     },
   ];
+  if (scenario.estimate === true) {
+    routes.push({
+      method: "POST",
+      pathPattern: /shippingservice\/shippinglabel\/estimateshippinglabel/,
+      reply: () => ({
+        status: 200,
+        body: {
+          NeweggAPIResponse: {
+            IsSuccess: "true",
+            ResponseBody: {
+              Shipment: {
+                OrderNumber: ORDER_NUMBER,
+                PackageList: {
+                  Package: {
+                    ProcessResult: "Success",
+                    EstimatedRate: { EstimatedShippingAmount: "12.34", EstimatedTotal: "12.34" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    });
+  }
   return startHarness({ env: env(envOverrides), routes });
 }
 
@@ -156,7 +183,7 @@ describe("label create duplicate-purchase guard", () => {
       const second = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
       expect(second.json.eligible).toBe(false);
       expect(second.json.previewId).toBeUndefined();
-      expect((second.json.blockers as string[]).join(" ")).toContain("acknowledgePriorAttemptId");
+      expect((second.json.blockers as string[]).join(" ")).toContain("Seller Portal");
       expect(attemptOf(second).state).toBe("submitting");
 
       // Nothing else can be applied either: no preview exists and no second POST went out.
@@ -257,111 +284,64 @@ describe("label create duplicate-purchase guard", () => {
     }
   });
 
-  it("an explicit acknowledgement clears the record when the order shows no label", async () => {
+  it("cannot be cleared through the MCP: no acknowledgement input, no attempt id, restart is the way", async () => {
     const harness = await harnessFor({ creates: [TIMEOUT, OK] });
     try {
       const first = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      const spare = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
       await callTool(harness.mcp, TOOLS.applyCreate, { previewId: first.json.previewId as string });
 
       const blocked = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
       expect(blocked.json.eligible).toBe(false);
+      // The attempt id is an SDK concept; the MCP never hands it out.
+      expect(Object.keys(blocked.json.priorAttempt as object).sort()).toEqual(["atIso", "state"]);
+      const text = (blocked.json.blockers as string[]).join(" ");
+      expect(text).toContain("Seller Portal");
+      expect(text).toContain("restart");
+      expect(text).not.toMatch(/acknowledg/i);
 
-      const acked = await callTool(harness.mcp, TOOLS.previewCreate, {
+      // An agent that guesses the old argument is rejected by the strict input schema.
+      const guessed = await callTool(harness.mcp, TOOLS.previewCreate, {
         ...labelArgs,
-        acknowledgePriorAttemptId: attemptOf(blocked).attemptId,
+        acknowledgePriorAttemptId: "anything",
       });
-      expect(acked.json.eligible).toBe(true);
-      expect((acked.json.warnings as string[]).join(" ")).toContain("acknowledged");
-      const applied = await callTool(harness.mcp, TOOLS.applyCreate, {
-        previewId: acked.json.previewId as string,
-      });
-      expect(applied.isError).toBe(false);
-      expect(posts(harness)).toHaveLength(2);
-    } finally {
-      await harness.close();
-    }
-  });
+      expect(guessed.isError).toBe(true);
+      expect(guessed.json.previewId).toBeUndefined();
 
-  it("an acknowledgement does not clear the record when the order already lists a package", async () => {
-    let hasPackage = false;
-    const harness = await harnessFor({ creates: [TIMEOUT, OK], orderHasPackage: () => hasPackage });
-    try {
-      const first = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
-      await callTool(harness.mcp, TOOLS.applyCreate, { previewId: first.json.previewId as string });
-      const blocked = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
-      hasPackage = true;
-      const acked = await callTool(harness.mcp, TOOLS.previewCreate, {
-        ...labelArgs,
-        acknowledgePriorAttemptId: attemptOf(blocked).attemptId,
+      const refused = await callTool(harness.mcp, TOOLS.applyCreate, {
+        previewId: spare.json.previewId as string,
       });
-      expect(acked.json.eligible).toBe(false);
-      expect((acked.json.blockers as string[]).join(" ")).toContain("package");
+      expect(refused.json.errorCode).toBe("label_create_already_attempted");
+      expect(String(refused.json.message)).toContain("restart");
+      expect(String(refused.json.message)).not.toMatch(/acknowledg/i);
       expect(posts(harness)).toHaveLength(1);
     } finally {
       await harness.close();
     }
   });
 
-  it("re-checks an acknowledged preview at apply when a package shows up in between", async () => {
-    let hasPackage = false;
-    const harness = await harnessFor({ creates: [TIMEOUT, OK], orderHasPackage: () => hasPackage });
+  it("a blocked apply makes no request at all: no order read and no estimate", async () => {
+    // The default label cap is ON, so every preview and apply would normally quote first.
+    const harness = await harnessFor(
+      { creates: [TIMEOUT, OK], estimate: true },
+      {
+        NEWEGG_MCP_MAX_LABEL_AMOUNT: "100",
+      },
+    );
     try {
-      const first = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
-      await callTool(harness.mcp, TOOLS.applyCreate, { previewId: first.json.previewId as string });
-      const blocked = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
-      const acked = await callTool(harness.mcp, TOOLS.previewCreate, {
-        ...labelArgs,
-        acknowledgePriorAttemptId: attemptOf(blocked).attemptId,
-      });
-      expect(acked.json.eligible).toBe(true);
-      hasPackage = true;
-      const applied = await callTool(harness.mcp, TOOLS.applyCreate, {
-        previewId: acked.json.previewId as string,
-      });
-      expect(applied.isError).toBe(true);
-      expect(applied.json.errorCode).toBe("label_create_already_attempted");
-      expect(posts(harness)).toHaveLength(1);
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it("an acknowledgement covers only the attempt it saw: a newer attempt still blocks the apply", async () => {
-    const harness = await harnessFor({ creates: [TIMEOUT, TIMEOUT, OK] });
-    try {
-      const first = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
-      await callTool(harness.mcp, TOOLS.applyCreate, { previewId: first.json.previewId as string });
-
-      const blocked = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
-      const ack = { ...labelArgs, acknowledgePriorAttemptId: attemptOf(blocked).attemptId };
-      const ackedA = await callTool(harness.mcp, TOOLS.previewCreate, ack);
-      const ackedB = await callTool(harness.mcp, TOOLS.previewCreate, ack);
+      const a = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      const b = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
+      expect(b.json.eligible).toBe(true);
       const appliedA = await callTool(harness.mcp, TOOLS.applyCreate, {
-        previewId: ackedA.json.previewId as string,
+        previewId: a.json.previewId as string,
       });
       expect(appliedA.json.errorCode).toBe("order_write_indeterminate");
+      const before = harness.calls.length;
       const appliedB = await callTool(harness.mcp, TOOLS.applyCreate, {
-        previewId: ackedB.json.previewId as string,
+        previewId: b.json.previewId as string,
       });
       expect(appliedB.json.errorCode).toBe("label_create_already_attempted");
-      expect(posts(harness)).toHaveLength(2);
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it("rejects an acknowledgement id that is not the latest attempt", async () => {
-    const harness = await harnessFor({ creates: [TIMEOUT, OK] });
-    try {
-      const first = await callTool(harness.mcp, TOOLS.previewCreate, labelArgs);
-      await callTool(harness.mcp, TOOLS.applyCreate, { previewId: first.json.previewId as string });
-      const wrong = await callTool(harness.mcp, TOOLS.previewCreate, {
-        ...labelArgs,
-        acknowledgePriorAttemptId: "not-the-attempt",
-      });
-      expect(wrong.json.eligible).toBe(false);
-      expect(wrong.json.previewId).toBeUndefined();
-      expect(posts(harness)).toHaveLength(1);
+      expect(harness.calls.length).toBe(before);
     } finally {
       await harness.close();
     }

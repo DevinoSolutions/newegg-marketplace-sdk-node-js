@@ -365,3 +365,93 @@ describe("label create ledger: error text", () => {
     expect(text).not.toMatch(/authorization|bearer/i);
   });
 });
+
+describe("label create ledger: shared by every client on one store", () => {
+  it("lets only one of two clients on one store buy, even in lockstep", async () => {
+    const store = new InMemoryOperationStore();
+    const a = setup([orderRoute(), createRoute([ok])], store);
+    const b = setup([orderRoute(), createRoute([ok])], store);
+    const results = await Promise.allSettled([
+      a.client.shippingLabels.create(input),
+      b.client.shippingLabels.create(input),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((r) => r.status === "rejected");
+    expect(rejected?.status === "rejected" && rejected.reason).toBeInstanceOf(
+      LabelCreateGuardError,
+    );
+    expect(posts(a.calls).length + posts(b.calls).length).toBe(1);
+  });
+});
+
+describe("label create ledger: only an explicit failure frees the order", () => {
+  const pending = (): { status: number; body: unknown } => ({
+    status: 200,
+    body: createBody({
+      ProcessResult: "Pending",
+      ErrorMessage: "queued for processing",
+      ItemList: { Item: { SellerPartNumber: SKU, Quantity: "2" } },
+    }),
+  });
+  const failed = (): { status: number; body: unknown } => ({
+    status: 200,
+    body: createBody({
+      ProcessResult: "Failed",
+      ErrorMessage: "SL005 whole quantity",
+      ItemList: { Item: { SellerPartNumber: SKU, Quantity: "2" } },
+    }),
+  });
+
+  it("keeps a Pending package with a message indeterminate (submitting), not failed", async () => {
+    const { client, calls, operationStore } = setup([orderRoute(), createRoute([pending, ok])]);
+    const first = await client.shippingLabels.create(input).catch((e: unknown) => e);
+    expect(first).toBeInstanceOf(IndeterminateOrderWriteError);
+    expect((await operationStore.get(KEY))?.state).toBe("submitting");
+    expect(await client.shippingLabels.create(input).catch((e: unknown) => e)).toBeInstanceOf(
+      LabelCreateGuardError,
+    );
+    expect(posts(calls)).toHaveLength(1);
+  });
+
+  it("still frees the order when Newegg explicitly says Failed with a reason", async () => {
+    const { client, calls, operationStore } = setup([orderRoute(), createRoute([failed, ok])]);
+    expect(await client.shippingLabels.create(input).catch((e: unknown) => e)).toBeInstanceOf(
+      NeweggApiError,
+    );
+    expect((await operationStore.get(KEY))?.state).toBe("failed");
+    expect((await client.shippingLabels.create(input)).succeededCount).toBe(1);
+    expect(posts(calls)).toHaveLength(2);
+  });
+});
+
+describe("label create ledger: caller-supplied guidance and the local check", () => {
+  it("replaces the remedy text and leaves the attempt id out of the message", async () => {
+    const { client } = setup([orderRoute(), createRoute([gatewayTimeout])]);
+    await client.shippingLabels.create(input).catch(() => undefined);
+    const options = { priorAttemptGuidance: "Ask the operator to restart the server." };
+    const error = (await client.shippingLabels
+      .create(input, options)
+      .catch((e: unknown) => e)) as LabelCreateGuardError;
+    expect(error).toBeInstanceOf(LabelCreateGuardError);
+    expect(error.message).toContain("Ask the operator to restart the server.");
+    expect(error.message).not.toContain(error.attempt.attemptId);
+    expect(error.message).not.toContain("acknowledgePriorAttemptId");
+    const preview = await client.shippingLabels.previewCreate(input, options);
+    expect(preview.blockers.join(" ")).toContain("Ask the operator to restart the server.");
+  });
+
+  it("assertCreateNotBlocked reads only the ledger: zero requests either way", async () => {
+    const { client, calls } = setup([orderRoute(), createRoute([gatewayTimeout])]);
+    await expect(
+      client.shippingLabels.assertCreateNotBlocked(ORDER_NUMBER),
+    ).resolves.toBeUndefined();
+    await client.shippingLabels.create(input).catch(() => undefined);
+    const before = calls.length;
+    const error = await client.shippingLabels
+      .assertCreateNotBlocked(ORDER_NUMBER, { priorAttemptGuidance: "Restart." })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(LabelCreateGuardError);
+    expect((error as Error).message).toContain("Restart.");
+    expect(calls.length).toBe(before);
+  });
+});

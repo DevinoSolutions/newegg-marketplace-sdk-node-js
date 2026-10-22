@@ -263,9 +263,10 @@ blocker, and on an ambiguous failure throw `IndeterminateOrderWriteError` withou
 and use `reprint`, never create a second label). Each `create` is also recorded per order in the client's
 `OperationStore` before it is dispatched, and a new `create` for an order whose earlier one was
 indeterminate or succeeded throws `LabelCreateGuardError` (nothing sent) for 24 hours, even when Newegg's
-order status still reads unshipped; after verifying the order, pass the error's `attempt.attemptId` as
-`acknowledgePriorAttemptId` to `previewCreate` / `create`. The MCP tools apply the same guard
-(`label_create_already_attempted`; contracts §23.5). `estimate` is a quote ("for estimation only"); because that is only the docs' word, it is sent once and never retried. The seller must
+order status still reads unshipped; after verifying the order, a programmatic caller can pass the error's `attempt.attemptId` as
+`acknowledgePriorAttemptId` to `previewCreate` / `create` (this is not a human gate: whoever holds the id can
+pass it). The MCP tools apply the same guard (`label_create_already_attempted`, before any request) but
+offer no way to clear it: verify the order in the Seller Portal and restart the server (contracts §23.5). `estimate` is a quote ("for estimation only"); because that is only the docs' word, it is sent once and never retried. The seller must
 have signed up for the service in the Seller Portal (error `SL027`). The MCP exposes
 `newegg_shipping_label_estimate` and the four preview / apply tools only with
 `NEWEGG_MCP_ALLOW_WRITES=true`. A spend ceiling, `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100 in the marketplace

@@ -168,7 +168,8 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
     const orderNumber = String(normalized.orderNumber);
     if (attempt !== undefined && !acknowledged) {
       throw new LabelCreateGuardError(
-        guardMessage ?? priorAttemptMessage(orderNumber, attempt, undefined),
+        guardMessage ??
+          priorAttemptMessage(orderNumber, attempt, undefined, options.priorAttemptGuidance),
         orderNumber,
         attempt,
       );
@@ -195,7 +196,7 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
     );
     if ("refused" in claim) {
       throw new LabelCreateGuardError(
-        priorAttemptMessage(orderNumber, claim.refused, undefined),
+        priorAttemptMessage(orderNumber, claim.refused, undefined, options.priorAttemptGuidance),
         orderNumber,
         claim.refused,
       );
@@ -235,6 +236,11 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
     const parsed = parseCreateLabelResponse(result.json, correlationId);
     const succeeded = parsed.packages.filter((pkg) => pkg.succeeded);
     const failed = parsed.packages.filter((pkg) => !pkg.succeeded);
+    const allExplicitlyFailed = parsed.packages.every(
+      (pkg, index) =>
+        pkg.succeeded ||
+        (parsed.explicitFailures[index] === true && pkg.errorMessage !== undefined),
+    );
     if (parsed.packages.length === 0) {
       throw indeterminateLabelWrite(
         this.#http,
@@ -245,14 +251,16 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
       );
     }
     if (succeeded.length === 0) {
-      // A refusal is definitive only when Newegg says why. A package with no tracking number, no
-      // link and no error text is neither a success nor a stated failure, so a label may exist.
-      if (failed.some((pkg) => pkg.errorMessage === undefined)) {
+      // A refusal is definitive only when Newegg plainly says the package failed AND why. A
+      // package that is Pending, carries an unfamiliar status, or has no error text is neither a
+      // success nor a stated failure, so a label may exist (and an error text next to a Pending
+      // status is not a refusal either).
+      if (!allExplicitlyFailed) {
         throw indeterminateLabelWrite(
           this.#http,
           ctx,
           meta,
-          "Newegg answered the label request with a success status but a package with neither a label nor an error, so whether a label was bought is unknown.",
+          "Newegg answered the label request with a success status but a package with neither a label nor a plain failure with a reason, so whether a label was bought is unknown.",
           submittedAtIso,
         );
       }
@@ -281,6 +289,22 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
       rateLimit: result.rateLimit,
       raw: options.includeRaw ? result.json : undefined,
     };
+  }
+
+  async assertCreateNotBlocked(
+    orderNumber: string | number,
+    options: Pick<ShippingLabelCreateOptions, "priorAttemptGuidance"> = {},
+  ): Promise<void> {
+    const { marketplace } = this.#http.config;
+    const number = normalizeReprintInput(orderNumber).orderNumber;
+    const attempt = await this.#ledger.read(LabelCreateLedger.key(marketplace, number));
+    if (attempt !== undefined) {
+      throw new LabelCreateGuardError(
+        priorAttemptMessage(number, attempt, undefined, options.priorAttemptGuidance),
+        number,
+        attempt,
+      );
+    }
   }
 
   async previewReprint(
@@ -413,13 +437,15 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
     if (attempt !== undefined) {
       const rejected = rejectedAcknowledgement(options, attempt);
       const listed = order?.packages.length ?? 0;
+      const guidance = options.priorAttemptGuidance;
       if (rejected !== undefined) {
-        guardMessage = priorAttemptMessage(orderNumber, attempt, rejected);
+        guardMessage = priorAttemptMessage(orderNumber, attempt, rejected, guidance);
       } else if (options.acknowledgePriorAttemptId !== undefined && listed > 0) {
         guardMessage = priorAttemptMessage(
           orderNumber,
           attempt,
           `The acknowledgement was not accepted because the order already lists ${listed} package(s).`,
+          guidance,
         );
       } else if (options.acknowledgePriorAttemptId !== undefined) {
         acknowledged = true;
@@ -428,7 +454,7 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
             "the order shows no package, so this create may buy a SECOND label if the earlier one did land.",
         );
       } else {
-        guardMessage = priorAttemptMessage(orderNumber, attempt, undefined);
+        guardMessage = priorAttemptMessage(orderNumber, attempt, undefined, guidance);
       }
       if (guardMessage !== undefined) findings.blockers.push(guardMessage);
     }

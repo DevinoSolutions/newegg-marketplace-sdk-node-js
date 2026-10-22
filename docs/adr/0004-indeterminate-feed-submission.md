@@ -34,8 +34,10 @@ requestIds}` around every feed submission so distributed callers can build dedup
 The same ledger idea guards the non-idempotent shipping-label create, which spends money per call. The
 SDK records a create in the `OperationStore` per (marketplace, order) before dispatch (`submitting`),
 settles it `submitted` or `failed` (provably unsent) and leaves an indeterminate one at `submitting`;
-a new create is refused while such a record is under 24 h old, unless the caller names the prior attempt
-after verifying the order (contracts §23.5).
+a new create is refused while such a record is under 24 h old. A programmatic SDK caller may name the prior
+attempt to clear it (not a human gate); the MCP offers no such argument, so an operator clears it by verifying
+the order and restarting the server (contracts §23.5). Only an explicit failure frees the order: an HTTP 4xx is
+treated as a rejection (contracts §23.6 item 11), anything unfamiliar stays `submitting`.
 
 ## Consequences
 

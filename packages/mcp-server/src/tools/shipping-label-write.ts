@@ -20,8 +20,10 @@
  * A create is also guarded per order (T-6212): the SDK records every create attempt in its
  * operation store before dispatch, and a new create for an order whose earlier create was
  * indeterminate or succeeded is refused (preview blocker, and `label_create_already_attempted` at
- * apply, nothing sent) until the operator has verified the order and passes the prior attempt id
- * as `acknowledgePriorAttemptId` to the preview. The check runs again at apply.
+ * apply, nothing sent). The guard is checked FIRST at apply, before any quote or order read, so a
+ * blocked order makes no request. No tool argument clears it: the SDK's acknowledgement option is
+ * deliberately not exposed, because an agent could simply pass it back. The operator verifies the
+ * order in the Seller Portal and restarts the server (the record is in memory).
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -29,6 +31,7 @@ import {
   IndeterminateOrderWriteError,
   LabelCreateGuardError,
 } from "@devino/newegg-marketplace-sdk";
+import type { ShippingLabelCreateOptions } from "@devino/newegg-marketplace-sdk";
 import type {
   ShippingLabelEstimate,
   ShippingLabelInput,
@@ -70,11 +73,10 @@ const previewOutputSchema = z.object({
   orderNumber: z.string(),
   /** True when nothing blocks the write; only then is a previewId issued. */
   eligible: z.boolean(),
-  /** Create only: the earlier label create for this order that blocks (or was acknowledged for) this one. */
+  /** Create only: the earlier label create for this order that blocks this one. */
   priorAttempt: z
     .object({
       state: z.enum(["submitting", "submitted"]),
-      attemptId: z.string(),
       atIso: z.string(),
     })
     .optional(),
@@ -146,21 +148,26 @@ function hashInput(
   marketplace: string,
   input: unknown,
   costCents: number | undefined,
-  acknowledgedAttemptId?: string,
 ): string {
   return createHash("sha256")
-    .update(
-      JSON.stringify({
-        kind,
-        marketplace,
-        input,
-        costCents: costCents ?? null,
-        ...(acknowledgedAttemptId === undefined ? {} : { acknowledgedAttemptId }),
-      }),
-      "utf8",
-    )
+    .update(JSON.stringify({ kind, marketplace, input, costCents: costCents ?? null }), "utf8")
     .digest("hex");
 }
+
+/**
+ * The remedy shown for a blocked create. The MCP offers no way to clear a block, on purpose: the
+ * attempt id would reach the agent that is being guarded.
+ */
+const CREATE_BLOCK_GUIDANCE =
+  "Verify in the Seller Portal whether a label already exists for this order (the order status " +
+  "can lag, so newegg_orders_get_status alone cannot prove there is none). No tool argument " +
+  "clears this block: only after that check, the operator restarts this MCP server (the record " +
+  "is kept in memory) and then creates the preview again.";
+
+/** Passed to the SDK so its blockers and errors carry the MCP remedy instead of the SDK option. */
+const createGuardOptions: ShippingLabelCreateOptions = {
+  priorAttemptGuidance: CREATE_BLOCK_GUIDANCE,
+};
 
 /** The cost of a label, or the reason it could not be determined. */
 type LabelCost =
@@ -318,7 +325,6 @@ async function runLabelPreview<K extends ShippingLabelKind>(
     warnings: string[];
     refused: (input: ShippingLabelInputs[K]) => string | undefined;
   },
-  acknowledgedAttemptId?: string,
 ): Promise<ToolResult> {
   let preview: ShippingLabelPreview<ShippingLabelInputs[K]>;
   try {
@@ -363,17 +369,10 @@ async function runLabelPreview<K extends ShippingLabelKind>(
     const record = {
       previewId,
       kind,
-      hash: hashInput(
-        kind,
-        preview.marketplace,
-        preview.normalized,
-        costCents,
-        acknowledgedAttemptId,
-      ),
+      hash: hashInput(kind, preview.marketplace, preview.normalized, costCents),
       marketplace: preview.marketplace,
       input: preview.normalized,
       costCents,
-      ...(acknowledgedAttemptId === undefined ? {} : { acknowledgedAttemptId }),
       createdAt,
       expiresAt,
     } as ShippingLabelPreviewRecord;
@@ -389,7 +388,10 @@ async function runLabelPreview<K extends ShippingLabelKind>(
     currency: preview.currency,
     orderNumber: preview.orderNumber,
     eligible,
-    priorAttempt: preview.priorAttempt,
+    priorAttempt:
+      preview.priorAttempt === undefined
+        ? undefined
+        : { state: preview.priorAttempt.state, atIso: preview.priorAttempt.atIso },
     blockers,
     warnings,
     request: { ...preview.normalized },
@@ -410,10 +412,8 @@ async function runLabelApply<K extends ShippingLabelKind>(
   kind: K,
   previewId: string,
   quote: (input: ShippingLabelInputs[K]) => Promise<LabelCost>,
-  send: (
-    input: ShippingLabelInputs[K],
-    acknowledgedAttemptId: string | undefined,
-  ) => Promise<Record<string, unknown>>,
+  send: (input: ShippingLabelInputs[K]) => Promise<Record<string, unknown>>,
+  preflight?: (input: ShippingLabelInputs[K]) => Promise<ToolResult | undefined>,
   reserve?: (input: ShippingLabelInputs[K]) => string | undefined,
 ): Promise<ToolResult> {
   const outcome = await consumeTypedPreview(ctx, previewId, kind);
@@ -426,18 +426,9 @@ async function runLabelApply<K extends ShippingLabelKind>(
     marketplace: string;
     input: ShippingLabelInputs[K];
     costCents?: number;
-    acknowledgedAttemptId?: string;
   };
 
-  if (
-    hashInput(
-      kind,
-      record.marketplace,
-      record.input,
-      record.costCents,
-      record.acknowledgedAttemptId,
-    ) !== record.hash
-  ) {
+  if (hashInput(kind, record.marketplace, record.input, record.costCents) !== record.hash) {
     return errorResult(
       businessError(
         "preview_tampered",
@@ -446,6 +437,11 @@ async function runLabelApply<K extends ShippingLabelKind>(
       ),
     );
   }
+
+  // Cheapest, ledger-only refusals first: a blocked order must make no request (no quote, no
+  // order read).
+  const blocked = await preflight?.(record.input);
+  if (blocked !== undefined) return blocked;
 
   // Cost ceiling, re-checked against the CURRENT cap: first the amount stored at preview time (the
   // cap may be lower than when the preview was made), then a fresh quote because the carrier rate
@@ -490,18 +486,10 @@ async function runLabelApply<K extends ShippingLabelKind>(
   }
 
   try {
-    const result = await send(record.input, record.acknowledgedAttemptId);
+    const result = await send(record.input);
     return okResult({ operationId: randomUUID(), mode: "apply", previewId, ...result });
   } catch (error) {
-    if (error instanceof LabelCreateGuardError) {
-      // Re-checked at apply, so a preview made before the earlier attempt cannot buy a second label.
-      return errorResult(
-        businessError(
-          "label_create_already_attempted",
-          `Nothing was sent: ${error.message} The preview has been consumed; create a new preview after verifying the order.`,
-        ),
-      );
-    }
+    if (error instanceof LabelCreateGuardError) return createBlockedResult(error);
     if (error instanceof IndeterminateOrderWriteError) {
       const payload = mapErrorToPayload(error, ctx.logger);
       payload.message = `${payload.message} ${error.guidance} Do NOT retry until you have verified the current state; the preview has been consumed.`;
@@ -518,25 +506,35 @@ const applyInputSchema = (previewTool: string) =>
     })
     .describe("The previewId to apply. Nothing else can be supplied here.");
 
-const previewCreateInputSchema = shippingLabelRequestSchema.extend({
-  acknowledgePriorAttemptId: z
-    .string()
-    .min(1)
-    .max(64)
-    .optional()
-    .describe(
-      "Only after a previous label create for this order was refused: the attemptId that refusal " +
-        "reported, passed back once you have VERIFIED (newegg_orders_get_status / the Seller Portal) " +
-        "that no label exists for the order. It clears that one attempt only, and not while the " +
-        "order already lists a package.",
+/** The refusal of a create whose order has a blocking earlier attempt: nothing was sent. */
+function createBlockedResult(error: LabelCreateGuardError): ToolResult {
+  return errorResult(
+    businessError(
+      "label_create_already_attempted",
+      `Nothing was sent: ${error.message} The preview has been consumed.`,
     ),
-});
+  );
+}
+
+/** Ledger-only apply check for a create: no Newegg request, so it runs before the quote. */
+async function createPreflight(
+  ctx: ToolContext,
+  input: ShippingLabelInputs["shippingLabelCreate"],
+): Promise<ToolResult | undefined> {
+  try {
+    await ctx.client.shippingLabels.assertCreateNotBlocked(input.orderNumber, createGuardOptions);
+    return undefined;
+  } catch (error) {
+    if (error instanceof LabelCreateGuardError) return createBlockedResult(error);
+    return errorResult(appendConsumedNote(mapErrorToPayload(error, ctx.logger)));
+  }
+}
 
 const applyCreateInputSchema = applyInputSchema(TOOL_NAMES.shippingLabelPreviewCreate);
 const applyReprintInputSchema = applyInputSchema(TOOL_NAMES.shippingLabelPreviewReprint);
 
 export const shippingLabelPreviewCreateTool: ToolDefinition<
-  typeof previewCreateInputSchema,
+  typeof shippingLabelRequestSchema,
   typeof previewOutputSchema
 > = {
   name: TOOL_NAMES.shippingLabelPreviewCreate,
@@ -548,31 +546,23 @@ export const shippingLabelPreviewCreateTool: ToolDefinition<
     "quantity not the whole line, non-US destination) and WARNINGS (existing packages, uncovered " +
     "lines, signature surcharge) and BLOCKS an order whose earlier label create (this server process, " +
     "last 24 h) timed out, failed with an unknown outcome or succeeded, because the order status can lag " +
-    "and a second create would buy a second label; the blocker reports the attemptId (priorAttempt) to " +
-    "pass back as acknowledgePriorAttemptId after you verified the order. " +
+    "and a second create would buy a second label (priorAttempt reports it). No tool argument clears " +
+    "that block: the operator verifies the order in the Seller Portal and restarts the server. " +
     "Unless NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited it also quotes the label " +
     "cost (estimatedCost; one estimate request, which Newegg documents as side-effect free but is " +
     "unverified live) and blocks a cost above the cap or one that cannot be determined. Only a " +
     `clean plan gets a single-use previewId for newegg_shipping_label_apply_create. ${COST_WARNING} ` +
     "No Newegg mutation happens here.",
   annotations: { readOnlyHint: true, openWorldHint: true },
-  inputSchema: previewCreateInputSchema,
+  inputSchema: shippingLabelRequestSchema,
   outputSchema: previewOutputSchema,
-  handler: (input: z.infer<typeof previewCreateInputSchema>, ctx: ToolContext) => {
-    const { acknowledgePriorAttemptId, ...request } = input;
-    return runLabelPreview(
+  handler: (input: z.infer<typeof shippingLabelRequestSchema>, ctx: ToolContext) =>
+    runLabelPreview(
       ctx,
       "shippingLabelCreate",
-      () =>
-        ctx.client.shippingLabels.previewCreate(
-          request,
-          acknowledgePriorAttemptId === undefined ? {} : { acknowledgePriorAttemptId },
-        ),
+      () => ctx.client.shippingLabels.previewCreate(input, createGuardOptions),
       (normalized) => quoteCreateCost(ctx, normalized),
-      undefined,
-      acknowledgePriorAttemptId,
-    );
-  },
+    ),
 };
 
 export const shippingLabelApplyCreateTool: ToolDefinition<
@@ -586,8 +576,8 @@ export const shippingLabelApplyCreateTool: ToolDefinition<
     "This charges the seller's Newegg account for the UPS label, marks the order shipped and " +
     "returns tracking numbers and label links. Accepts only the previewId; single-use. If the " +
     "outcome is unknown (timeout, 5xx) the error says so and the write is NOT retried, and a later create " +
-    "for the same order is refused (label_create_already_attempted, nothing sent) until the order is " +
-    "verified: check the " +
+    "for the same order is refused (label_create_already_attempted, nothing sent, no request made) until " +
+    "the operator has verified the order in the Seller Portal and restarted the server: check the " +
     "order with newegg_orders_get_status and use newegg_shipping_label_preview_reprint to fetch " +
     "an existing label instead of buying another (while a label cap is active that reprint is " +
     "blocked unless the operator has set NEWEGG_MCP_ALLOW_LABEL_REPRINT=true, or restarted with " +
@@ -608,13 +598,8 @@ export const shippingLabelApplyCreateTool: ToolDefinition<
       "shippingLabelCreate",
       input.previewId,
       (stored) => quoteCreateCost(ctx, stored),
-      async (stored, acknowledgedAttemptId) => {
-        const result = await ctx.client.shippingLabels.create(
-          stored,
-          acknowledgedAttemptId === undefined
-            ? {}
-            : { acknowledgePriorAttemptId: acknowledgedAttemptId },
-        );
+      async (stored) => {
+        const result = await ctx.client.shippingLabels.create(stored, createGuardOptions);
         return {
           correlationId: result.correlationId,
           marketplace: result.marketplace,
@@ -629,6 +614,7 @@ export const shippingLabelApplyCreateTool: ToolDefinition<
           rateLimit: serializeRateLimit(result.rateLimit),
         };
       },
+      (stored) => createPreflight(ctx, stored),
     ),
 };
 
@@ -709,6 +695,7 @@ export const shippingLabelApplyReprintTool: ToolDefinition<
           rateLimit: serializeRateLimit(result.rateLimit),
         };
       },
+      undefined,
       (stored) => limiterFor(ctx).reserve(String(stored.orderNumber), ctx.now().getTime()),
     ),
 };

@@ -15,8 +15,9 @@
  *
  * A synchronous in-process cache sits in front of the store so that two creates racing inside one
  * process cannot both pass: the check and the `submitting` write happen with nothing awaited
- * between them. The store itself has no compare-and-set, so two processes sharing one store can
- * still race; the store is read at preview time and just before the claim.
+ * between them. The cache is kept per STORE (not per client), so every client built on one store
+ * shares the same synchronous claim. The store itself has no compare-and-set, so two processes
+ * sharing one store can still race; the store is read at preview time and just before the claim.
  */
 import type { LabelCreateAttempt, OperationStore, StoredOperation } from "../types.js";
 
@@ -45,13 +46,26 @@ export function isMarkedNotBought(error: unknown): boolean {
 type LabelCreateClaim =
   { refused: LabelCreateAttempt } | { op: StoredOperation; previous: StoredOperation | undefined };
 
+/** The synchronous claim state of every store, shared by all ledgers (clients) built on it. */
+const caches = new WeakMap<OperationStore, Map<string, StoredOperation>>();
+
+function cacheOf(store: OperationStore): Map<string, StoredOperation> {
+  let cache = caches.get(store);
+  if (cache === undefined) {
+    cache = new Map();
+    caches.set(store, cache);
+  }
+  return cache;
+}
+
 export class LabelCreateLedger {
-  readonly #cache = new Map<string, StoredOperation>();
+  readonly #cache: Map<string, StoredOperation>;
   readonly #store: OperationStore;
   readonly #ttlMs: number;
 
   constructor(store: OperationStore, ttlMs: number = LABEL_CREATE_GUARD_TTL_MS) {
     this.#store = store;
+    this.#cache = cacheOf(store);
     this.#ttlMs = ttlMs;
   }
 

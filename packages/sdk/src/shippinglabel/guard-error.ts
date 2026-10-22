@@ -30,11 +30,22 @@ export function priorAttemptMessage(
   orderNumber: string,
   attempt: LabelCreateAttempt,
   acknowledgementRejected: string | undefined,
+  guidance?: string,
 ): string {
   const what =
     attempt.state === "submitted"
       ? "completed (a label was bought)"
       : "was dispatched and its outcome is unknown (timeout, error or still in flight)";
+  if (guidance !== undefined) {
+    // The caller owns the remedy (the MCP server: verify in the Seller Portal, then restart), so
+    // the attempt id, which only the acknowledgement option uses, is left out.
+    return (
+      `A label create for order ${orderNumber} ${what} at ${attempt.atIso}. ` +
+      "Newegg's order status can lag, so the order still reading unshipped does not prove that no " +
+      "label was bought, and a second create would buy and bill a second label. Nothing was sent " +
+      `and nothing is retried automatically. ${guidance}`
+    );
+  }
   return (
     `A label create for order ${orderNumber} ${what} at ${attempt.atIso} (attempt ${attempt.attemptId}). ` +
     "Newegg's order status can lag, so the order still reading unshipped does not prove that no label " +

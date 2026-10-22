@@ -22,9 +22,16 @@ export interface ShippingLabelCreateOptions extends RequestOptions {
   /**
    * The `attemptId` of the prior create attempt, passed back after the caller verified that the
    * order holds no label. It clears ONLY that attempt, and only while the order lists no package;
-   * a newer attempt blocks again.
+   * a newer attempt blocks again. This is NOT a human gate: any code holding the id (it is in the
+   * error and in `priorAttempt`) can pass it, so a caller that wants a human decision must keep
+   * the id away from the automated actor, as the MCP server does (it never offers this option).
    */
   acknowledgePriorAttemptId?: string;
+  /**
+   * Replaces the default remedy text of a prior-attempt blocker and error (which tells the caller
+   * to pass `acknowledgePriorAttemptId`) and leaves the attempt id out of the message.
+   */
+  priorAttemptGuidance?: string;
 }
 
 // ----------------------------------------------------------------------------
@@ -208,6 +215,15 @@ export interface ShippingLabelsApi {
     input: ShippingLabelInput,
     options?: ShippingLabelCreateOptions,
   ): Promise<ShippingLabelResult>;
+  /**
+   * Throws `LabelCreateGuardError` when the create ledger blocks a create for this order. Reads
+   * only the ledger (the operation store): no Newegg request is made, so a blocked order costs
+   * nothing, not even an order read or an estimate.
+   */
+  assertCreateNotBlocked(
+    orderNumber: string | number,
+    options?: Pick<ShippingLabelCreateOptions, "priorAttemptGuidance">,
+  ): Promise<void>;
   /** Read-only plan for {@link ShippingLabelsApi.reprint}; nothing is requested. */
   previewReprint(
     orderNumber: string | number,
