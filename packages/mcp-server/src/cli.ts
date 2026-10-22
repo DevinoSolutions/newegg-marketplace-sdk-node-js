@@ -12,7 +12,7 @@ import { loadMcpConfigFromEnv, type McpServerConfig } from "./config/index.js";
 import { InMemoryPreviewStore } from "./preview-store/index.js";
 import { createNeweggMcpServer, defaultLogger } from "./server/build.js";
 import { connectStdioTransport } from "./server/stdio.js";
-import { startHttpServer } from "./server/http.js";
+import { startHttpServer, type HttpServerHandle } from "./server/http.js";
 import { SERVER_NAME, SERVER_VERSION } from "./version.js";
 import type { Logger } from "./tools/index.js";
 
@@ -86,13 +86,27 @@ async function runHttp(config: McpServerConfig, logger: Logger): Promise<void> {
   // them (T-5675): each session gets its own MCP server stamped with its sessionId, and the store
   // only returns or consumes a record for the session that owns it.
   const previewStore = new InMemoryPreviewStore();
-  const handle = await startHttpServer({
-    http: config.http,
-    // Each HTTP session gets its own sessionId, so its previews cannot be applied from another one.
-    createServer: (sessionId) => createNeweggMcpServer({ config, previewStore, logger, sessionId }),
-    logger,
-    serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-  });
+  let handle: HttpServerHandle;
+  try {
+    handle = await startHttpServer({
+      http: config.http,
+      // Writes need a bearer token even on loopback; startHttpServer refuses to start otherwise.
+      writesEnabled: config.allowWrites,
+      // Each HTTP session gets its own sessionId, so its previews cannot be applied from another one.
+      createServer: (sessionId) =>
+        createNeweggMcpServer({ config, previewStore, logger, sessionId }),
+      logger,
+      serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
+    });
+  } catch (error) {
+    // Startup refusals (no token with writes or a non-loopback bind, weak token) carry no secret
+    // values, so the message is safe to log; exit non-zero instead of an unhandled rejection.
+    logger("error", "http_start_refused", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    process.exitCode = 1;
+    return;
+  }
   logger("info", "server_started", {
     transport: "http",
     host: config.http.host,

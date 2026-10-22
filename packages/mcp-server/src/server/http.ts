@@ -7,6 +7,8 @@
  *  - refuses to bind a non-loopback host unless a bearer token is configured, and refuses a token
  *    shorter than 32 characters; warns when a non-loopback bind is not declared to sit behind a
  *    TLS proxy (this listener speaks plain HTTP);
+ *  - refuses to start with write tools enabled and no bearer token, even on loopback: a loopback
+ *    bind is reachable by every local user and process (T-6211);
  *  - requires `Authorization: Bearer <token>` (timing-safe) on /mcp when a token is configured;
  *    failed attempts are slowed per client address (exponential delay, then 429);
  *  - rejects a malformed Host header with 400 before anything else, and validates the Host header
@@ -64,6 +66,12 @@ const MAX_TRACKED_CLIENTS = 10_000;
 
 export interface StartHttpServerOptions {
   readonly http: McpHttpConfig;
+  /**
+   * Whether the servers built by `createServer` register write tools (`NEWEGG_MCP_ALLOW_WRITES`).
+   * Required, not optional, so a caller cannot forget it: when true, a bearer token is mandatory
+   * even on loopback (T-6211).
+   */
+  readonly writesEnabled: boolean;
   /**
    * Builds a fresh MCP server instance for a new session (sharing client/preview store). The
    * session id is passed so the instance can bind its previews to that session.
@@ -191,7 +199,7 @@ function rejectOversize(req: IncomingMessage, res: ServerResponse): void {
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function startHttpServer(options: StartHttpServerOptions): Promise<HttpServerHandle> {
-  const { http: httpConfig, createServer, logger, serverInfo } = options;
+  const { http: httpConfig, writesEnabled, createServer, logger, serverInfo } = options;
   const backoff = options.authBackoff ?? DEFAULT_AUTH_BACKOFF;
   const maxSessions = httpConfig.maxSessions ?? DEFAULT_MAX_HTTP_SESSIONS;
   const idleTtlMs = (httpConfig.sessionIdleTtlSeconds ?? DEFAULT_SESSION_IDLE_TTL_SECONDS) * 1000;
@@ -200,6 +208,18 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
     throw new Error(
       "Refusing to bind the MCP HTTP transport to a non-loopback host without " +
         "NEWEGG_MCP_HTTP_BEARER_TOKEN configured.",
+    );
+  }
+  // `!== false`, not truthiness: a JS caller that omits the option (undefined) is treated as
+  // writes-on, so the guard fails closed instead of open.
+  if (writesEnabled !== false && httpConfig.bearerToken === undefined) {
+    // Loopback is not a trust boundary: any local user or process could open its own session and
+    // spend money (label purchases, price and listing writes). There is deliberately no opt-out.
+    throw new Error(
+      "Refusing to start the MCP HTTP transport with NEWEGG_MCP_ALLOW_WRITES=true and no " +
+        "NEWEGG_MCP_HTTP_BEARER_TOKEN: write tools must not be reachable without authentication, " +
+        "even on a loopback bind. Set NEWEGG_MCP_HTTP_BEARER_TOKEN (generate one with " +
+        "`openssl rand -hex 32`), or disable writes (NEWEGG_MCP_ALLOW_WRITES=false).",
     );
   }
   const weakness =

@@ -5,14 +5,14 @@ mirrors the HTTP path of the package `bin` (`newegg-marketplace-mcp --transport 
 
 ## What it shows
 
-- `loadMcpConfigFromEnv()` → `startHttpServer({ http, createServer, logger, serverInfo })`,
+- `loadMcpConfigFromEnv()` → `startHttpServer({ http, writesEnabled, createServer, logger, serverInfo })`,
   where `createServer` builds a fresh `createNeweggMcpServer` per session over one shared
   `InMemoryPreviewStore`, plus graceful shutdown on SIGINT/SIGTERM.
 - The HTTP surface: MCP at **`POST /mcp`** (session id in the `Mcp-Session-Id` response
   header) and an unauthenticated **`GET /healthz`**.
 - Network safety: the server binds `config.http.host:port` (default `127.0.0.1:3919`) and
-  refuses a non-loopback bind unless `NEWEGG_MCP_HTTP_BEARER_TOKEN` is set; `Origin` and
-  `Host` headers are validated on `/mcp`.
+  refuses a non-loopback bind, or any start with `NEWEGG_MCP_ALLOW_WRITES=true`, unless
+  `NEWEGG_MCP_HTTP_BEARER_TOKEN` is set; `Origin` and `Host` headers are validated on `/mcp`.
 
 ## Environment
 

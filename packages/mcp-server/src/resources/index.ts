@@ -17,7 +17,7 @@ const FEED_RECORDS_PER_HOUR = 100_000;
 
 /**
  * `newegg://capabilities` — what this server exposes and how it is limited. `enabledToolNames`
- * is the set actually registered (the apply tool is absent when writes are disabled).
+ * is the set actually registered (the preview and apply tools are absent when writes are disabled).
  */
 export function buildCapabilities(
   config: McpServerConfig,

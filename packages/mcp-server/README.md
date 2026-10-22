@@ -66,7 +66,8 @@ newegg-marketplace-mcp --transport http
 ```
 
 - Binds `127.0.0.1:3919` by default and **refuses to bind a non-loopback host unless
-  `NEWEGG_MCP_HTTP_BEARER_TOKEN` is set** (at least 32 characters, 12 different). It speaks plain HTTP: front it with a
+  `NEWEGG_MCP_HTTP_BEARER_TOKEN` is set** (at least 32 characters, 12 different), and **refuses to start with
+  `NEWEGG_MCP_ALLOW_WRITES=true` and no token even on loopback** (generate one with `openssl rand -hex 32`). It speaks plain HTTP: front it with a
   TLS-terminating proxy and set `NEWEGG_MCP_HTTP_BEHIND_TLS_PROXY=true`, or a non-loopback bind logs a warning.
   Sessions are capped and expire when idle, failed bearer attempts are throttled per client address,
   and a preview can only be applied from the session that created it.
@@ -190,6 +191,12 @@ is not surfaced in the tool's output.
 > that created it; the HTTP transport caps sessions and throttles failed bearer attempts. Details in the
 > [repository README](../../README.md) and `docs/mcp-security.md`.
 
+> **Breaking (T-6211): HTTP writes need a token.** `--transport http` with `NEWEGG_MCP_ALLOW_WRITES=true` now refuses to
+> start unless `NEWEGG_MCP_HTTP_BEARER_TOKEN` is set, even on the default loopback bind (previously loopback ran with no
+> authentication, so any local user or process could spend money through the write tools). There is no opt-out. Set a
+> token (`openssl rand -hex 32`) and send it as `Authorization: Bearer <token>`, or set `NEWEGG_MCP_ALLOW_WRITES=false`.
+> stdio and read-only HTTP on loopback are unaffected. `startHttpServer` gained a required `writesEnabled` option.
+
 > **Breaking change in 0.1.0 (T-5911): credentials are now bound to a marketplace.** Newegg
 > authenticates on `sellerid` + API key + secret key only and ignores the URL prefix, so keys issued
 > for one marketplace's seller account (for example Newegg.ca) used with `NEWEGG_MARKETPLACE=us|b2b`
@@ -230,7 +237,7 @@ is not surfaced in the tool's output.
 | `NEWEGG_MCP_REPORT_FTPS`                       | unset (`false`)          | Exactly `true` makes the report file download use explicit FTPS (no fallback to clear text).                                                                                                                                                                                                                                |
 | `NEWEGG_MCP_REPORT_FTPS_CA_FILE`               | empty                    | Path to the PEM of the server certificate to trust for FTPS (Newegg's is self-signed).                                                                                                                                                                                                                                      |
 | `NEWEGG_MCP_REPORT_FTPS_CERT_SHA256`           | empty                    | SHA-256 fingerprint the FTPS server certificate must have (needs the CA file).                                                                                                                                                                                                                                              |
-| `NEWEGG_MCP_HTTP_BEARER_TOKEN`                 | empty                    | Bearer token, at least 32 characters (12 different); required to bind a non-loopback host.                                                                                                                                                                                                                                  |
+| `NEWEGG_MCP_HTTP_BEARER_TOKEN`                 | empty                    | Bearer token, at least 32 characters (12 different); required to bind a non-loopback host, and whenever `NEWEGG_MCP_ALLOW_WRITES=true` over HTTP (even on loopback).                                                                                                                                                        |
 | `NEWEGG_MCP_HTTP_ALLOWED_ORIGINS`              | empty = same-origin only | Comma-separated allowed `Origin` values.                                                                                                                                                                                                                                                                                    |
 | `NEWEGG_MCP_HTTP_ALLOWED_HOSTS`                | empty                    | Comma-separated allowed `Host` values; loopback always allowed.                                                                                                                                                                                                                                                             |
 
