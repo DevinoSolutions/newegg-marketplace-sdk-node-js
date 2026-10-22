@@ -338,6 +338,37 @@ describe("the in-memory preview store sweeps and bounds itself (T-5670 / L6)", (
     expect((await store.consume("p1")).status).toBe("not_found");
   });
 
+  const inSession = (id: string, sessionId: string, now: Date): PreviewRecord =>
+    ({ ...record(id, now), sessionId }) as PreviewRecord;
+
+  it("never lets one session evict another session's live preview", async () => {
+    const now = new Date("2026-01-01T00:00:00Z");
+    const store = new InMemoryPreviewStore(() => now, { maxEntries: 4, maxEntriesPerSession: 3 });
+    await store.put(inSession("b1", "B", now));
+    for (const id of ["a1", "a2", "a3", "a4", "a5", "a6"]) {
+      await store.put(inSession(id, "A", now));
+    }
+    // B's preview survives a flood from A; A keeps only its own newest three.
+    expect(await store.get("b1", { sessionId: "B" })).toBeDefined();
+    expect((await store.consume("a1", { sessionId: "A" })).status).toBe("not_found");
+    expect((await store.consume("a3", { sessionId: "A" })).status).toBe("not_found");
+    expect((await store.consume("a4", { sessionId: "A" })).status).toBe("ok");
+    expect((await store.consume("a6", { sessionId: "A" })).status).toBe("ok");
+  });
+
+  it("drops a session's consumed and expired records before any of its live ones", async () => {
+    const now = new Date("2026-01-01T00:00:00Z");
+    const store = new InMemoryPreviewStore(() => now, { maxEntriesPerSession: 3 });
+    await store.put(inSession("a1", "A", now));
+    await store.put(inSession("a2", "A", now));
+    expect((await store.consume("a1", { sessionId: "A" })).status).toBe("ok");
+    await store.put(inSession("a3", "A", now));
+    await store.put(inSession("a4", "A", now));
+    // a1 (consumed) went first even though a2 (live) is older than a3 and a4.
+    expect((await store.consume("a1", { sessionId: "A" })).status).toBe("not_found");
+    expect((await store.consume("a2", { sessionId: "A" })).status).toBe("ok");
+  });
+
   it("caps the number of stored previews, dropping the oldest first", async () => {
     const now = new Date("2026-01-01T00:00:00Z");
     const store = new InMemoryPreviewStore(() => now, { maxEntries: 3 });
