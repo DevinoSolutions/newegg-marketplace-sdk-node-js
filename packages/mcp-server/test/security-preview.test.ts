@@ -161,6 +161,10 @@ describe("the preview hash is re-verified at apply (T-5674 / I2)", () => {
         const applied = await callTool(harness.mcp, testCase.apply, { previewId: id });
         expect(applied.isError).toBe(true);
         expect(applied.json.errorCode).toBe("preview_tampered");
+        // The hash is unkeyed: it proves the record changed, not who changed it, so the message
+        // must not claim an attack.
+        expect(String(applied.json.message)).toMatch(/altered or corrupted/);
+        expect(String(applied.json.message)).not.toMatch(/tamper/i);
         expect(writesOf(harness, testCase.isWrite)).toHaveLength(0);
       } finally {
         await harness.close();

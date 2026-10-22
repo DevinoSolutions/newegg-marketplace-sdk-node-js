@@ -226,8 +226,12 @@ Low and informational findings from the security audit, closed together. Each is
   throttle then applies to all clients together.
 - **RMA evidence URLs (T-5673).** `imageUrls` accept `https` only and no `user:password@`.
 - **Hash re-verified at apply for every kind (T-5674).** Inventory, listing, price and volume-discount
-  applies recompute the stored hash and refuse a changed record (`preview_tampered`) before anything is
-  sent, as RMA/refund and shipping-label applies already did.
+  applies recompute the stored hash and refuse a changed record (error code `preview_tampered`) before
+  anything is sent, as RMA/refund and shipping-label applies already did. The hash is an unkeyed SHA-256
+  of the canonical request: it detects a record that changed after the preview (a store bug, corruption,
+  an accidental edit), but it does not authenticate the record, because anyone who can write the store
+  can write a matching hash. Authenticating a shared or persistent store would need a keyed MAC (HMAC)
+  with a server secret, which is not implemented; protect such a store like the credentials.
 - **Previews are bound to the MCP session (T-5675).** A preview records the session that created it; another
   HTTP session cannot apply (or burn) it and gets `preview_not_found`. stdio has one implicit session. A
   custom `PreviewStore` should honour the optional `PreviewScope` argument of `get` / `consume`; the tool
