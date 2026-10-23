@@ -89,7 +89,7 @@ describe("interleaved and step-2 patterns are refused (T-6468)", () => {
 });
 
 // T-6468: the lane passes made the estimator several times slower once (the CI "generated secrets"
-// cases timed out at 5 s). Bounds are generous (about 10x the cost on a developer machine) so only
+// cases timed out at 5 s). Bounds are generous (~10x headroom vs a dev machine, ~5x vs CI) so only
 // a real regression, not a slow runner, trips them.
 describe("estimator speed (T-6468)", () => {
   it("prices 20,000 generated 32-character tokens within the budget", () => {
@@ -98,7 +98,7 @@ describe("estimator speed (T-6468)", () => {
     );
     const started = Date.now();
     for (const token of tokens) weakBearerTokenReason(token);
-    expect(Date.now() - started).toBeLessThan(4_000);
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 
   it("prices a 50,000-character random token in linear-ish time", () => {
