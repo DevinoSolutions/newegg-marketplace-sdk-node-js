@@ -1,5 +1,5 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { main, parseCliArgs } from "../src/cli.js";
@@ -124,5 +124,88 @@ describe("main startup with a bad operation store file", () => {
     await main([]);
     expect(process.exitCode).toBe(1);
     expect(errors.join("\n")).toContain("operation_store_error");
+  });
+});
+
+describe("parseCliArgs --release-store-lock", () => {
+  it("parses the flag and --force", () => {
+    expect(parseCliArgs(["--release-store-lock"]).releaseStoreLock).toEqual({ force: false });
+    expect(parseCliArgs(["--release-store-lock", "--force"]).releaseStoreLock).toEqual({
+      force: true,
+    });
+    expect(parseCliArgs(["--force", "--release-store-lock"]).releaseStoreLock).toEqual({
+      force: true,
+    });
+  });
+
+  it("rejects --force on its own", () => {
+    expect(() => parseCliArgs(["--force"])).toThrow(/--force/);
+  });
+
+  it("is absent by default", () => {
+    expect(parseCliArgs([]).releaseStoreLock).toBeUndefined();
+  });
+});
+
+describe("main --release-store-lock", () => {
+  const lock = () => `${file}.lock`;
+  const writeLock = (overrides: Record<string, unknown> = {}) =>
+    writeFileSync(
+      lock(),
+      JSON.stringify({
+        hostname: hostname(),
+        pid: 2 ** 22 + 99,
+        startedAt: new Date().toISOString(),
+        ...overrides,
+      }),
+    );
+
+  it("removes a dead local lock and exits 0 without credentials", async () => {
+    await seed();
+    writeLock();
+    vi.stubEnv("NEWEGG_MCP_OPERATION_STORE_FILE", file);
+    await main(["--release-store-lock"]);
+    expect(process.exitCode ?? 0).toBe(0);
+    expect(existsSync(lock())).toBe(false);
+    expect(errors.join("\n")).toContain("store_lock_released");
+  });
+
+  it("refuses a live lock, exit 1, and --force overrides", async () => {
+    await seed();
+    writeLock({ pid: process.pid });
+    vi.stubEnv("NEWEGG_MCP_OPERATION_STORE_FILE", file);
+    await main(["--release-store-lock"]);
+    expect(process.exitCode).toBe(1);
+    expect(existsSync(lock())).toBe(true);
+    process.exitCode = undefined;
+    await main(["--release-store-lock", "--force"]);
+    expect(process.exitCode ?? 0).toBe(0);
+    expect(existsSync(lock())).toBe(false);
+  });
+
+  it("exits 0 and says so when there is no lock", async () => {
+    await seed();
+    vi.stubEnv("NEWEGG_MCP_OPERATION_STORE_FILE", file);
+    await main(["--release-store-lock"]);
+    expect(process.exitCode ?? 0).toBe(0);
+    expect(errors.join("\n")).toContain("store_lock_absent");
+  });
+
+  it("exits 1 when the path is not set or not absolute", async () => {
+    vi.stubEnv("NEWEGG_MCP_OPERATION_STORE_FILE", "");
+    await main(["--release-store-lock"]);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+    vi.stubEnv("NEWEGG_MCP_OPERATION_STORE_FILE", "ledger.json");
+    await main(["--release-store-lock"]);
+    expect(process.exitCode).toBe(1);
+    expect(errors.join("\n")).toMatch(/absolute/);
+  });
+
+  it("clear-label-guard also refuses a relative path", async () => {
+    vi.stubEnv("NEWEGG_MCP_OPERATION_STORE_FILE", "ledger.json");
+    await main(["--clear-label-guard", "ca", ORDER]);
+    expect(process.exitCode).toBe(1);
+    expect(errors.join("\n")).toMatch(/absolute/);
   });
 });

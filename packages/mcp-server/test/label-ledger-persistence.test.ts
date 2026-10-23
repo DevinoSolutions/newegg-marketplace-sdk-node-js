@@ -498,15 +498,25 @@ describe("NEWEGG_MCP_OPERATION_STORE_FILE parsing", () => {
     ).toBeUndefined();
   });
 
-  it("is resolved to an absolute path", () => {
+  it("accepts an absolute path as given", () => {
     const config = loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_OPERATION_STORE_FILE: file }));
     expect(config.operationStoreFile).toBe(file);
-    const relative = loadMcpConfigFromEnv(
-      makeEnv({ NEWEGG_MCP_OPERATION_STORE_FILE: "ledger.json" }),
-    );
-    expect(relative.operationStoreFile).toMatch(/ledger\.json$/);
-    expect(relative.operationStoreFile).not.toBe("ledger.json");
   });
+
+  it.each(["ledger.json", "./ledger.json", "../ledger.json", "data/secret-dir/ledger.json"])(
+    "rejects the relative path %j without echoing it",
+    (value) => {
+      let message = "";
+      try {
+        loadMcpConfigFromEnv(makeEnv({ NEWEGG_MCP_OPERATION_STORE_FILE: value }));
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toContain("NEWEGG_MCP_OPERATION_STORE_FILE");
+      expect(message).toMatch(/absolute/);
+      expect(message).not.toContain(value);
+    },
+  );
 
   it("rejects a value with a NUL byte", () => {
     expect(() =>
