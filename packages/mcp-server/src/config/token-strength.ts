@@ -14,8 +14,7 @@
  * all of their bits (a 32-character hex token estimates at ~128, a 64-character one at ~256) while the
  * patterned examples above fall far under {@link MIN_ENTROPY_BITS}. No heuristic can recognise a
  * non-repeating dictionary phrase, and patterns built from short chunks of different kinds
- * (`abcd1234efgh5678...`) can still pass; generate secrets instead of choosing
- * them.
+ * (`abcd1234efgh5678...`) can still pass; generate secrets instead of choosing them.
  *
  * Reasons never contain the secret.
  */
