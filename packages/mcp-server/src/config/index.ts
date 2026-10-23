@@ -5,6 +5,7 @@
  * never leak secrets. This module never imports the MCP SDK (ADR 0001).
  */
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { z } from "zod";
 import type { NeweggMarketplace } from "@devino/newegg-marketplace-sdk";
 import { weakBearerTokenReason } from "./token-strength.js";
@@ -69,6 +70,12 @@ export interface McpLimits {
    */
   readonly labelReprintCooldownSeconds: number;
   /**
+   * How long a label create that timed out, failed with an unknown outcome or succeeded blocks a new
+   * create for the same order, in whole hours (default 24, 1..720). Applies to the in-memory ledger and
+   * to the persistent one alike (`NEWEGG_MCP_LABEL_CREATE_GUARD_HOURS`).
+   */
+  readonly labelCreateGuardHours: number;
+  /**
    * Reprints allowed across all orders in any rolling hour (default 6), enforced at apply. Always
    * on (1..1000); in-memory, resets on restart.
    */
@@ -132,6 +139,12 @@ export interface McpServerConfig {
    */
   readonly allowCustomBaseUrl?: boolean;
   readonly allowWrites: boolean;
+  /**
+   * `NEWEGG_MCP_OPERATION_STORE_FILE` (T-6280), resolved to an absolute path: keeps the label-create
+   * duplicate-purchase ledger in this file so it survives a restart. Unset = in memory (a restart
+   * forgets it). Never exposed through MCP tools or resources.
+   */
+  readonly operationStoreFile?: string;
   /**
    * Opt-in (`NEWEGG_MCP_REPORT_FTPS=true`, exact literal): the built-in report file download uses
    * explicit FTPS (T-5668). Default is plain FTP: Newegg's server presents a self-signed
@@ -204,7 +217,7 @@ const marketplaceHint = (name: string): string =>
   `${name} must be one of: us, b2b, ca (the alias "can" is accepted for ca).`;
 
 /** Normalizes a marketplace token (trim, lowercase, "can" -> "ca"); undefined if unrecognized. */
-function normalizeMarketplace(raw: string): NeweggMarketplace | undefined {
+export function normalizeMarketplace(raw: string): NeweggMarketplace | undefined {
   const canonical = raw.trim().toLowerCase() === "can" ? "ca" : raw.trim().toLowerCase();
   return (MARKETPLACES as readonly string[]).includes(canonical)
     ? (canonical as NeweggMarketplace)
@@ -453,6 +466,22 @@ function strongSecretEnv(name: string) {
     });
 }
 
+/** Optional file path, resolved to an absolute one. Blank = unset; a NUL byte is never a path. */
+function pathEnv(name: string) {
+  return z
+    .string()
+    .optional()
+    .transform((raw, ctx) => {
+      const trimmed = raw?.trim();
+      if (trimmed === undefined || trimmed === "") return undefined;
+      if (trimmed.includes("\0")) {
+        ctx.addIssue({ code: "custom", message: `${name} must be a valid file path.` });
+        return z.NEVER;
+      }
+      return resolve(trimmed);
+    });
+}
+
 const envSchema = z.object({
   // Credentials are resolved separately (see resolveCredentials): they depend on the marketplace.
   NEWEGG_MARKETPLACE: marketplaceEnv("NEWEGG_MARKETPLACE"),
@@ -529,6 +558,12 @@ const envSchema = z.object({
     6,
     1000,
   ),
+  NEWEGG_MCP_LABEL_CREATE_GUARD_HOURS: strictCountEnv(
+    "NEWEGG_MCP_LABEL_CREATE_GUARD_HOURS",
+    24,
+    720,
+  ),
+  NEWEGG_MCP_OPERATION_STORE_FILE: pathEnv("NEWEGG_MCP_OPERATION_STORE_FILE"),
   NEWEGG_MCP_ALLOWED_WAREHOUSES: csvEnv({ uppercase: true }),
   NEWEGG_MCP_HTTP_HOST: z
     .string()
@@ -735,6 +770,7 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     allowLabelReprint: parsed.NEWEGG_MCP_ALLOW_LABEL_REPRINT,
     labelReprintCooldownSeconds: parsed.NEWEGG_MCP_LABEL_REPRINT_COOLDOWN_SECONDS,
     maxLabelReprintsPerHour: parsed.NEWEGG_MCP_MAX_LABEL_REPRINTS_PER_HOUR,
+    labelCreateGuardHours: parsed.NEWEGG_MCP_LABEL_CREATE_GUARD_HOURS,
     allowedWarehouses: parsed.NEWEGG_MCP_ALLOWED_WAREHOUSES,
     allowedMarketplaces,
   };
@@ -773,6 +809,9 @@ export function loadMcpConfigFromEnv(env: EnvRecord = process.env): McpServerCon
     baseUrl: parsed.NEWEGG_API_BASE_URL,
     allowCustomBaseUrl: parsed.NEWEGG_MCP_ALLOW_CUSTOM_BASE_URL,
     allowWrites: parsed.NEWEGG_MCP_ALLOW_WRITES,
+    ...(parsed.NEWEGG_MCP_OPERATION_STORE_FILE === undefined
+      ? {}
+      : { operationStoreFile: parsed.NEWEGG_MCP_OPERATION_STORE_FILE }),
     reportFtps: parsed.NEWEGG_MCP_REPORT_FTPS,
     reportFtpsCertSha256: parsed.NEWEGG_MCP_REPORT_FTPS_CERT_SHA256,
     ...(reportFtpsCa === undefined ? {} : { reportFtpsCa }),

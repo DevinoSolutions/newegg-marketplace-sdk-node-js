@@ -241,7 +241,9 @@ describe("label create ledger survives a restart", () => {
     };
     await store.put("ca:SELLER:feed:abc", record);
     await store.put("label-create:ca:5", record);
-    const onDisk = JSON.parse(readFileSync(file, "utf8")) as { operations: Record<string, unknown> };
+    const onDisk = JSON.parse(readFileSync(file, "utf8")) as {
+      operations: Record<string, unknown>;
+    };
     expect(Object.keys(onDisk.operations)).toEqual(["label-create:ca:5"]);
     // The feed record still dedups inside this process.
     expect(await store.get("ca:SELLER:feed:abc")).toEqual(record);
@@ -258,8 +260,12 @@ describe("two server processes sharing one file", () => {
       expect(previewA.json.eligible).toBe(true);
       expect(previewB.json.eligible).toBe(true);
       const results = await Promise.all([
-        callTool(a.harness.mcp, TOOLS.applyCreate, { previewId: previewA.json.previewId as string }),
-        callTool(b.harness.mcp, TOOLS.applyCreate, { previewId: previewB.json.previewId as string }),
+        callTool(a.harness.mcp, TOOLS.applyCreate, {
+          previewId: previewA.json.previewId as string,
+        }),
+        callTool(b.harness.mcp, TOOLS.applyCreate, {
+          previewId: previewB.json.previewId as string,
+        }),
       ]);
       expect(a.posts() + b.posts()).toBe(1);
       expect(results.filter((result) => !result.isError)).toHaveLength(1);
@@ -277,7 +283,9 @@ describe("two server processes sharing one file", () => {
     const b = await startStack([OK]);
     try {
       const previewA = await callTool(a.harness.mcp, TOOLS.previewCreate, labelArgs);
-      await callTool(a.harness.mcp, TOOLS.applyCreate, { previewId: previewA.json.previewId as string });
+      await callTool(a.harness.mcp, TOOLS.applyCreate, {
+        previewId: previewA.json.previewId as string,
+      });
       const blocked = await callTool(b.harness.mcp, TOOLS.previewCreate, labelArgs);
       expect(blocked.json.eligible).toBe(false);
       expect(b.posts()).toBe(0);
@@ -379,7 +387,9 @@ describe("operator clear", () => {
   });
 
   it("validates its arguments before touching the file", async () => {
-    await expect(clearLabelCreateGuard(file, "ca", "not-a-number")).rejects.toThrow(/order number/i);
+    await expect(clearLabelCreateGuard(file, "ca", "not-a-number")).rejects.toThrow(
+      /order number/i,
+    );
     await expect(clearLabelCreateGuard(file, "mars", ORDER_NUMBER)).rejects.toThrow(/marketplace/i);
   });
 
@@ -395,7 +405,9 @@ describe("operator clear", () => {
       for (const tool of tools) {
         const schema = JSON.stringify(tool.inputSchema);
         expect(schema).not.toMatch(/acknowledg|clearGuard|operationStore|attemptId/i);
-        expect(`${tool.title ?? ""} ${tool.description ?? ""}`).not.toMatch(/acknowledgePriorAttemptId/);
+        expect(`${tool.title ?? ""} ${tool.description ?? ""}`).not.toMatch(
+          /acknowledgePriorAttemptId/,
+        );
       }
       // Guessing the old SDK argument is rejected by the strict input schema.
       const guessed = await callTool(stack.harness.mcp, TOOLS.previewCreate, {

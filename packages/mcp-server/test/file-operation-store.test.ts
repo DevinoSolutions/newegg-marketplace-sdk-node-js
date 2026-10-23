@@ -12,10 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { StoredOperation } from "@devino/newegg-marketplace-sdk";
-import {
-  FileOperationStore,
-  OperationStoreFileError,
-} from "../src/server/file-operation-store.js";
+import { FileOperationStore, OperationStoreFileError } from "../src/server/file-operation-store.js";
 
 // T-6280: the label-create duplicate ledger survives a restart in an operator-chosen file. The file
 // holds only keys, states, payload hashes, attempt ids and timestamps; never a credential.
@@ -128,19 +125,29 @@ describe("FileOperationStore fails closed on a bad file", () => {
       "a record with an unknown state",
       JSON.stringify({
         version: 1,
-        operations: { [KEY]: { state: "weird", payloadHash: "h", updatedAt: "2026-10-22T00:00:00Z" } },
+        operations: {
+          [KEY]: { state: "weird", payloadHash: "h", updatedAt: "2026-10-22T00:00:00Z" },
+        },
       }),
     ],
     [
       "a record without a timestamp",
-      JSON.stringify({ version: 1, operations: { [KEY]: { state: "submitting", payloadHash: "h" } } }),
+      JSON.stringify({
+        version: 1,
+        operations: { [KEY]: { state: "submitting", payloadHash: "h" } },
+      }),
     ],
     [
       "a record with non-string attempt ids",
       JSON.stringify({
         version: 1,
         operations: {
-          [KEY]: { state: "submitting", payloadHash: "h", requestIds: [1], updatedAt: "2026-10-22T00:00:00Z" },
+          [KEY]: {
+            state: "submitting",
+            payloadHash: "h",
+            requestIds: [1],
+            updatedAt: "2026-10-22T00:00:00Z",
+          },
         },
       }),
     ],
@@ -222,7 +229,9 @@ describe("FileOperationStore.compareAndPut", () => {
 
   it("serialises many simultaneous writers without losing a record", async () => {
     const stores = Array.from({ length: 6 }, () => new FileOperationStore(file));
-    await Promise.all(stores.map((store, index) => store.put(`label-create:ca:${index}`, op(`k${index}`))));
+    await Promise.all(
+      stores.map((store, index) => store.put(`label-create:ca:${index}`, op(`k${index}`))),
+    );
     const reader = new FileOperationStore(file);
     for (let index = 0; index < stores.length; index++) {
       expect((await reader.get(`label-create:ca:${index}`))?.requestIds).toEqual([`k${index}`]);

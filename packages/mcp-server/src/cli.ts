@@ -4,15 +4,22 @@
  * default stdio), loads configuration from the environment, wires graceful shutdown, and logs
  * exclusively to stderr — it never writes to stdout, which the stdio transport owns. The one
  * exception is `--generate-token`, which prints a fresh secret to stdout and exits before any
- * transport starts.
+ * transport starts, and `--clear-label-guard`, the operator-only command that removes one order's
+ * label-create guard record from the operation store file (T-6280); it needs no credentials.
  *
  * `main` is guarded so importing this module (e.g. to unit-test `parseCliArgs`) has no side
  * effects.
  */
 import { pathToFileURL } from "node:url";
-import { loadMcpConfigFromEnv, type McpServerConfig } from "./config/index.js";
+import { resolve } from "node:path";
+import {
+  loadMcpConfigFromEnv,
+  normalizeMarketplace,
+  type McpServerConfig,
+} from "./config/index.js";
 import { generateSecretToken } from "./config/token-strength.js";
 import { InMemoryPreviewStore } from "./preview-store/index.js";
+import { assertOperationStoreFileUsable, clearLabelCreateGuard } from "./server/operation-store.js";
 import { createNeweggMcpServer, defaultLogger } from "./server/build.js";
 import { connectStdioTransport } from "./server/stdio.js";
 import { startHttpServer, type HttpServerHandle } from "./server/http.js";
@@ -26,6 +33,8 @@ export interface CliArgs {
   readonly help: boolean;
   /** Print one fresh random secret to stdout and exit (no configuration needed). */
   readonly generateToken: boolean;
+  /** Remove one order's label-create guard record from the operation store file, then exit. */
+  readonly clearLabelGuard?: { readonly marketplace: string; readonly orderNumber: string };
 }
 
 const USAGE = `newegg-marketplace-mcp — Newegg Marketplace MCP server
@@ -33,11 +42,17 @@ const USAGE = `newegg-marketplace-mcp — Newegg Marketplace MCP server
 Usage:
   newegg-marketplace-mcp [--transport stdio|http]
   newegg-marketplace-mcp --generate-token
+  newegg-marketplace-mcp --clear-label-guard <us|b2b|ca> <order number>
 
 Options:
   --transport <stdio|http>   Transport to serve (default: stdio)
   --generate-token           Print a fresh random secret (64 hex characters) to stdout and exit; use
                              it for NEWEGG_MCP_HTTP_BEARER_TOKEN or NEWEGG_MCP_PREVIEW_HMAC_KEY
+  --clear-label-guard <marketplace> <order number>
+                             Operator only: remove that order's label-create duplicate-purchase
+                             record from NEWEGG_MCP_OPERATION_STORE_FILE and exit. Verify in the
+                             Seller Portal that no label exists first, then restart the server. Not
+                             available through any MCP tool.
   -h, --help                 Show this help
 
 Configuration is read from environment variables (see .env.example). All logging goes to
@@ -48,6 +63,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   let transport: TransportName = "stdio";
   let help = false;
   let generateToken = false;
+  let clearLabelGuard: CliArgs["clearLabelGuard"];
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -58,6 +74,9 @@ export function parseCliArgs(argv: string[]): CliArgs {
       help = true;
     } else if (arg === "--generate-token") {
       generateToken = true;
+    } else if (arg === "--clear-label-guard") {
+      clearLabelGuard = parseClearLabelGuard(argv[index + 1], argv[index + 2]);
+      index += 2;
     } else if (arg === "--transport") {
       const value = argv[index + 1];
       index += 1;
@@ -69,7 +88,58 @@ export function parseCliArgs(argv: string[]): CliArgs {
     }
   }
 
-  return { transport, help, generateToken };
+  return { transport, help, generateToken, clearLabelGuard };
+}
+
+function parseClearLabelGuard(
+  marketplaceArg: string | undefined,
+  orderArg: string | undefined,
+): NonNullable<CliArgs["clearLabelGuard"]> {
+  const marketplace =
+    marketplaceArg === undefined ? undefined : normalizeMarketplace(marketplaceArg);
+  if (marketplace === undefined || orderArg === undefined || !/^[1-9]\d{0,9}$/.test(orderArg)) {
+    throw new Error(
+      "--clear-label-guard needs a marketplace (us, b2b or ca) and an order number, e.g. " +
+        "--clear-label-guard ca 123456789.",
+    );
+  }
+  return { marketplace, orderNumber: orderArg };
+}
+
+/** Runs `--clear-label-guard`: reads only NEWEGG_MCP_OPERATION_STORE_FILE, never credentials. */
+async function runClearLabelGuard(
+  target: NonNullable<CliArgs["clearLabelGuard"]>,
+  logger: Logger,
+): Promise<void> {
+  const raw = process.env["NEWEGG_MCP_OPERATION_STORE_FILE"]?.trim() ?? "";
+  if (raw === "") {
+    logger("error", "config_error", {
+      message:
+        "NEWEGG_MCP_OPERATION_STORE_FILE is not set, so there is no persistent ledger to clear.",
+    });
+    process.exitCode = 1;
+    return;
+  }
+  try {
+    const cleared = await clearLabelCreateGuard(
+      resolve(raw),
+      target.marketplace,
+      target.orderNumber,
+    );
+    logger(cleared ? "info" : "error", cleared ? "label_guard_cleared" : "label_guard_not_found", {
+      marketplace: target.marketplace,
+      orderNumber: target.orderNumber,
+      ...(cleared
+        ? { next: "A running server keeps blocking until it is restarted: restart it." }
+        : { message: "The store file holds no guard record for that order." }),
+    });
+    if (!cleared) process.exitCode = 1;
+  } catch (error) {
+    logger("error", "operation_store_error", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    process.exitCode = 1;
+  }
 }
 
 function parseTransportValue(value: string | undefined): TransportName {
@@ -178,6 +248,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
+  if (args.clearLabelGuard !== undefined) {
+    await runClearLabelGuard(args.clearLabelGuard, logger);
+    return;
+  }
+
   let config: McpServerConfig;
   try {
     config = loadMcpConfigFromEnv();
@@ -187,6 +262,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     });
     process.exitCode = 1;
     return;
+  }
+
+  if (config.operationStoreFile !== undefined) {
+    // Fail at start, not at the first label: a corrupt ledger must never be replaced by an empty one.
+    try {
+      assertOperationStoreFileUsable(config.operationStoreFile);
+    } catch (error) {
+      logger("error", "operation_store_error", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      process.exitCode = 1;
+      return;
+    }
   }
 
   if (args.transport === "http") {

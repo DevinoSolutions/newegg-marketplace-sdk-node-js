@@ -40,6 +40,7 @@ export function buildCapabilities(
       allowLabelReprint: effectiveAllowLabelReprint(config),
       labelReprintCooldownSeconds: config.limits.labelReprintCooldownSeconds,
       maxLabelReprintsPerHour: config.limits.maxLabelReprintsPerHour,
+      labelCreateGuardHours: config.limits.labelCreateGuardHours,
       allowedWarehouses: config.limits.allowedWarehouses,
       allowedMarketplaces: config.limits.allowedMarketplaces,
     },
@@ -81,6 +82,7 @@ export function buildPublicConfiguration(
       allowLabelReprint: effectiveAllowLabelReprint(config),
       labelReprintCooldownSeconds: config.limits.labelReprintCooldownSeconds,
       maxLabelReprintsPerHour: config.limits.maxLabelReprintsPerHour,
+      labelCreateGuardHours: config.limits.labelCreateGuardHours,
     },
     batchLimits: {
       feedMaxRecords: INVENTORY_FEED_MAX_RECORDS,
