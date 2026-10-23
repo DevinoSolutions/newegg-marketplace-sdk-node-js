@@ -403,17 +403,91 @@ export function sanitizeRaw(value: unknown): unknown {
   return sanitize(value, new WeakSet(), 0);
 }
 
-/** Query / form parameters that carry a credential or an account id (`?sellerid=...`). */
-const SECRET_PARAMETER =
-  /(?<![\w.-])(sellerid|seller_id|secretkey|secret_key|apikey|api_key|authorization|access_token|token|password|passwd|secret)=[^&\s#"'<>]*/gi;
+/**
+ * Names (as words, joined by an optional `-` or `_`) of values that are credentials or account ids.
+ * One list drives the text pattern, the header / query-parameter / property-key test and, by
+ * copy, the MCP log redaction (`packages/mcp-server/src/tools/log-redact.ts`; a test asserts that
+ * both cover the same names).
+ */
+const CREDENTIAL_WORDS: readonly (readonly string[])[] = [
+  ["seller", "id"],
+  ["secret", "key"],
+  ["x", "secret", "key"],
+  ["api", "key"],
+  ["x", "api", "key"],
+  ["authorization"],
+  ["proxy", "authorization"],
+  ["x", "auth"],
+  ["x", "auth", "token"],
+  ["auth", "token"],
+  ["access", "token"],
+  ["refresh", "token"],
+  ["id", "token"],
+  ["client", "secret"],
+  ["x", "token"],
+  ["token"],
+  ["password"],
+  ["passwd"],
+  ["secret"],
+];
 
-/** Header names whose value is a credential. */
-const SENSITIVE_HEADER =
-  /^(?:authorization|proxy-authorization|secretkey|secret-key|x-api-key|api-key|apikey|x-auth-token|cookie|set-cookie)$/i;
+/** Credential names that only make sense as a header / property name, not in running text. */
+const STRUCTURAL_ONLY = ["cookie", "setcookie"];
 
-/** {@link redactUrlCredentials} plus the values of credential-bearing query parameters. */
+const CREDENTIAL_NAMES: ReadonlySet<string> = new Set([
+  ...CREDENTIAL_WORDS.map((words) => words.join("")),
+  ...STRUCTURAL_ONLY,
+]);
+
+/** Whether a header, query-parameter or property name holds a credential. */
+function isCredentialName(name: string): boolean {
+  return CREDENTIAL_NAMES.has(name.toLowerCase().replace(/[-_\s]/g, ""));
+}
+
+/**
+ * `name=value`, `name: value`, `"name":"value"` for a credential name, value up to the next
+ * delimiter. A `Bearer` / `Basic` / `Digest` scheme word is part of the value. Longest names first
+ * so `x-auth-token` wins over `x-auth`. No nested quantifiers: linear.
+ */
+const CREDENTIAL_TEXT = new RegExp(
+  String.raw`(?<![\w.-])(${[...CREDENTIAL_WORDS]
+    .sort((a, b) => b.join("").length - a.join("").length)
+    .map((words) => words.join("[-_]?"))
+    .join("|")})(["']?\s*[:=]\s*["']?)((?:(?:bearer|basic|digest)\s+)?[^&\s#"'<>,;]+)`,
+  "gi",
+);
+
+const PERCENT_ESCAPE = /%([0-9a-f]{2})/gi;
+
+/** Decodes the ASCII percent escapes (up to three layers), so `%73ellerid%3DX` becomes visible. */
+function decodePercent(text: string): string {
+  let current = text;
+  for (let round = 0; round < 3; round += 1) {
+    const next = current.replace(PERCENT_ESCAPE, (match, hex: string) => {
+      const code = Number.parseInt(hex, 16);
+      return code < 0x80 ? String.fromCharCode(code) : match;
+    });
+    if (next === current) break;
+    current = next;
+  }
+  return current;
+}
+
+const maskCredentialText = (text: string): string =>
+  text.replace(
+    CREDENTIAL_TEXT,
+    (_match, name: string, separator: string) => `${name}${separator}***`,
+  );
+
+/** {@link redactUrlCredentials} plus the values of credential-bearing parameters and header lines. */
 function redactCauseText(text: string): string {
-  return redactUrlCredentials(text).replace(SECRET_PARAMETER, "$1=***");
+  const base = redactUrlCredentials(text);
+  const direct = maskCredentialText(base);
+  if (!base.includes("%")) return direct;
+  const decoded = decodePercent(base);
+  if (decoded === base) return direct;
+  const fromDecoded = maskCredentialText(decoded);
+  return fromDecoded !== decoded ? fromDecoded : direct;
 }
 
 /** The entries of `headers` with every credential header masked and every other value redacted. */
@@ -424,7 +498,7 @@ function redactedHeaderEntries(headers: Headers): {
   let changed = false;
   const entries: Array<[string, string]> = [];
   for (const [name, item] of headers) {
-    const cleaned = SENSITIVE_HEADER.test(name) ? "***" : redactCauseText(item);
+    const cleaned = isCredentialName(name) ? "***" : redactCauseText(item);
     if (cleaned !== item) changed = true;
     entries.push([name, cleaned]);
   }
@@ -467,7 +541,13 @@ function changedOwnProperties(
     } else {
       continue;
     }
-    const cleaned = cleanCauseValue(current, path, walk);
+    const cleaned =
+      typeof current === "string" &&
+      current !== "" &&
+      typeof key === "string" &&
+      isCredentialName(key)
+        ? "***"
+        : cleanCauseValue(current, path, walk);
     if (cleaned !== current) {
       changed.set(key, {
         value: cleaned,
@@ -534,32 +614,44 @@ const COPIED_BUILTIN_PROTOTYPES: ReadonlySet<object> = new Set<object>([
   Error.prototype,
 ]);
 
+/** A private-state pattern outside the class body: `store.get(this)` on a module-level WeakMap. */
+const WEAKMAP_PRIVATE = /\.\s*(?:get|has)\s*\(\s*this\s*\)/;
+
 /**
  * Whether a same-prototype copy of an object of this kind could break: a prototype accessor,
  * `toJSON` or `[util.inspect.custom]` that is native code (internal slots) or reads a `#private`
- * field (its source text names one) throws on a copy made by `Object.create(prototype)`. Only
- * source text is read, so no getter or custom inspect of the object ever runs. It is conservative (a
- * `#` inside a string or comment also counts), and an object it rejects becomes a text summary. A
- * class whose plain methods alone touch `#private` state is still copied.
+ * field (its source text names one) throws on a copy made by `Object.create(prototype)`. A hook
+ * can reach such state through another method, so when the chain has a hook the source of its
+ * classes is scanned for `#` and WeakMap-style private state too. Only source text is read, so no
+ * getter or hook of the object ever runs. It is conservative (a `#` inside a string or comment also
+ * counts), and an object it rejects becomes a text summary. A class with no hook whose plain
+ * methods alone touch `#private` state is still copied.
  */
 function copyNeedsInternalState(value: object): boolean {
   try {
+    let hasHook = false;
+    const classSources: string[] = [];
     let proto = Object.getPrototypeOf(value) as object | null;
     while (proto !== null && proto !== Object.prototype && !COPIED_BUILTIN_PROTOTYPES.has(proto)) {
       for (const key of Reflect.ownKeys(proto)) {
         const descriptor = Object.getOwnPropertyDescriptor(proto, key);
         if (descriptor === undefined) continue;
-        const hooks = key === inspect.custom || key === "toJSON" ? [descriptor.value] : [];
+        const isHook = key === inspect.custom || key === "toJSON";
+        if (isHook && typeof descriptor.value === "function") hasHook = true;
+        const hooks = isHook ? [descriptor.value] : [];
         for (const fn of [descriptor.get, descriptor.set, ...hooks] as unknown[]) {
           if (typeof fn !== "function") continue;
           const source = Function.prototype.toString.call(fn);
           const native = source.includes("[native code]") && fn !== descriptor.value;
-          if (source.includes("#") || native) return true;
+          if (source.includes("#") || WEAKMAP_PRIVATE.test(source) || native) return true;
+        }
+        if (key === "constructor" && typeof descriptor.value === "function") {
+          classSources.push(Function.prototype.toString.call(descriptor.value));
         }
       }
       proto = Object.getPrototypeOf(proto) as object | null;
     }
-    return false;
+    return hasHook && classSources.some((src) => src.includes("#") || WEAKMAP_PRIVATE.test(src));
   } catch {
     return true;
   }
@@ -725,14 +817,10 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
       return cleaned === value.href ? value : cleaned;
     }
     if (value instanceof RegExp) {
-      const source = redactCauseText(value.source);
-      if (source !== value.source) {
-        try {
-          return new RegExp(source, value.flags);
-        } catch {
-          return "[Redacted RegExp]";
-        }
-      }
+      // A mask would not be a valid pattern, so a RegExp holding a secret becomes a marker string.
+      // Escapes are removed first, so `ftp03\.host` is read as a host name.
+      const unescaped = value.source.replace(/\\(.)/g, "$1");
+      if (redactCauseText(unescaped) !== unescaped) return "[Redacted RegExp]";
     }
     if (value instanceof Map) {
       let changed = false;
@@ -764,7 +852,7 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
       const pairs: Array<[string, string]> = [];
       for (const [name, item] of value) {
         const cleanedName = redactCauseText(name);
-        const cleaned = redactCauseText(item);
+        const cleaned = isCredentialName(name) && item !== "" ? "***" : redactCauseText(item);
         if (cleanedName !== name || cleaned !== item) changed = true;
         pairs.push([cleanedName, cleaned]);
       }
@@ -834,16 +922,31 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
  * (which print the whole cause chain) cannot leak them. A value with nothing to redact is returned
  * as-is (same identity); otherwise a same-prototype copy is returned and the original is never
  * mutated. Depth and node count are bounded, and a value that cannot be read becomes
- * `"[Unreadable]"` rather than throwing. Strings (and `Symbol` descriptions, `RegExp` sources) also
- * lose the value of a credential parameter (`sellerid=`, `token=`, ...), and `Headers` / `Request` /
- * `Response` mask `Authorization`, `SecretKey` and similar header values. Custom inspect hooks and
- * prototype getters of a caller's object are never run.
+ * `"[Unreadable]"` rather than throwing.
+ *
+ * Credentials: strings (and `Symbol` descriptions, `RegExp` sources) lose the value of a credential
+ * name (`sellerid=`, `token=`, `Authorization: Bearer ...`, `"SecretKey":"..."`, percent-encoded
+ * spellings included). `Headers`, `Request` and `Response` mask credential headers, a
+ * `URLSearchParams` entry or a string-valued own property whose NAME is a credential name is masked
+ * whatever its value looks like. Hooks: a caller's prototype getters and `[util.inspect.custom]` /
+ * `toJSON` are never run (only their source text is read); the exception is a `Response` /
+ * `Request` subclass with its own `inspect.custom`, which does run when the text summary is made.
+ * A redacted function is a wrapper: `new wrapper() instanceof Original` holds and
+ * `wrapper.prototype.constructor` is the wrapper, so the original's secrets are not reachable via
+ * inspect, logs, JSON or `wrapper.prototype.constructor`. They remain reachable programmatically
+ * through `Object.getPrototypeOf(wrapper.prototype).constructor`, because `instanceof` needs that
+ * link. Bound static methods report the name `bound x`.
  *
  * Out of contract (the SDK never attaches these to a cause, and each needs the object's own code to
- * cooperate): a secret held only in `toJSON()` output or returned by a custom `[util.inspect.custom]`,
- * a `Proxy` that hides its target, a `Promise` or `Map` iterator or `FormData` (contents live in
- * internal slots), string keys of Maps that are URLs beyond the entries handled above, own properties
- * on typed arrays / `Buffer` / `URL`, and a getter that throws under `util.inspect({ getters: true })`.
+ * cooperate): a secret held only in `toJSON()` output or returned by a custom
+ * `[util.inspect.custom]`, a `Proxy` that hides its target, a `Promise`, `Map` iterator or
+ * `FormData` (contents live in internal slots), string keys of Maps that are URLs, extra own
+ * properties on arrays, typed arrays, `Buffer` and `URL`, credentials in string or `Symbol`
+ * property KEYS, a boxed `Symbol`, and a getter that throws under `util.inspect({ getters: true })`.
+ * Own accessors are read once.
+ *
+ * Not covered here: `NeweggError`'s own top-level `message` and `details` do not apply the
+ * credential-name redaction (follow-up).
  */
 export function sanitizeCause(cause: unknown): unknown {
   return cleanCauseValue(cause, [], { nodes: 0 });
