@@ -5,8 +5,22 @@
  */
 import type { PriceChange } from "@devino/newegg-marketplace-sdk";
 
-/** The fat-finger guard: blocks a change larger than `maxPriceChangePercent` (either direction). */
+/**
+ * The fat-finger guard: blocks a change larger than `maxPriceChangePercent` (either direction).
+ * It fails closed: with no current price to compare against (Newegg reported none, or 0) the
+ * percentage is unknown, so the cap cannot be enforced and the change is blocked instead of passing
+ * unflagged (ADR 0005). A change already blocked (e.g. the price read failed) keeps its own reason.
+ */
 export function enforceChangeLimit(change: PriceChange, maxPriceChangePercent: number): void {
+  if (change.changePercent === undefined && change.status !== "blocked") {
+    change.blockers.push(
+      "The current selling price was not reported, so the change cannot be checked against the " +
+        "server limit (NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT). Set the price in the Seller Portal " +
+        "or retry once Newegg reports it.",
+    );
+    change.status = "blocked";
+    return;
+  }
   if (
     change.changePercent !== undefined &&
     Math.abs(change.changePercent) > maxPriceChangePercent

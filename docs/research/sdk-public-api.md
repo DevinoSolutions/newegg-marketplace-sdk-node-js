@@ -2571,12 +2571,16 @@ export class NeweggError extends Error {
   readonly retryable: boolean;
   readonly details?: unknown; // sanitized, JSON-safe
   // `cause` (standard Error.cause) is sanitized too: URL credentials are removed from the cause's message, stack,
-  // string properties and nested causes, so util.inspect / console.log of the error cannot print them. Functions
-  // (own properties), URLSearchParams (names and values) and Headers are rebuilt from redacted entries, own
-  // properties included (string-keyed only: a secret stored under a SYMBOL key on these four types is not redacted,
-  // low risk, documented). A Response or Request becomes a redacted util.inspect text only when redaction changes
-  // something (its text or an own property); otherwise the original is kept. The same text form replaces any object
-  // whose copy would not work (#private fields).
+  // string properties and nested causes, so util.inspect / console.log of the error cannot print them. The value of
+  // a credential name (sellerid, token, secret, password, api-key, Authorization incl. "Bearer ...", SecretKey, ...,
+  // also percent-encoded) is masked in strings, in URLSearchParams entries, in string-valued own properties with such
+  // a name, and in Headers / Request / Response headers. Functions (own properties), URLSearchParams (names and
+  // values) and Headers are rebuilt from redacted entries, own properties included (string-keyed only: a secret
+  // stored under a SYMBOL key on these four types is not redacted, low risk, documented). A Response or Request
+  // becomes a redacted util.inspect text only when redaction changes something (its text, a credential header or an
+  // own property); otherwise the original is kept. The same text form replaces any object whose copy would not work
+  // (#private fields). A caller's getters and inspect/toJSON hooks are never run. Out of contract: secrets that only
+  // a toJSON / custom inspect, a Proxy, a Promise or FormData reveal, and credentials in property keys.
 }
 // Replaces the user:password@ part of any URL in `text` with ***@ - percent-encoded, schemeless on a Newegg FTP
 // host, scheme-relative, backslash, triple-slash and JSON-escaped forms included. Linear time. Never throws.

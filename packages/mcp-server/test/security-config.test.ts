@@ -263,3 +263,29 @@ describe("strict numeric env limits (T-6216)", () => {
     });
   }
 });
+
+// T-6468: a rejected limit value is never echoed back in the error (it can be a mistyped secret
+// pasted into the wrong variable).
+describe("rejected numeric limits are not echoed (T-6468)", () => {
+  const cases: Array<[name: string, bad: string[]]> = [
+    ["NEWEGG_MCP_PREVIEW_TTL_SECONDS", ["1e9", "0x10", "86401", "9f2c4e6a", "0600"]],
+    ["NEWEGG_MCP_MAX_ITEMS_PER_OPERATION", ["1e9", "0x10", "10001", "9f2c4e6a", "0500"]],
+    ["NEWEGG_MCP_HTTP_PORT", ["0x50", "65536", "9f2c4e6a", "08080"]],
+    ["NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT", ["0x32", "1e2", "10001", "9f2c4e6a", "050"]],
+    ["NEWEGG_MCP_MAX_REFUND_AMOUNT", ["0x1F4", "1e3", "123456", "9f2c4e6a", "0500"]],
+    ["NEWEGG_MCP_MAX_LABEL_AMOUNT", ["0x64", "1e2", "123456", "9f2c4e6a", "0100"]],
+  ];
+  for (const [name, bad] of cases) {
+    it.each(bad)(`${name} rejects %s without echoing it`, (value) => {
+      let error: unknown;
+      try {
+        loadMcpConfigFromEnv(makeEnv({ [name]: value }));
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(McpConfigError);
+      expect((error as Error).message).toContain(name);
+      expect((error as Error).message).not.toContain(value);
+    });
+  }
+});

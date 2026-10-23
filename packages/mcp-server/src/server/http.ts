@@ -111,9 +111,15 @@ type BodyOutcome =
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly reason: "too_large" | "bad_json" };
 
-function firstHeader(req: IncomingMessage, name: string): string | undefined {
+/**
+ * The header as one string. Node already folds a repeated Origin, Sec-Fetch-Site or Mcp-Session-Id
+ * into one ", "-joined string (and keeps only the first Authorization / Host), so it should never
+ * hand an array here; if it ever does, the values are joined rather than reduced to the first, so
+ * a second value cannot hide from the guards (defence in depth).
+ */
+function headerValue(req: IncomingMessage, name: string): string | undefined {
   const value = req.headers[name];
-  return Array.isArray(value) ? value[0] : value;
+  return Array.isArray(value) ? value.join(", ") : value;
 }
 
 function jsonRpcError(id: string | number | null, code: number, message: string): unknown {
@@ -292,7 +298,7 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
   }
 
   async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const sessionId = firstHeader(req, "mcp-session-id");
+    const sessionId = headerValue(req, "mcp-session-id");
 
     if (req.method === "POST") {
       const body = await readBody(req);
@@ -411,7 +417,7 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // A malformed Host never reaches URL parsing, auth or the error log.
-    const hostHeader = firstHeader(req, "host");
+    const hostHeader = headerValue(req, "host");
     if (hostHeader !== undefined && !isWellFormedHostHeader(hostHeader)) {
       sendJson(res, 400, jsonRpcError(null, -32600, "Malformed Host header."));
       return;
@@ -424,8 +430,8 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
       sendJson(res, 400, jsonRpcError(null, -32600, "Malformed request target."));
       return;
     }
-    const origin = firstHeader(req, "origin");
-    const secFetchSite = firstHeader(req, "sec-fetch-site");
+    const origin = headerValue(req, "origin");
+    const secFetchSite = headerValue(req, "sec-fetch-site");
 
     if (req.method === "OPTIONS" || (pathname === "/healthz" && req.method === "GET")) {
       // Answered before the /mcp guards, so they get the Host and fetch-metadata checks here: a
@@ -482,7 +488,7 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
 
     if (httpConfig.bearerToken !== undefined) {
       const clientKey = req.socket.remoteAddress ?? "unknown";
-      const token = extractBearerToken(firstHeader(req, "authorization"));
+      const token = extractBearerToken(headerValue(req, "authorization"));
       if (token === undefined || !timingSafeEqualStrings(token, httpConfig.bearerToken)) {
         const status = await throttleFailure(clientKey);
         if (status === 429) {
