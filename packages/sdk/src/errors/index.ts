@@ -150,12 +150,24 @@ export interface NeweggValidationIssue {
   inputIndex?: number;
 }
 
+/** A copy of `issue` with the credential values of a string `path` and `message` redacted. */
+function redactIssue(issue: NeweggValidationIssue): NeweggValidationIssue {
+  if (typeof issue !== "object" || issue === null) return issue;
+  const copy = { ...issue };
+  if (typeof copy.path === "string") copy.path = redactCredentialText(copy.path);
+  if (typeof copy.message === "string") copy.message = redactCredentialText(copy.message);
+  return copy;
+}
+
 export class NeweggValidationError extends NeweggError {
+  /** Copies of the issues passed in, with credential values redacted from `path` and `message`. */
   readonly issues: NeweggValidationIssue[];
   constructor(message: string, issues: NeweggValidationIssue[], init: NeweggErrorInit = {}) {
     super("validation", message, init);
     this.name = "NeweggValidationError";
-    this.issues = issues;
+    // Malformed input (a missing path, a non-string message, a null item, a non-array) is kept as it
+    // is: a throw in an error constructor would hide the error being reported.
+    this.issues = Array.isArray(issues) ? issues.map(redactIssue) : issues;
   }
   override toJSON(): Record<string, unknown> {
     return { ...super.toJSON(), issues: this.issues };

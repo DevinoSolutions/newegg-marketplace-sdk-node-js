@@ -387,10 +387,15 @@ function isPlainObject(value: object): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-/** How {@link sanitize} cleans a value: its strings, and whether a credential-named key is masked. */
+/**
+ * How {@link sanitize} cleans a value: its strings, whether a credential-named key is masked, and
+ * whether an object that is not plain data (an `Error`, a `Map`, a class instance) is cleaned like
+ * a cause ({@link sanitizeCause}) instead of passing through.
+ */
 interface SanitizeMode {
   readonly text: (text: string) => string;
   readonly maskKeys: boolean;
+  readonly instances: boolean;
 }
 
 function sanitize(
@@ -402,8 +407,10 @@ function sanitize(
   if (typeof value === "string") return mode.text(value);
   if (typeof value !== "object" || value === null) return value;
   const isArray = Array.isArray(value);
-  // Dates, Maps, class instances etc. are not JSON data: pass them through untouched.
-  if (!isArray && !isPlainObject(value)) return value;
+  // Dates, Maps, class instances etc. are not JSON data: raw payloads pass them through untouched.
+  if (!isArray && !isPlainObject(value)) {
+    return mode.instances ? cleanCauseValue(value, [], { nodes: 0 }) : value;
+  }
   if (seen.has(value) || depth >= MAX_DEPTH) return "[Circular]";
   seen.add(value);
   try {
@@ -411,7 +418,7 @@ function sanitize(
     const out: Record<string, unknown> = {};
     for (const [key, inner] of Object.entries(value)) {
       out[key] =
-        mode.maskKeys && typeof inner === "string" && inner !== "" && isCredentialName(key)
+        mode.maskKeys && isSecretUnderKey(key, inner)
           ? "***"
           : sanitize(inner, seen, depth + 1, mode);
     }
@@ -428,16 +435,26 @@ function sanitize(
  * over-deep nesting are cut off with `"[Circular]"` instead of throwing.
  */
 export function sanitizeRaw(value: unknown): unknown {
-  return sanitize(value, new WeakSet(), 0, { text: redactUrlCredentials, maskKeys: false });
+  return sanitize(value, new WeakSet(), 0, {
+    text: redactUrlCredentials,
+    maskKeys: false,
+    instances: false,
+  });
 }
 
 /**
  * {@link sanitizeRaw} plus the credential-name redaction of {@link redactCredentialText}, and a
- * string value kept under a credential name (`SecretKey`, `token`, ...) is masked. Used for
- * `NeweggError.details`.
+ * string, number or bigint value kept under a credential name (`SecretKey`, `token`, ...) is masked.
+ * Unlike {@link sanitizeRaw}, an `Error`, a `Map` or any other class instance inside the value is
+ * cleaned like a cause ({@link sanitizeCause}: message, stack, nested `cause`, entries, own
+ * properties) rather than passed through. Used for `NeweggError.details`.
  */
 export function sanitizeDetails(value: unknown): unknown {
-  return sanitize(value, new WeakSet(), 0, { text: redactCredentialText, maskKeys: true });
+  return sanitize(value, new WeakSet(), 0, {
+    text: redactCredentialText,
+    maskKeys: true,
+    instances: true,
+  });
 }
 
 /**
@@ -476,6 +493,19 @@ const CREDENTIAL_NAMES: ReadonlySet<string> = new Set([
   ...STRUCTURAL_ONLY,
 ]);
 
+/**
+ * Whether `value`, kept under the property or entry name `key`, is a secret to mask because of the
+ * name alone: a non-empty string, a number or a bigint under a credential name.
+ */
+function isSecretUnderKey(key: unknown, value: unknown): boolean {
+  if (typeof key !== "string" || !isCredentialName(key)) return false;
+  return (
+    (typeof value === "string" && value !== "") ||
+    typeof value === "number" ||
+    typeof value === "bigint"
+  );
+}
+
 /** Whether a header, query-parameter or property name holds a credential. */
 function isCredentialName(name: string): boolean {
   return CREDENTIAL_NAMES.has(name.toLowerCase().replace(/[-_\s]/g, ""));
@@ -507,25 +537,37 @@ const GENERIC_PATTERN = namePattern(CREDENTIAL_WORDS.filter((words) => !isHeader
 const ANY_NAME_PATTERN = namePattern(CREDENTIAL_WORDS);
 
 /**
+ * A quoted value: `"..."`, `'...'` or a backtick (`\x60`) string in which a backslash escapes the
+ * character after it, so `"a\"b"` is one value. It ends at its closing quote or, when there is none,
+ * at the end of the line. Only the quote that opened it closes it.
+ */
+const QUOTED_VALUE = String.raw`"(?:[^"\\\r\n]|\\.)*"?|'(?:[^'\\\r\n]|\\.)*'?|\x60(?:[^\x60\\\r\n]|\\.)*\x60?`;
+
+/** An unquoted value: up to the next delimiter, a backslash escaping the character after it. */
+const UNQUOTED_VALUE = String.raw`(?:(?:bearer|basic|digest)\s+)?(?:[^&\s#"'\x60<>,;\\]|\\.?)+`;
+
+/**
  * `name=value`, `"name":"value"` and `{ name: 'value' }` for any credential name, and `name: value`
- * for a header-like one; the value runs up to the next delimiter. A `Bearer` / `Basic` / `Digest`
- * scheme word is part of the value. No nested quantifiers: linear. Groups 1 and 2 are a header-like
- * name and its separator, 3 and 4 a generic name and its separator. A value may be quoted with
- * `'`, `"` or a backtick (`\x60`).
+ * for a header-like one; a value is {@link QUOTED_VALUE} or {@link UNQUOTED_VALUE}. A `Bearer` /
+ * `Basic` / `Digest` scheme word is part of an unquoted value. Every quantifier is over a character
+ * class or an escape pair and nothing follows the value, so the scan is linear. Groups 1 to 3 are a
+ * header-like name, its separator and its value; 4 is a generic name, then 5 and 6 a `=` (or
+ * quoted-name colon) separator and value, 7 and 8 a bare colon and a value that must be quoted.
  */
 const CREDENTIAL_TEXT = new RegExp(
-  String.raw`(?<![\w.-])(?:(${HEADER_LIKE_PATTERN})(["']?\s*[:=]\s*["'\x60]?)|(${GENERIC_PATTERN})(["']?\s*=\s*["'\x60]?|["']\s*:\s*["'\x60]?|\s*:\s*["'\x60]))((?:(?:bearer|basic|digest)\s+)?[^&\s#"'\x60<>,;]+)`,
+  String.raw`(?<![\w.-])(?:(${HEADER_LIKE_PATTERN})(["']?\s*[:=]\s*)(${QUOTED_VALUE}|${UNQUOTED_VALUE})|(${GENERIC_PATTERN})(?:(["']?\s*=\s*|["']\s*:\s*)(${QUOTED_VALUE}|${UNQUOTED_VALUE})|(\s*:\s*)(${QUOTED_VALUE})))`,
   "gi",
 );
 
 /**
  * An object-literal entry (`util.inspect` output, JSON): after `{` or `,` a credential key whose
- * value is a number, `true`, `false`, `null` or `undefined` (the quoted forms are in
- * {@link CREDENTIAL_TEXT}). Prose has no `{` / `,` in front of the name and carries no such value.
- * The prefix is consumed rather than looked behind, so the scan stays linear.
+ * value is a number, `true`, `false`, `null` or `undefined` and is followed by `,`, `}`, `]` or the
+ * end of the text (the quoted forms are in {@link CREDENTIAL_TEXT}). Prose such as `Failed, token: 3
+ * attempts left` has no such ending and is left alone; `{ a: 1, password: 12345 }` is masked. The
+ * prefix is consumed rather than looked behind, so the scan stays linear.
  */
 const OBJECT_LITERAL_TEXT = new RegExp(
-  String.raw`([{,]\s*["']?)(${ANY_NAME_PATTERN})(["']?\s*:\s*)(-?\d[^\s,;&#"'\x60<>}\])]*|true|false|null|undefined)(?![\w.-])`,
+  String.raw`([{,]\s*["']?)(${ANY_NAME_PATTERN})(["']?\s*:\s*)(-?\d[^\s,;&#"'\x60<>}\])]*|true|false|null|undefined)(?=\s*(?:[,}\]]|$))`,
   "gi",
 );
 
@@ -562,9 +604,9 @@ function decodePercent(text: string): string {
   return current;
 }
 
-/** Masks a cookie value, keeping its quotes (`"cookie":"a=b"` -> `"cookie":"***"`). */
-function maskCookieValue(value: string): string {
-  const quote = value.startsWith('"') || value.startsWith("'") ? value.charAt(0) : "";
+/** Masks a value, keeping its quotes (`"cookie":"a=b"` -> `"cookie":"***"`). */
+function maskValue(value: string): string {
+  const quote = /^["'`]/.test(value) ? value.charAt(0) : "";
   return quote !== "" && value.length > 1 && value.endsWith(quote)
     ? `${quote}***${quote}`
     : `${quote}***`;
@@ -581,7 +623,7 @@ const maskCredentialText = (text: string): string =>
         colonValue: string | undefined,
         equals: string | undefined,
         equalsValue: string | undefined,
-      ) => `${name}${colon ?? equals ?? ""}${maskCookieValue(colonValue ?? equalsValue ?? "")}`,
+      ) => `${name}${colon ?? equals ?? ""}${maskValue(colonValue ?? equalsValue ?? "")}`,
     )
     .replace(
       CREDENTIAL_TEXT,
@@ -589,9 +631,14 @@ const maskCredentialText = (text: string): string =>
         _match,
         headerName: string | undefined,
         headerSeparator: string | undefined,
+        headerValue: string | undefined,
         name: string | undefined,
-        separator: string | undefined,
-      ) => `${headerName ?? name ?? ""}${headerSeparator ?? separator ?? ""}***`,
+        equalsSeparator: string | undefined,
+        equalsValue: string | undefined,
+        colonSeparator: string | undefined,
+        colonValue: string | undefined,
+      ) =>
+        `${headerName ?? name ?? ""}${headerSeparator ?? equalsSeparator ?? colonSeparator ?? ""}${maskValue(headerValue ?? equalsValue ?? colonValue ?? "")}`,
     )
     .replace(
       OBJECT_LITERAL_TEXT,
@@ -666,13 +713,7 @@ function changedOwnProperties(
     } else {
       continue;
     }
-    const cleaned =
-      typeof current === "string" &&
-      current !== "" &&
-      typeof key === "string" &&
-      isCredentialName(key)
-        ? "***"
-        : cleanCauseValue(current, path, walk);
+    const cleaned = isSecretUnderKey(key, current) ? "***" : cleanCauseValue(current, path, walk);
     if (cleaned !== current) {
       changed.set(key, {
         value: cleaned,
@@ -951,7 +992,7 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
       const entries: Array<[unknown, unknown]> = [];
       for (const [key, item] of value as Map<unknown, unknown>) {
         const cleanedKey = cleanCauseValue(key, next, walk);
-        const cleanedItem = cleanCauseValue(item, next, walk);
+        const cleanedItem = isSecretUnderKey(key, item) ? "***" : cleanCauseValue(item, next, walk);
         if (cleanedKey !== key || cleanedItem !== item) changed = true;
         entries.push([cleanedKey, cleanedItem]);
       }
@@ -1051,8 +1092,8 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
  * Credentials: strings (and `Symbol` descriptions, `RegExp` sources) lose the value of a credential
  * name (`sellerid=`, `token=`, `Authorization: Bearer ...`, `"SecretKey":"..."`, percent-encoded
  * spellings included). `Headers`, `Request` and `Response` mask credential headers, a
- * `URLSearchParams` entry or a string-valued own property whose NAME is a credential name is masked
- * whatever its value looks like. Hooks: a caller's prototype getters and `[util.inspect.custom]` /
+ * `URLSearchParams` entry, a `Map` entry or a string-, number- or bigint-valued own property whose
+ * NAME is a credential name is masked whatever its value looks like (a number becomes `"***"`). Hooks: a caller's prototype getters and `[util.inspect.custom]` /
  * `toJSON` are never run (only their source text is read); the exception is a `Response` /
  * `Request` subclass with its own `inspect.custom`, which does run when the text summary is made.
  * A redacted function is a wrapper: `new wrapper() instanceof Original` holds and
