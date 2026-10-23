@@ -41,9 +41,16 @@ function redactQueryStrings(text: string): string {
   return out + text.slice(copied);
 }
 
-/** Removes URL credentials and URL query strings from `text`. Never throws. */
+/**
+ * Credential-bearing parameters wherever they appear, with or without a `scheme://` in front:
+ * `GET /x?sellerid=... HTTP/1.1`, or a URL with a space before its `?`.
+ */
+const SECRET_PARAMETER =
+  /(?<![\w.-])(sellerid|seller_id|secretkey|secret_key|apikey|api_key|authorization|access_token|token|password|passwd|secret)=[^&\s#"'<>]*/gi;
+
+/** Removes URL credentials, URL query strings and credential parameters from `text`. Never throws. */
 export function redactLogText(text: string): string {
-  return redactQueryStrings(redactUrlCredentials(text));
+  return redactQueryStrings(redactUrlCredentials(text)).replace(SECRET_PARAMETER, "$1=[redacted]");
 }
 
 const MAX_DEPTH = 6;
