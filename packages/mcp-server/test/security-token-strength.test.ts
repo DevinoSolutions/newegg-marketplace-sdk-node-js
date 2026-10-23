@@ -64,7 +64,7 @@ describe("generated secrets are never refused (T-6215)", () => {
     ["base64url of 32 bytes", (index) => sample(index, 32).toString("base64url")],
   ];
 
-  it.each(formats)("accepts %s output", (_label, make) => {
+  it.each(formats)("accepts %s output", { timeout: 20_000 }, (_label, make) => {
     const rejected: number[] = [];
     for (let index = 0; index < SAMPLES; index += 1) {
       if (weakBearerTokenReason(make(index)) !== undefined) rejected.push(index);
@@ -85,5 +85,26 @@ const MISSED_PATTERNS: Array<[label: string, token: string]> = [
 describe("interleaved and step-2 patterns are refused (T-6468)", () => {
   it.each(MISSED_PATTERNS)("%s", (_label, token) => {
     expect(weakBearerTokenReason(token)).toMatch(/too predictable/);
+  });
+});
+
+// T-6468: the lane passes made the estimator several times slower once (the CI "generated secrets"
+// cases timed out at 5 s). Bounds are generous (about 10x the cost on a developer machine) so only
+// a real regression, not a slow runner, trips them.
+describe("estimator speed (T-6468)", () => {
+  it("prices 20,000 generated 32-character tokens within the budget", () => {
+    const tokens = Array.from({ length: 20_000 }, (_unused, index) =>
+      sample(index, 16).toString("hex"),
+    );
+    const started = Date.now();
+    for (const token of tokens) weakBearerTokenReason(token);
+    expect(Date.now() - started).toBeLessThan(4_000);
+  });
+
+  it("prices a 50,000-character random token in linear-ish time", () => {
+    const token = sample(1, 25_000).toString("hex");
+    const started = Date.now();
+    expect(weakBearerTokenReason(token)).toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 });

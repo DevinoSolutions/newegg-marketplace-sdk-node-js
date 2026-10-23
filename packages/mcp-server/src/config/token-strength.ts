@@ -14,7 +14,7 @@
  * all of their bits (a 32-character hex token estimates at ~128, a 64-character one at ~256) while the
  * patterned examples above fall far under {@link MIN_ENTROPY_BITS}. No heuristic can recognise a
  * non-repeating dictionary phrase, and patterns built from short chunks of different kinds
- * (`abcd1234efgh5678...`, a keyboard column) can still pass; generate secrets instead of choosing
+ * (`abcd1234efgh5678...`) can still pass; generate secrets instead of choosing
  * them.
  *
  * Reasons never contain the secret.
@@ -36,17 +36,53 @@ const KEYBOARD_ROWS = ["qwertyuiop", "asdfghjkl", "zxcvbnm", "1234567890"].flatM
   [...row].reverse().join(""),
 ]);
 
-/** Length of the longest stretch at `index` that repeats text starting earlier (overlap allowed). */
-function repeatLength(token: string, index: number): number {
-  let best = 0;
-  for (let from = 0; from < index; from += 1) {
-    let length = 0;
-    while (index + length < token.length && token[from + length] === token[index + length]) {
-      length += 1;
-    }
-    best = Math.max(best, length);
+/**
+ * Earlier start positions of every 4-character window, filled in as the parse advances, so a repeat
+ * is looked up instead of scanning the whole token for each position (a repeat shorter than
+ * {@link MIN_PIECE_LENGTH} never counts as a piece, so only 4-grams need indexing).
+ */
+class RepeatIndex {
+  readonly #starts = new Map<number, number[]>();
+  #indexed = 0;
+
+  readonly #token: string;
+
+  constructor(token: string) {
+    this.#token = token;
   }
-  return best;
+
+  /** A 32-bit hash of the 4-gram at `at`; a collision only adds a candidate, which the comparison below rejects. */
+  #gramKey(at: number): number {
+    const token = this.#token;
+    let key = 0;
+    for (let offset = 0; offset < MIN_PIECE_LENGTH; offset += 1) {
+      key = (Math.imul(key, 65599) + token.charCodeAt(at + offset)) | 0;
+    }
+    return key;
+  }
+
+  /** Length of the longest stretch at `index` that repeats text starting earlier (overlap allowed), 0 if under 4. */
+  repeatLength(index: number): number {
+    const token = this.#token;
+    for (; this.#indexed < index; this.#indexed += 1) {
+      if (this.#indexed + MIN_PIECE_LENGTH > token.length) break;
+      const gram = this.#gramKey(this.#indexed);
+      const list = this.#starts.get(gram);
+      if (list === undefined) this.#starts.set(gram, [this.#indexed]);
+      else list.push(this.#indexed);
+    }
+    const candidates =
+      index + MIN_PIECE_LENGTH > token.length ? undefined : this.#starts.get(this.#gramKey(index));
+    let best = 0;
+    for (const from of candidates ?? []) {
+      let length = 0;
+      while (index + length < token.length && token[from + length] === token[index + length]) {
+        length += 1;
+      }
+      best = Math.max(best, length);
+    }
+    return best;
+  }
 }
 
 /** Length of the stretch at `index` whose character codes move by a constant +-1 or +-2. */
@@ -64,8 +100,20 @@ function sequenceLength(lower: string, index: number): number {
   return length;
 }
 
+/** `ADJACENT_PAIRS[a * 128 + b]` is 1 when `a` is followed by `b` somewhere in a keyboard row. */
+const ADJACENT_PAIRS = new Uint8Array(128 * 128);
+for (const row of KEYBOARD_ROWS) {
+  for (let at = 0; at + 1 < row.length; at += 1) {
+    ADJACENT_PAIRS[row.charCodeAt(at) * 128 + row.charCodeAt(at + 1)] = 1;
+  }
+}
+
 /** Length of the longest stretch at `index` that is a substring of a keyboard row. */
 function keyboardLength(lower: string, index: number): number {
+  // A stretch of 4+ needs its first two characters adjacent in a row; reject the rest cheaply.
+  const first = lower.charCodeAt(index);
+  const second = lower.charCodeAt(index + 1);
+  if (!(first < 128 && second < 128) || ADJACENT_PAIRS[first * 128 + second] !== 1) return 0;
   let best = 0;
   for (const row of KEYBOARD_ROWS) {
     for (
@@ -90,11 +138,12 @@ function keyboardLength(lower: string, index: number): number {
 /** Bits for `token` read as one stream, with `literalBits` for every character outside a piece. */
 function streamBits(token: string, literalBits: number): number {
   const lower = token.toLowerCase();
+  const repeats = new RepeatIndex(token);
   let bits = 0;
   let index = 0;
   while (index < token.length) {
     const piece = Math.max(
-      repeatLength(token, index),
+      repeats.repeatLength(index),
       sequenceLength(lower, index),
       keyboardLength(lower, index),
     );
@@ -118,13 +167,19 @@ function estimateEntropyBits(token: string): number {
   // happens to use few characters cannot look cheaper than it is.
   const literalBits = Math.log2(Math.max(2, new Set(token).size));
   let best = streamBits(token, literalBits);
+  // Already refused: the lane readings can only lower the estimate, so skip them.
+  if (best < MIN_ENTROPY_BITS) return best;
   for (let lanes = 2; lanes <= MAX_LANES; lanes += 1) {
     let total = 0;
     for (let lane = 0; lane < lanes; lane += 1) {
-      const chars = [...token].filter((_char, position) => position % lanes === lane);
-      total += streamBits(chars.join(""), literalBits);
+      let chars = "";
+      for (let position = lane; position < token.length; position += lanes) {
+        chars += token[position];
+      }
+      total += streamBits(chars, literalBits);
     }
     best = Math.min(best, total);
+    if (best < MIN_ENTROPY_BITS) return best;
   }
   return best;
 }

@@ -278,7 +278,8 @@ Low and informational findings from the security audit, closed together. Each is
   `newegg-marketplace-mcp --generate-token` (prints one fresh random token to stdout and exits; needs no configuration)
   or `openssl rand -hex 32`. T-6468 widened the estimate to runs that step by two character codes (`acegik`) and to
   2-4 interleaved runs (`a1b2c3`). No heuristic can recognise a non-repeating dictionary phrase, and patterns built from
-  short chunks of different kinds (`abcd1234efgh5678...`, a keyboard column) can still pass, so generate the secret
+  short chunks of different kinds (`abcd1234efgh5678...`) or a step-2 interleave (`a1c3e5g7i9...`) can still pass (known gaps; a
+  full keyboard column such as `1qaz2wsx3edc...` is caught), so generate the secret
   rather than choosing it (`--generate-token`). Failed bearer attempts are delayed per client
   address (250 ms doubling to 5 s) and answered 429 once eight delayed failures are in flight. A good token
   lowers the address's failure count by one step, at most once a second, instead of clearing it, so a

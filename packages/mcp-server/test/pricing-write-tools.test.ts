@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MockRoute } from "@devino/newegg-marketplace-sdk/testing";
 import { loadMcpConfigFromEnv } from "../src/index.js";
+import { hashPricePreview, previewKeyFor } from "../src/tools/preview-hash.js";
 import { callTool, makeEnv, SENTINELS, startHarness } from "./helpers.js";
 
 const writesEnv = (overrides: Record<string, string | undefined> = {}) =>
@@ -552,6 +553,43 @@ describe("price write tools - unreadable current price (T-6468)", () => {
       });
       expect(applied.isError).toBe(true);
       expect(applied.json.errorCode).toBe("preview_stale");
+      expect(harness.calls.some((c) => c.method === "PUT")).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("refuses an apply whose stored preview recorded no current price, with nothing sent", async () => {
+    const hmacKey = "7c1f4a9e2b6d83051fe7a2c94b0d6e38a5c1f7d204b9e6a38c0d5f2b17e4a9c6";
+    const env = writesEnv({ NEWEGG_MCP_PREVIEW_HMAC_KEY: hmacKey });
+    const harness = await startHarness({ env, routes: nullPriceBook(1) });
+    try {
+      const preview = await callTool(harness.mcp, PREVIEW, { updates: [update("SKU-1", 18)] });
+      const previewId = preview.json.previewId as string;
+      // The shape an older or persistent store can hold: the preview saw no price (null), and the
+      // live read at apply sees none either, so only the missing-price guard can stop the write.
+      const stored = (await harness.previewStore.get(previewId)) as unknown as {
+        -readonly [K in "previewedCurrentPrices" | "hash"]: unknown;
+      } & { normalizedUpdates: Parameters<typeof hashPricePreview>[2]; marketplace: string } & {
+        sessionId: string | undefined;
+        expiresAt: Date;
+      };
+      stored.previewedCurrentPrices = [null];
+      stored.hash = hashPricePreview(
+        {
+          key: previewKeyFor(loadMcpConfigFromEnv(env)),
+          previewId,
+          sessionId: stored.sessionId,
+          expiresAt: stored.expiresAt,
+        },
+        stored.marketplace,
+        stored.normalizedUpdates,
+        [null],
+      );
+      const applied = await callTool(harness.mcp, APPLY, { previewId });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(JSON.stringify(applied.json)).toContain("NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT");
       expect(harness.calls.some((c) => c.method === "PUT")).toBe(false);
     } finally {
       await harness.close();
