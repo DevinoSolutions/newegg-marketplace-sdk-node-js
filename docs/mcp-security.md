@@ -276,8 +276,11 @@ Low and informational findings from the security audit, closed together. Each is
   cheap piece, and refuses to start under 80 bits, so `"abcdefghijkl".repeat(3)` and keyboard rows are refused while
   `openssl rand -hex 32` / `-base64 32` output is not). The supported way to make one is
   `newegg-marketplace-mcp --generate-token` (prints one fresh random token to stdout and exits; needs no configuration)
-  or `openssl rand -hex 32`. No heuristic can recognise a non-repeating dictionary phrase, so generate the secret
-  rather than choosing it. Failed bearer attempts are delayed per client
+  or `openssl rand -hex 32`. T-6468 widened the estimate to runs that step by two character codes (`acegik`) and to
+  2-4 interleaved runs (`a1b2c3`). No heuristic can recognise a non-repeating dictionary phrase, and patterns built from
+  short chunks of different kinds (`abcd1234efgh5678...`) or a step-2 interleave (`a1c3e5g7i9...`) can still pass (known gaps; a
+  full keyboard column such as `1qaz2wsx3edc...` is caught), so generate the secret
+  rather than choosing it (`--generate-token`). Failed bearer attempts are delayed per client
   address (250 ms doubling to 5 s) and answered 429 once eight delayed failures are in flight. A good token
   lowers the address's failure count by one step, at most once a second, instead of clearing it, so a
   legitimate client behind a shared address (a proxy) cannot erase another client's guessing run. The listener speaks plain HTTP: a
@@ -312,8 +315,29 @@ Low and informational findings from the security audit, closed together. Each is
   processes MUST set the same `NEWEGG_MCP_PREVIEW_HMAC_KEY` on every instance**; otherwise each process refuses the
   other's previews with `preview_tampered` (fail closed, no write is sent). Rotating the key invalidates previews in
   flight (they expire within the TTL anyway). The in-memory store is not shared, so a stdio or single-process HTTP
-  deployment needs no key. The key authenticates records against store writers only: it does not stop someone who also
+  deployment needs no key. A hand-built config is held to the same strength rule: `createNeweggMcpServer` throws a
+  `McpConfigError` (naming `previewIntegrity.hmacKey` and the rule, never the key) when `config.previewIntegrity.hmacKey`
+  is shorter than 32 characters or too predictable, exactly as the env loader does. **Upgrade note (T-6215, MAC format
+  version 2):** the canonical MAC input changed, so a preview sealed by an earlier build and still sitting in a
+  _persistent_ store with a fixed `NEWEGG_MCP_PREVIEW_HMAC_KEY` is refused with `preview_tampered` after the upgrade
+  (fail closed, nothing is sent). Drain or let such previews expire (they live at most `NEWEGG_MCP_PREVIEW_TTL_SECONDS`,
+  default 600) before rolling the new build, or just create new previews. Deployments with the per-process random key
+  or the in-memory store are not affected, since their previews never outlive the process. The key authenticates records against store writers only: it does not stop someone who also
   holds the key (or the server process) from sealing a forged record, so protect it like the credentials.
+- **Copies and debug views of the config (T-6468).** The redaction lives on the objects `loadMcpConfigFromEnv`
+  returns (`toJSON`, non-enumerable helpers, `util.inspect` hooks). `{ ...config.http }` is plain data: it holds the raw
+  bearer token, because hiding it from spreads would silently drop the token from an embedder's copy and turn its HTTP
+  auth off. Treat any copy as a secret holder and never log it. `util.inspect(config, { getters: true })` calls the
+  secret accessors on purpose and prints the values; do not pass `getters`. A config built by hand is plain data and has
+  no redaction at all.
+- **Duplicate `Origin` / `Sec-Fetch-Site` headers fail closed (T-6468).** A repeated header is joined, never reduced
+  to its first value, so `Origin: allowed, evil` and `Sec-Fetch-Site: same-origin, cross-site` match no allowlist and
+  get `403` (`/mcp`, `/healthz` and preflights alike); tests pin both orders.
+- **Price changes with no current price are blocked (T-6468).** The `NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT` cap needs
+  the live price. When Newegg reports none (or 0) at preview, the update is `blocked` (no `previewId`); at apply the
+  same rule re-runs against the fresh read and the apply is refused with `preview_stale`. The read-to-write window
+  remains: the live prices are read just before the write, but a change made in the Seller Portal between that read
+  and the write is not detectable, and the post-write read-back (`verified` / `unverified`) is the final check.
 - **Previews are bound to the MCP session (T-5675).** A preview records the session that created it; another
   HTTP session cannot apply (or burn) it and gets `preview_not_found`. stdio has one implicit session. A
   custom `PreviewStore` should honour the optional `PreviewScope` argument of `get` / `consume`; the tool
