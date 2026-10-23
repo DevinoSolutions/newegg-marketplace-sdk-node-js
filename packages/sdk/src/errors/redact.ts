@@ -482,21 +482,18 @@ function isCredentialName(name: string): boolean {
 }
 
 /**
- * Names that are HTTP headers (`Authorization`, `SecretKey`, `X-Api-Key`, any `x-*`): only these
- * are masked after a bare `name: value`. For the generic words (`token`, `password`, `secret`, ...)
- * a colon is ordinary prose (`Unexpected token: } in JSON`, `password: must be at least 8
- * characters`), so they need `=`, a quoted name (`"token": "..."`) or a quoted value
- * (`{ token: '...' }`).
+ * Which credential names are masked after a bare `name: value` (a colon and nothing else). A
+ * multi-word name (`SellerID`, `SecretKey`, `Access-Token`, `client_secret`, `X-Api-Key`, ...) and
+ * `Authorization` are header-like, so `SellerID: A006 is not authorized` and
+ * `Refresh-Token: ...` are masked. A single generic word (`token`, `password`, `passwd`,
+ * `secret`) is ordinary prose after a colon (`Unexpected token: } in JSON`, `password: must be at
+ * least 8 characters`), so it needs `=`, a quoted name (`"token": "..."`), a quoted value
+ * (`{ token: '...' }`) or an object-literal key position (below). A header-style line such as
+ * `Password: hunter2` cannot be told from `Password: must be at least 8 characters` and is NOT
+ * masked: a documented limit.
  */
-const HEADER_LIKE_NAMES: ReadonlySet<string> = new Set([
-  "authorization",
-  "proxyauthorization",
-  "secretkey",
-  "apikey",
-]);
-
 const isHeaderLike = (words: readonly string[]): boolean =>
-  words[0] === "x" || HEADER_LIKE_NAMES.has(words.join(""));
+  words.length > 1 || words[0] === "authorization";
 
 /** The alternation of `list` as name patterns, longest first so `x-auth-token` wins over `x-auth`. */
 const namePattern = (list: readonly (readonly string[])[]): string =>
@@ -507,24 +504,38 @@ const namePattern = (list: readonly (readonly string[])[]): string =>
 
 const HEADER_LIKE_PATTERN = namePattern(CREDENTIAL_WORDS.filter(isHeaderLike));
 const GENERIC_PATTERN = namePattern(CREDENTIAL_WORDS.filter((words) => !isHeaderLike(words)));
+const ANY_NAME_PATTERN = namePattern(CREDENTIAL_WORDS);
 
 /**
  * `name=value`, `"name":"value"` and `{ name: 'value' }` for any credential name, and `name: value`
  * for a header-like one; the value runs up to the next delimiter. A `Bearer` / `Basic` / `Digest`
  * scheme word is part of the value. No nested quantifiers: linear. Groups 1 and 2 are a header-like
- * name and its separator, 3 and 4 a generic name and its separator.
+ * name and its separator, 3 and 4 a generic name and its separator. A value may be quoted with
+ * `'`, `"` or a backtick (`\x60`).
  */
 const CREDENTIAL_TEXT = new RegExp(
-  String.raw`(?<![\w.-])(?:(${HEADER_LIKE_PATTERN})(["']?\s*[:=]\s*["']?)|(${GENERIC_PATTERN})(["']?\s*=\s*["']?|["']\s*:\s*["']?|\s*:\s*["']))((?:(?:bearer|basic|digest)\s+)?[^&\s#"'<>,;]+)`,
+  String.raw`(?<![\w.-])(?:(${HEADER_LIKE_PATTERN})(["']?\s*[:=]\s*["'\x60]?)|(${GENERIC_PATTERN})(["']?\s*=\s*["'\x60]?|["']\s*:\s*["'\x60]?|\s*:\s*["'\x60]))((?:(?:bearer|basic|digest)\s+)?[^&\s#"'\x60<>,;]+)`,
+  "gi",
+);
+
+/**
+ * An object-literal entry (`util.inspect` output, JSON): after `{` or `,` a credential key whose
+ * value is a number, `true`, `false`, `null` or `undefined` (the quoted forms are in
+ * {@link CREDENTIAL_TEXT}). Prose has no `{` / `,` in front of the name and carries no such value.
+ * The prefix is consumed rather than looked behind, so the scan stays linear.
+ */
+const OBJECT_LITERAL_TEXT = new RegExp(
+  String.raw`([{,]\s*["']?)(${ANY_NAME_PATTERN})(["']?\s*:\s*)(-?\d[^\s,;&#"'\x60<>}\])]*|true|false|null|undefined)(?![\w.-])`,
   "gi",
 );
 
 /**
  * A `Cookie` / `Set-Cookie` line. After a colon the value runs to the end of the line (a cookie holds
- * `;` and spaces), after `=` to the next delimiter; a quoted value ends at its closing quote.
+ * `;` and spaces), after `=` to the next delimiter; a quoted value ends at its closing quote, and a
+ * backslash escapes the character after it (`"a=1; b=\"2\""`).
  */
 const COOKIE_TEXT =
-  /(?<![\w.-])(set[-_]?cookie|cookie)(?:(["']?\s*:\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]*)|(["']?\s*=\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^&\s#"'<>]+))/gi;
+  /(?<![\w.-])(set[-_]?cookie|cookie)(?:(["']?\s*:\s*)("(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'|[^\r\n]*)|(["']?\s*=\s*)("(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'|[^&\s#"'<>]+))/gi;
 
 const PERCENT_ESCAPE = /%([0-9a-f]{2})/gi;
 
@@ -581,6 +592,11 @@ const maskCredentialText = (text: string): string =>
         name: string | undefined,
         separator: string | undefined,
       ) => `${headerName ?? name ?? ""}${headerSeparator ?? separator ?? ""}***`,
+    )
+    .replace(
+      OBJECT_LITERAL_TEXT,
+      (_match, prefix: string, name: string, separator: string) =>
+        `${prefix}${name}${separator}***`,
     );
 
 /**
