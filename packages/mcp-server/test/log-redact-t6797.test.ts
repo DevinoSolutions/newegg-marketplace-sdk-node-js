@@ -81,3 +81,22 @@ describe("NeweggError message in a tool error payload (item 5)", () => {
     expect(payload.message).toContain("page=2");
   });
 });
+
+describe("stays linear on adversarial cookie and colon text", () => {
+  it("handles repeated and unterminated shapes", () => {
+    const shapes = [
+      'cookie:"'.repeat(60_000),
+      "cookie: ".repeat(60_000),
+      `cookie:'${"a".repeat(200_000)}
+${"cookie: '".repeat(30_000)}`,
+      "token: '".repeat(60_000),
+      "x-api-key:".repeat(60_000),
+      `${"%26".repeat(100_000)}sellerid=${"%73".repeat(100_000)}`,
+    ];
+    for (const text of shapes) {
+      const started = performance.now();
+      redactLogText(text);
+      expect(performance.now() - started).toBeLessThan(5000);
+    }
+  });
+});

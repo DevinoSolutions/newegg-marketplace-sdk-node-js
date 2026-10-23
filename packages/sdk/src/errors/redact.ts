@@ -22,6 +22,18 @@
 import { inspect } from "node:util";
 
 /*
+ * Captured once at load: the class-source scan below must not call a `Function.prototype.toString`
+ * that the application replaced later (it would run on every scan, and a hostile one could hang).
+ */
+const functionToString = Function.prototype.toString;
+const reflectApply = Reflect.apply;
+
+/** The source text of `fn`, read with the `Function.prototype.toString` captured at load. */
+function sourceOf(fn: unknown): string {
+  return reflectApply(functionToString, fn, []) as string;
+}
+
+/*
  * How the patterns below are applied. Each one is found by a plain scan for a candidate position
  * (a `:` followed by a slash, a `//`, a token boundary) and then checked there, once. A run of
  * characters that a candidate has to measure ends at the first character of a fixed set; the
@@ -375,8 +387,19 @@ function isPlainObject(value: object): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-function sanitize(value: unknown, seen: WeakSet<object>, depth: number): unknown {
-  if (typeof value === "string") return redactUrlCredentials(value);
+/** How {@link sanitize} cleans a value: its strings, and whether a credential-named key is masked. */
+interface SanitizeMode {
+  readonly text: (text: string) => string;
+  readonly maskKeys: boolean;
+}
+
+function sanitize(
+  value: unknown,
+  seen: WeakSet<object>,
+  depth: number,
+  mode: SanitizeMode,
+): unknown {
+  if (typeof value === "string") return mode.text(value);
   if (typeof value !== "object" || value === null) return value;
   const isArray = Array.isArray(value);
   // Dates, Maps, class instances etc. are not JSON data: pass them through untouched.
@@ -384,9 +407,14 @@ function sanitize(value: unknown, seen: WeakSet<object>, depth: number): unknown
   if (seen.has(value) || depth >= MAX_DEPTH) return "[Circular]";
   seen.add(value);
   try {
-    if (isArray) return value.map((inner: unknown) => sanitize(inner, seen, depth + 1));
+    if (isArray) return value.map((inner: unknown) => sanitize(inner, seen, depth + 1, mode));
     const out: Record<string, unknown> = {};
-    for (const [key, inner] of Object.entries(value)) out[key] = sanitize(inner, seen, depth + 1);
+    for (const [key, inner] of Object.entries(value)) {
+      out[key] =
+        mode.maskKeys && typeof inner === "string" && inner !== "" && isCredentialName(key)
+          ? "***"
+          : sanitize(inner, seen, depth + 1, mode);
+    }
     return out;
   } finally {
     seen.delete(value);
@@ -400,7 +428,16 @@ function sanitize(value: unknown, seen: WeakSet<object>, depth: number): unknown
  * over-deep nesting are cut off with `"[Circular]"` instead of throwing.
  */
 export function sanitizeRaw(value: unknown): unknown {
-  return sanitize(value, new WeakSet(), 0);
+  return sanitize(value, new WeakSet(), 0, { text: redactUrlCredentials, maskKeys: false });
+}
+
+/**
+ * {@link sanitizeRaw} plus the credential-name redaction of {@link redactCredentialText}, and a
+ * string value kept under a credential name (`SecretKey`, `token`, ...) is masked. Used for
+ * `NeweggError.details`.
+ */
+export function sanitizeDetails(value: unknown): unknown {
+  return sanitize(value, new WeakSet(), 0, { text: redactCredentialText, maskKeys: true });
 }
 
 /**
@@ -445,27 +482,68 @@ function isCredentialName(name: string): boolean {
 }
 
 /**
- * `name=value`, `name: value`, `"name":"value"` for a credential name, value up to the next
- * delimiter. A `Bearer` / `Basic` / `Digest` scheme word is part of the value. Longest names first
- * so `x-auth-token` wins over `x-auth`. No nested quantifiers: linear.
+ * Names that are HTTP headers (`Authorization`, `SecretKey`, `X-Api-Key`, any `x-*`): only these
+ * are masked after a bare `name: value`. For the generic words (`token`, `password`, `secret`, ...)
+ * a colon is ordinary prose (`Unexpected token: } in JSON`, `password: must be at least 8
+ * characters`), so they need `=`, a quoted name (`"token": "..."`) or a quoted value
+ * (`{ token: '...' }`).
  */
-const CREDENTIAL_TEXT = new RegExp(
-  String.raw`(?<![\w.-])(${[...CREDENTIAL_WORDS]
+const HEADER_LIKE_NAMES: ReadonlySet<string> = new Set([
+  "authorization",
+  "proxyauthorization",
+  "secretkey",
+  "apikey",
+]);
+
+const isHeaderLike = (words: readonly string[]): boolean =>
+  words[0] === "x" || HEADER_LIKE_NAMES.has(words.join(""));
+
+/** The alternation of `list` as name patterns, longest first so `x-auth-token` wins over `x-auth`. */
+const namePattern = (list: readonly (readonly string[])[]): string =>
+  [...list]
     .sort((a, b) => b.join("").length - a.join("").length)
     .map((words) => words.join("[-_]?"))
-    .join("|")})(["']?\s*[:=]\s*["']?)((?:(?:bearer|basic|digest)\s+)?[^&\s#"'<>,;]+)`,
+    .join("|");
+
+const HEADER_LIKE_PATTERN = namePattern(CREDENTIAL_WORDS.filter(isHeaderLike));
+const GENERIC_PATTERN = namePattern(CREDENTIAL_WORDS.filter((words) => !isHeaderLike(words)));
+
+/**
+ * `name=value`, `"name":"value"` and `{ name: 'value' }` for any credential name, and `name: value`
+ * for a header-like one; the value runs up to the next delimiter. A `Bearer` / `Basic` / `Digest`
+ * scheme word is part of the value. No nested quantifiers: linear. Groups 1 and 2 are a header-like
+ * name and its separator, 3 and 4 a generic name and its separator.
+ */
+const CREDENTIAL_TEXT = new RegExp(
+  String.raw`(?<![\w.-])(?:(${HEADER_LIKE_PATTERN})(["']?\s*[:=]\s*["']?)|(${GENERIC_PATTERN})(["']?\s*=\s*["']?|["']\s*:\s*["']?|\s*:\s*["']))((?:(?:bearer|basic|digest)\s+)?[^&\s#"'<>,;]+)`,
   "gi",
 );
 
+/**
+ * A `Cookie` / `Set-Cookie` line. After a colon the value runs to the end of the line (a cookie holds
+ * `;` and spaces), after `=` to the next delimiter; a quoted value ends at its closing quote.
+ */
+const COOKIE_TEXT =
+  /(?<![\w.-])(set[-_]?cookie|cookie)(?:(["']?\s*:\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]*)|(["']?\s*=\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^&\s#"'<>]+))/gi;
+
 const PERCENT_ESCAPE = /%([0-9a-f]{2})/gi;
 
-/** Decodes the ASCII percent escapes (up to three layers), so `%73ellerid%3DX` becomes visible. */
+/** The characters that end a credential value. */
+const VALUE_END_CHAR = /[\s&#"'<>,;]/;
+
+/**
+ * Decodes the ASCII percent escapes (up to three layers), so `%73ellerid%3DX` becomes visible. An
+ * escape of a character that ends a credential value (`%26`, `%3B`, `%2C`, `%23`, `%20`, a quote,
+ * ...) stays encoded: decoding it would end the value early and leave the rest of it in the text.
+ */
 function decodePercent(text: string): string {
   let current = text;
   for (let round = 0; round < 3; round += 1) {
     const next = current.replace(PERCENT_ESCAPE, (match, hex: string) => {
       const code = Number.parseInt(hex, 16);
-      return code < 0x80 ? String.fromCharCode(code) : match;
+      return code < 0x80 && !VALUE_END_CHAR.test(String.fromCharCode(code))
+        ? String.fromCharCode(code)
+        : match;
     });
     if (next === current) break;
     current = next;
@@ -473,14 +551,45 @@ function decodePercent(text: string): string {
   return current;
 }
 
-const maskCredentialText = (text: string): string =>
-  text.replace(
-    CREDENTIAL_TEXT,
-    (_match, name: string, separator: string) => `${name}${separator}***`,
-  );
+/** Masks a cookie value, keeping its quotes (`"cookie":"a=b"` -> `"cookie":"***"`). */
+function maskCookieValue(value: string): string {
+  const quote = value.startsWith('"') || value.startsWith("'") ? value.charAt(0) : "";
+  return quote !== "" && value.length > 1 && value.endsWith(quote)
+    ? `${quote}***${quote}`
+    : `${quote}***`;
+}
 
-/** {@link redactUrlCredentials} plus the values of credential-bearing parameters and header lines. */
-function redactCauseText(text: string): string {
+const maskCredentialText = (text: string): string =>
+  text
+    .replace(
+      COOKIE_TEXT,
+      (
+        _match,
+        name: string,
+        colon: string | undefined,
+        colonValue: string | undefined,
+        equals: string | undefined,
+        equalsValue: string | undefined,
+      ) => `${name}${colon ?? equals ?? ""}${maskCookieValue(colonValue ?? equalsValue ?? "")}`,
+    )
+    .replace(
+      CREDENTIAL_TEXT,
+      (
+        _match,
+        headerName: string | undefined,
+        headerSeparator: string | undefined,
+        name: string | undefined,
+        separator: string | undefined,
+      ) => `${headerName ?? name ?? ""}${headerSeparator ?? separator ?? ""}***`,
+    );
+
+/**
+ * {@link redactUrlCredentials} plus the values of credential-bearing parameters, header lines and
+ * cookie lines (`sellerid=...`, `Authorization: Bearer ...`, `"SecretKey":"..."`, `Cookie: ...`,
+ * percent-encoded spellings included). Prose that merely pairs a credential word with a colon is
+ * left alone. Applied to a cause and to every `NeweggError` message and `details` string.
+ */
+export function redactCredentialText(text: string): string {
   const base = redactUrlCredentials(text);
   const direct = maskCredentialText(base);
   if (!base.includes("%")) return direct;
@@ -498,7 +607,7 @@ function redactedHeaderEntries(headers: Headers): {
   let changed = false;
   const entries: Array<[string, string]> = [];
   for (const [name, item] of headers) {
-    const cleaned = isCredentialName(name) ? "***" : redactCauseText(item);
+    const cleaned = isCredentialName(name) ? "***" : redactCredentialText(item);
     if (cleaned !== item) changed = true;
     entries.push([name, cleaned]);
   }
@@ -598,7 +707,7 @@ function textSummary(value: object, customInspect = false): string {
 /** {@link textSummary} with URL credentials removed. Used where no safe copy exists. */
 function redactedSummary(value: object): string {
   try {
-    return redactCauseText(textSummary(value));
+    return redactCredentialText(textSummary(value));
   } catch {
     return "[Unreadable]";
   }
@@ -641,12 +750,12 @@ function copyNeedsInternalState(value: object): boolean {
         const hooks = isHook ? [descriptor.value] : [];
         for (const fn of [descriptor.get, descriptor.set, ...hooks] as unknown[]) {
           if (typeof fn !== "function") continue;
-          const source = Function.prototype.toString.call(fn);
+          const source = sourceOf(fn);
           const native = source.includes("[native code]") && fn !== descriptor.value;
           if (source.includes("#") || WEAKMAP_PRIVATE.test(source) || native) return true;
         }
         if (key === "constructor" && typeof descriptor.value === "function") {
-          classSources.push(Function.prototype.toString.call(descriptor.value));
+          classSources.push(sourceOf(descriptor.value));
         }
       }
       proto = Object.getPrototypeOf(proto) as object | null;
@@ -755,8 +864,7 @@ function forwardPrivateAccess(
   isChanged: boolean,
 ): PropertyDescriptor | undefined {
   if (descriptor === undefined || isChanged) return descriptor;
-  const usesPrivate = (f: unknown): boolean =>
-    typeof f === "function" && Function.prototype.toString.call(f).includes("#");
+  const usesPrivate = (f: unknown): boolean => typeof f === "function" && sourceOf(f).includes("#");
   if (typeof descriptor.value === "function" && usesPrivate(descriptor.value)) {
     return { ...descriptor, value: (descriptor.value as () => unknown).bind(fn) };
   }
@@ -778,7 +886,7 @@ function redactedRequestSummary(value: Request | Response): string {
   if (value instanceof Request) summary.method = value.method;
   else summary.status = value.status;
   summary.url = value.url;
-  return redactCauseText(
+  return redactCredentialText(
     inspect(summary, {
       depth: 3,
       breakLength: Infinity,
@@ -789,11 +897,11 @@ function redactedRequestSummary(value: Request | Response): string {
 }
 
 function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWalk): unknown {
-  if (typeof value === "string") return redactCauseText(value);
+  if (typeof value === "string") return redactCredentialText(value);
   if (typeof value === "symbol") {
     const description = value.description;
     if (description === undefined) return value;
-    const cleaned = redactCauseText(description);
+    const cleaned = redactCredentialText(description);
     return cleaned === description ? value : Symbol(cleaned);
   }
   if ((typeof value !== "object" && typeof value !== "function") || value === null) return value;
@@ -813,14 +921,14 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
       return items.some((item, index) => item !== (value as unknown[])[index]) ? items : value;
     }
     if (value instanceof URL) {
-      const cleaned = redactCauseText(value.href);
+      const cleaned = redactCredentialText(value.href);
       return cleaned === value.href ? value : cleaned;
     }
     if (value instanceof RegExp) {
       // A mask would not be a valid pattern, so a RegExp holding a secret becomes a marker string.
       // Escapes are removed first, so `ftp03\.host` is read as a host name.
       const unescaped = value.source.replace(/\\(.)/g, "$1");
-      if (redactCauseText(unescaped) !== unescaped) return "[Redacted RegExp]";
+      if (redactCredentialText(unescaped) !== unescaped) return "[Redacted RegExp]";
     }
     if (value instanceof Map) {
       let changed = false;
@@ -841,7 +949,7 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
     if (value instanceof Uint8Array) {
       // Buffers print as hex bytes, which still spell the URL.
       const text = Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("latin1");
-      const cleaned = redactCauseText(text);
+      const cleaned = redactCredentialText(text);
       return cleaned === text ? value : Buffer.from(cleaned, "latin1");
     }
     // Typed arrays and DataViews hold bytes, not properties.
@@ -851,8 +959,8 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
       let changed = false;
       const pairs: Array<[string, string]> = [];
       for (const [name, item] of value) {
-        const cleanedName = redactCauseText(name);
-        const cleaned = isCredentialName(name) && item !== "" ? "***" : redactCauseText(item);
+        const cleanedName = redactCredentialText(name);
+        const cleaned = isCredentialName(name) && item !== "" ? "***" : redactCredentialText(item);
         if (cleanedName !== name || cleaned !== item) changed = true;
         pairs.push([cleanedName, cleaned]);
       }
@@ -873,7 +981,7 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
     if (isOpaqueRequestOrResponse(value)) {
       // A platform object: its own `[util.inspect.custom]` is what prints status text and URL.
       const text = textSummary(value, true);
-      const redacted = redactCauseText(text);
+      const redacted = redactCredentialText(text);
       const headersChanged = redactedHeaderEntries(value.headers).changed;
       // An own property (`response.link`) holding a secret also forces the text form.
       const props = changedOwnProperties(value, next, walk, SYMBOL_KEYS);
@@ -883,7 +991,7 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
     if (value instanceof String) {
       // The boxed text itself is what util.inspect prints, so it is redacted too.
       const text = value.valueOf();
-      const cleanedText = redactCauseText(text);
+      const cleanedText = redactCredentialText(text);
       const changedProps = changedOwnProperties(value, next, walk);
       for (const key of [...changedProps.keys()]) {
         if (key === "length" || (typeof key === "string" && /^\d+$/.test(key))) {
@@ -943,10 +1051,8 @@ function cleanCauseValue(value: unknown, path: readonly object[], walk: CauseWal
  * `FormData` (contents live in internal slots), string keys of Maps that are URLs, extra own
  * properties on arrays, typed arrays, `Buffer` and `URL`, credentials in string or `Symbol`
  * property KEYS, a boxed `Symbol`, and a getter that throws under `util.inspect({ getters: true })`.
- * Own accessors are read once.
- *
- * Not covered here: `NeweggError`'s own top-level `message` and `details` do not apply the
- * credential-name redaction (follow-up).
+ * Own accessors are read once. `NeweggError`'s own `message` and `details` get the same
+ * credential-name redaction ({@link redactCredentialText}, {@link sanitizeDetails}).
  */
 export function sanitizeCause(cause: unknown): unknown {
   return cleanCauseValue(cause, [], { nodes: 0 });
