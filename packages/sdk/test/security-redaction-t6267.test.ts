@@ -61,9 +61,7 @@ describe("a redaction never runs user code on the copy (item 2)", () => {
       link = URL_WITH_SECRET;
       get boom(): number {
         calls.getter += 1;
-        for (;;) {
-          if (calls.getter > 0) throw new Error("must not run");
-        }
+        throw new Error("must not run");
       }
       [inspect.custom](): string {
         calls.custom += 1;
@@ -106,9 +104,15 @@ describe("Headers, Request and query secrets (item 3)", () => {
     expect(String(causeOf(`GET /x?sellerid=${SELLER}&page=2`))).toContain("page=2");
   });
 
-  it("redacts a RegExp source and a Symbol description", () => {
-    expectNoSecret(render(new RegExp(`${USER}:${PASS}@${HOST}`.replace(/\./g, "\."))));
+  it("redacts a RegExp source (escaped dots included) and a Symbol description", () => {
+    const escapedHost = ["ftp03", "newegg", "com"].join("\\.");
+    const regexp = new RegExp(`${USER}:${PASS}@${escapedHost}`);
+    expect(regexp.source).toContain("\\.");
+    expect(causeOf(regexp)).toBe("[Redacted RegExp]");
+    expectNoSecret(render(regexp));
     expectNoSecret(render(Symbol(URL_WITH_SECRET)));
+    const plain = /abc/g;
+    expect(causeOf(plain)).toBe(plain);
   });
 });
 
@@ -124,5 +128,111 @@ describe("non-error causes stay sane (item 4)", () => {
     expect(plain.where).toBe(URL_WITH_SECRET);
     const clean = { code: 7 };
     expect(causeOf(clean)).toBe(clean);
+  });
+});
+
+const KEYED = "SEKRIT";
+const deep = (cause: unknown): string =>
+  inspect(new NeweggError("api", "failed", { cause }), { depth: 20, showHidden: true });
+
+describe("review follow-ups (T-6267)", () => {
+  it("falls back to a text summary when a hook reaches #private through another method", () => {
+    class A {
+      #x = 1;
+      link = URL_WITH_SECRET;
+      describe(): number {
+        return this.#x;
+      }
+      [inspect.custom](): number {
+        return this.describe();
+      }
+    }
+    const out = deep(new A());
+    expect(out).not.toContain(PASS);
+    expect(() => inspect(causeOf(new A()))).not.toThrow();
+  });
+
+  it("falls back for toJSON through a #private method and for a WeakMap-private getter", () => {
+    class B {
+      #x = 1;
+      link = URL_WITH_SECRET;
+      read(): number {
+        return this.#x;
+      }
+      toJSON(): unknown {
+        return { n: this.read() };
+      }
+    }
+    const store = new WeakMap<object, { n: number }>();
+    class C {
+      link = URL_WITH_SECRET;
+      constructor() {
+        store.set(this, { n: 1 });
+      }
+      get n(): number {
+        return (store.get(this) as { n: number }).n;
+      }
+      toJSON(): unknown {
+        return { n: this.n };
+      }
+    }
+    for (const value of [new B(), new C()]) {
+      const cause = causeOf(value);
+      expect(() => JSON.stringify(cause)).not.toThrow();
+      expect(() => inspect(cause, { getters: true })).not.toThrow();
+      expect(deep(value)).not.toContain(PASS);
+    }
+  });
+
+  it("masks values kept under a credential name", () => {
+    const url = `https://h.example/y?sellerid=${KEYED}&page=2`;
+    const causes: unknown[] = [
+      new URLSearchParams({ sellerid: KEYED }),
+      new URL(url).searchParams,
+      { query: { sellerid: KEYED } },
+      { headers: { SecretKey: KEYED, Authorization: KEYED } },
+      { config: { headers: { Authorization: KEYED, SecretKey: KEYED, Cookie: KEYED } } },
+      new Headers({ "x-secretkey": KEYED, "x-auth": KEYED, "x-api-key": KEYED, "api-key": KEYED }),
+    ];
+    for (const cause of causes) expect(deep(cause)).not.toContain(KEYED);
+    const params = causeOf(new URLSearchParams({ sellerid: KEYED, page: "2" })) as URLSearchParams;
+    expect(params.get("page")).toBe("2");
+    expect(params.get("sellerid")).toBe("***");
+  });
+
+  it("covers encoded, header-line, JSON and bearer spellings", () => {
+    const spellings = [
+      `sellerid%3D${KEYED}`,
+      `%73ellerid=${KEYED}`,
+      `https%3A%2F%2Fh%2F%3Fsellerid%3D${KEYED}`,
+      `Authorization: Bearer ${KEYED}`,
+      `Authorization=Bearer ${KEYED}`,
+      `SecretKey: ${KEYED}`,
+      `{"SecretKey":"${KEYED}"}`,
+      `client_secret=${KEYED}`,
+      `refresh_token=${KEYED}`,
+      `id_token=${KEYED}`,
+      `access-token=${KEYED}`,
+      `api-key=${KEYED}`,
+      `x-api-key: ${KEYED}`,
+    ];
+    for (const text of spellings) expect(causeOf(text), text).not.toContain(KEYED);
+    expect(causeOf(`Authorization=Bearer ${KEYED} next`)).toBe("Authorization=*** next");
+  });
+
+  it("stays linear on adversarial credential-looking text", () => {
+    const shapes = [
+      "token".repeat(60_000),
+      "token ".repeat(60_000),
+      "token=".repeat(60_000),
+      `sellerid${" ".repeat(300_000)}x`,
+      "%73".repeat(100_000),
+      "Authorization: ".repeat(30_000),
+    ];
+    for (const text of shapes) {
+      const started = performance.now();
+      causeOf(text);
+      expect(performance.now() - started).toBeLessThan(5000);
+    }
   });
 });
