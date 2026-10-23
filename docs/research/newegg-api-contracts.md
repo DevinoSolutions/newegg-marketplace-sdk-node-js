@@ -3761,7 +3761,9 @@ a corrupt, unreadable or other-user-writable file stops the server instead of st
 `compareAndPut` under a lock file, and the ledger re-reads the record just before writing, so of two processes
 on one host sharing the file only one claims an order. The lock file (hostname, pid, start time) is never taken
 over automatically: a lock that cannot be created in time fails the operation closed, and the operator removes a
-crash leftover with `newegg-marketplace-mcp --release-store-lock` (this host and a dead pid, else `--force`).
+crash leftover with `newegg-marketplace-mcp --release-store-lock` (this host and a dead pid, else `--force`; only with every server of that store stopped, one run at a time; not
+across containers that share a volume). A lock that cannot be removed after a write reports that the write may
+have succeeded (the order is blocked by its own record).
 The path must be absolute; a missing file with a leftover lock or temp file beside it refuses to start (it was
 lost); on POSIX the file must be owned by the running user and the directory not other-writable unless sticky. The window is `NEWEGG_MCP_LABEL_CREATE_GUARD_HOURS`
 (1 to 720, default 24; SDK `labelCreateGuardWindowMs`). An order that already lists a package is a preview

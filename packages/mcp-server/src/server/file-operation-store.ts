@@ -42,6 +42,8 @@ const RENAME_RETRIES = 5;
 const TRANSIENT_LOCK_ERRORS = ["EEXIST", "EPERM", "EBUSY", "EACCES"];
 /** Orphaned temp files of a crashed write are removed after this long. */
 const ORPHAN_TMP_AGE_MS = 3_600_000;
+/** How far ahead of this clock a lock's start time may be and still count as fresh. */
+const CLOCK_SKEW_MS = 5_000;
 /** A lock beside a missing store file is read as "a first run is writing" until it is this old. */
 const FRESH_LOCK_MS = 30_000;
 
@@ -86,6 +88,8 @@ export interface FileOperationStoreOptions {
   readonly onFailure?: (error: OperationStoreFileError) => void;
   /** Test hook: creates the lock file (default `fs.promises.open`). */
   readonly openLockFile?: (path: string, flags: string, mode: number) => ReturnType<typeof open>;
+  /** Test hook: removes the lock file (default `fs.rm` with retries). */
+  readonly removeLockFile?: (path: string) => Promise<void>;
   /** Test hook: called while the lock is held, before the protected work runs. */
   readonly onLockHeld?: () => void;
 }
@@ -268,7 +272,9 @@ function assertNotLost(path: string): void {
   if (!leftover) {
     try {
       const lock = lockSchema.parse(JSON.parse(readFileSync(`${path}.lock`, "utf8")));
-      leftover = !(Date.now() - Date.parse(lock.startedAt) < FRESH_LOCK_MS);
+      // A start time in the future (beyond a little clock skew) is not "fresh" either.
+      const age = Date.now() - Date.parse(lock.startedAt);
+      leftover = !(age < FRESH_LOCK_MS && age > -CLOCK_SKEW_MS);
     } catch (error) {
       // No lock at all is normal. One that cannot be parsed counts only once it is not fresh: a lock
       // being created is briefly empty.
@@ -374,6 +380,7 @@ export class FileOperationStore implements OperationStore {
   readonly #onFailure: ((error: OperationStoreFileError) => void) | undefined;
   readonly #openLockFile: NonNullable<FileOperationStoreOptions["openLockFile"]>;
   readonly #onLockHeld: (() => void) | undefined;
+  readonly #removeLockFile: (path: string) => Promise<void>;
   #queue: Promise<unknown> = Promise.resolve();
 
   /**
@@ -390,6 +397,7 @@ export class FileOperationStore implements OperationStore {
     this.#openLockFile =
       options.openLockFile ?? ((target, flags, mode) => open(target, flags, mode));
     this.#onLockHeld = options.onLockHeld;
+    this.#removeLockFile = options.removeLockFile ?? removeWithRetry;
     const directory = dirname(path);
     try {
       if (!statSync(directory).isDirectory()) throw new Error("not a directory");
@@ -494,12 +502,30 @@ export class FileOperationStore implements OperationStore {
   #exclusive<T>(run: () => Promise<T>): Promise<T> {
     const result = this.#queue.then(async () => {
       await this.#acquireLock();
+      let outcome: { readonly value: T } | { readonly error: unknown };
       try {
         this.#onLockHeld?.();
-        return await run();
-      } finally {
-        await removeWithRetry(this.#lockPath);
+        outcome = { value: await run() };
+      } catch (error) {
+        outcome = { error };
       }
+      try {
+        await this.#removeLockFile(this.#lockPath);
+      } catch (cause) {
+        // The work may already have been written. Reporting the lock failure instead of its result
+        // fails closed: the order stays blocked by its own `submitting` record until an operator
+        // acts, so a purchase can never be repeated because of this error.
+        throw new OperationStoreFileError(
+          "lock",
+          `The operation store lock ${this.#lockPath} could not be removed, so the lock is still held. ` +
+            "The write may have succeeded: check the order in the Seller Portal before clearing " +
+            "anything. Once no server or command is running, remove the lock with " +
+            "`newegg-marketplace-mcp --release-store-lock`.",
+          { cause },
+        );
+      }
+      if ("error" in outcome) throw outcome.error;
+      return outcome.value;
     });
     this.#queue = result.catch(() => undefined);
     return result;

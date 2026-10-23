@@ -254,7 +254,13 @@ so a restart (or a crash) cannot make the server forget a label that may have be
   can leave the lock behind; after making sure no server or command is running, the operator removes it with
   `newegg-marketplace-mcp --release-store-lock`, which refuses unless the lock was taken on this host by a
   process that is gone (`--force` overrides). It is argv only, reads only `NEWEGG_MCP_OPERATION_STORE_FILE`, and
-  is not reachable from any tool, resource or prompt. Use a local filesystem on one host: network and synced
+  is not reachable from any tool, resource or prompt. Run it only with **every server for that store stopped**, and
+  one run at a time: it checks the lock and then removes it, so a run that overlaps a starting server could remove
+  the lock that server just took. "Alive" means the same hostname and a live pid on this host, so two containers
+  with the same hostname and separate PID namespaces sharing one volume can misjudge it: **do not share a store
+  file across containers.** If a server finishes a write but cannot remove its lock afterwards, the operation
+  reports that the write may have succeeded (check the order in the Seller Portal before clearing anything); the
+  order stays blocked by its own record, so this fails closed. Use a local filesystem on one host: network and synced
   folders (NFS, SMB, OneDrive) do not give trustworthy locking.
 - **Absolute path, and a lost file is not a new ledger.** `NEWEGG_MCP_OPERATION_STORE_FILE` must be absolute
   (a relative one resolves against the working directory, so a restart from elsewhere would start empty; the

@@ -61,8 +61,9 @@ Options:
                              Operator only: remove the lock file a crashed server left beside
                              NEWEGG_MCP_OPERATION_STORE_FILE. Refuses unless the lock was taken on this
                              host by a process that is gone; --force overrides, only after you have
-                             made sure no server or command is using the store. Not available through
-                             any MCP tool.
+                             made sure no server or command is using the store, and run it with every
+                             server of that store stopped, one run at a time. Not available through any
+                             MCP tool.
   -h, --help                 Show this help
 
 Configuration is read from environment variables (see .env.example). All logging goes to
