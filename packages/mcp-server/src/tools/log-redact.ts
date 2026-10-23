@@ -69,28 +69,79 @@ const CREDENTIAL_WORDS: readonly (readonly string[])[] = [
 ];
 
 /**
- * Credential-bearing values wherever they appear, with or without a `scheme://` in front:
- * `GET /x?sellerid=... HTTP/1.1`, `Authorization: Bearer ...`, `"SecretKey":"..."`. A Bearer /
- * Basic / Digest scheme word is part of the value; the value ends at a delimiter, so a following
- * comma survives. Longest names first; no nested quantifiers, so it is linear.
+ * Which credential names are masked after a bare `name: value` (a colon and nothing else). A
+ * multi-word name (`SellerID`, `SecretKey`, `Access-Token`, `client_secret`, `X-Api-Key`, ...) and
+ * `Authorization` are header-like, so `SellerID: A006 is not authorized` and
+ * `Refresh-Token: ...` are masked. A single generic word (`token`, `password`, `passwd`,
+ * `secret`) is ordinary prose after a colon (`Unexpected token: } in JSON`, `password: must be at
+ * least 8 characters`), so it needs `=`, a quoted name (`"token": "..."`), a quoted value
+ * (`{ token: '...' }`) or an object-literal key position (below). A header-style line such as
+ * `Password: hunter2` cannot be told from `Password: must be at least 8 characters` and is NOT
+ * masked: a documented limit.
  */
-const CREDENTIAL_TEXT = new RegExp(
-  String.raw`(?<![\w.-])(${[...CREDENTIAL_WORDS]
+const isHeaderLike = (words: readonly string[]): boolean =>
+  words.length > 1 || words[0] === "authorization";
+
+/** The alternation of `list` as name patterns, longest first so `x-auth-token` wins over `x-auth`. */
+const namePattern = (list: readonly (readonly string[])[]): string =>
+  [...list]
     .sort((a, b) => b.join("").length - a.join("").length)
     .map((words) => words.join("[-_]?"))
-    .join("|")})(["']?\s*[:=]\s*["']?)((?:(?:bearer|basic|digest)\s+)?[^&\s#"'<>,;]+)`,
+    .join("|");
+
+const HEADER_LIKE_PATTERN = namePattern(CREDENTIAL_WORDS.filter(isHeaderLike));
+const GENERIC_PATTERN = namePattern(CREDENTIAL_WORDS.filter((words) => !isHeaderLike(words)));
+const ANY_NAME_PATTERN = namePattern(CREDENTIAL_WORDS);
+
+/**
+ * `name=value`, `"name":"value"` and `{ name: 'value' }` for any credential name, and `name: value`
+ * for a header-like one; the value runs up to the next delimiter. A `Bearer` / `Basic` / `Digest`
+ * scheme word is part of the value. No nested quantifiers: linear. Groups 1 and 2 are a header-like
+ * name and its separator, 3 and 4 a generic name and its separator. A value may be quoted with
+ * `'`, `"` or a backtick (`\x60`).
+ */
+const CREDENTIAL_TEXT = new RegExp(
+  String.raw`(?<![\w.-])(?:(${HEADER_LIKE_PATTERN})(["']?\s*[:=]\s*["'\x60]?)|(${GENERIC_PATTERN})(["']?\s*=\s*["'\x60]?|["']\s*:\s*["'\x60]?|\s*:\s*["'\x60]))((?:(?:bearer|basic|digest)\s+)?[^&\s#"'\x60<>,;]+)`,
   "gi",
 );
 
+/**
+ * An object-literal entry (`util.inspect` output, JSON): after `{` or `,` a credential key whose
+ * value is a number, `true`, `false`, `null` or `undefined` (the quoted forms are in
+ * {@link CREDENTIAL_TEXT}). Prose has no `{` / `,` in front of the name and carries no such value.
+ * The prefix is consumed rather than looked behind, so the scan stays linear.
+ */
+const OBJECT_LITERAL_TEXT = new RegExp(
+  String.raw`([{,]\s*["']?)(${ANY_NAME_PATTERN})(["']?\s*:\s*)(-?\d[^\s,;&#"'\x60<>}\])]*|true|false|null|undefined)(?![\w.-])`,
+  "gi",
+);
+
+/**
+ * A `Cookie` / `Set-Cookie` line. After a colon the value runs to the end of the line (a cookie holds
+ * `;` and spaces), after `=` to the next delimiter; a quoted value ends at its closing quote, and a
+ * backslash escapes the character after it (`"a=1; b=\"2\""`).
+ */
+const COOKIE_TEXT =
+  /(?<![\w.-])(set[-_]?cookie|cookie)(?:(["']?\s*:\s*)("(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'|[^\r\n]*)|(["']?\s*=\s*)("(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'|[^&\s#"'<>]+))/gi;
+
 const PERCENT_ESCAPE = /%([0-9a-f]{2})/gi;
 
-/** Decodes the ASCII percent escapes (up to three layers), so `%73ellerid%3DX` becomes visible. */
+/** The characters that end a credential value. */
+const VALUE_END_CHAR = /[\s&#"'<>,;]/;
+
+/**
+ * Decodes the ASCII percent escapes (up to three layers), so `%73ellerid%3DX` becomes visible. An
+ * escape of a character that ends a credential value (`%26`, `%3B`, `%2C`, `%23`, `%20`, a quote,
+ * ...) stays encoded: decoding it would end the value early and leave the rest of it in the text.
+ */
 function decodePercent(text: string): string {
   let current = text;
   for (let round = 0; round < 3; round += 1) {
     const next = current.replace(PERCENT_ESCAPE, (match, hex: string) => {
       const code = Number.parseInt(hex, 16);
-      return code < 0x80 ? String.fromCharCode(code) : match;
+      return code < 0x80 && !VALUE_END_CHAR.test(String.fromCharCode(code))
+        ? String.fromCharCode(code)
+        : match;
     });
     if (next === current) break;
     current = next;
@@ -98,11 +149,44 @@ function decodePercent(text: string): string {
   return current;
 }
 
+const REDACTED = "[redacted]";
+
+/** Masks a cookie value, keeping its quotes (`"cookie":"a=b"` -> `"cookie":"[redacted]"`). */
+function maskCookieValue(value: string): string {
+  const quote = value.startsWith('"') || value.startsWith("'") ? value.charAt(0) : "";
+  return quote !== "" && value.length > 1 && value.endsWith(quote)
+    ? `${quote}${REDACTED}${quote}`
+    : `${quote}${REDACTED}`;
+}
+
 const maskCredentials = (text: string): string =>
-  text.replace(
-    CREDENTIAL_TEXT,
-    (_match, name: string, separator: string) => `${name}${separator}[redacted]`,
-  );
+  text
+    .replace(
+      COOKIE_TEXT,
+      (
+        _match,
+        name: string,
+        colon: string | undefined,
+        colonValue: string | undefined,
+        equals: string | undefined,
+        equalsValue: string | undefined,
+      ) => `${name}${colon ?? equals ?? ""}${maskCookieValue(colonValue ?? equalsValue ?? "")}`,
+    )
+    .replace(
+      CREDENTIAL_TEXT,
+      (
+        _match,
+        headerName: string | undefined,
+        headerSeparator: string | undefined,
+        name: string | undefined,
+        separator: string | undefined,
+      ) => `${headerName ?? name ?? ""}${headerSeparator ?? separator ?? ""}${REDACTED}`,
+    )
+    .replace(
+      OBJECT_LITERAL_TEXT,
+      (_match, prefix: string, name: string, separator: string) =>
+        `${prefix}${name}${separator}${REDACTED}`,
+    );
 
 /** Removes URL credentials, URL query strings and credential values from `text`. Never throws. */
 export function redactLogText(text: string): string {

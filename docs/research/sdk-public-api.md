@@ -2569,11 +2569,19 @@ export class NeweggError extends Error {
   readonly neweggRequestId?: string; // feed request id when relevant
   readonly correlationId?: string;
   readonly retryable: boolean;
-  readonly details?: unknown; // sanitized, JSON-safe
+  readonly details?: unknown; // sanitized, JSON-safe; credential values masked like `message` (below)
+  // `message` and every string in `details` are redacted like a cause string (URL credentials, then the value of a
+  // credential name: sellerid=, token=, Authorization: Bearer ..., "SecretKey":"...", Cookie / Set-Cookie lines,
+  // percent-encoded spellings included); a string kept under a credential key in `details` (SecretKey, token, ...) is
+  // masked as well. A bare `name: value` (colon only) counts for multi-word names (SellerID, SecretKey, Access-Token,
+  // client_secret, X-Api-Key, ...) and Authorization; for the single generic words (token, password, passwd, secret) a
+  // colon is prose and is left alone (`Unexpected token: }`, and also `Password: hunter2`, a documented limit), while
+  // `=`, a quoted name, a quoted value (`{ token: 'x' }`) and an object-literal key with a number / boolean value
+  // (`{ password: 12345 }`) are masked.
   // `cause` (standard Error.cause) is sanitized too: URL credentials are removed from the cause's message, stack,
   // string properties and nested causes, so util.inspect / console.log of the error cannot print them. The value of
   // a credential name (sellerid, token, secret, password, api-key, Authorization incl. "Bearer ...", SecretKey, ...,
-  // also percent-encoded) is masked in strings, in URLSearchParams entries, in string-valued own properties with such
+  // Cookie / Set-Cookie lines, also percent-encoded) is masked in strings, in URLSearchParams entries, in string-valued own properties with such
   // a name, and in Headers / Request / Response headers. Functions (own properties), URLSearchParams (names and
   // values) and Headers are rebuilt from redacted entries, own properties included (string-keyed only: a secret
   // stored under a SYMBOL key on these four types is not redacted, low risk, documented). A Response or Request
