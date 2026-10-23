@@ -58,6 +58,12 @@ export interface NeweggClientConfig {
   fetch?: typeof globalThis.fetch;
   rateLimitStore?: RateLimitStore;
   operationStore?: OperationStore;
+  /**
+   * How long a label create attempt that timed out or succeeded keeps blocking a new create for the
+   * same order (contracts §23.5), in milliseconds. A whole number of at least 1 hour and at most
+   * 30 days. Default 24 hours.
+   */
+  labelCreateGuardWindowMs?: number;
   strategy?: {
     /**
      * `updateMany` "auto" switches to feeds at more than this many post-dedup items.

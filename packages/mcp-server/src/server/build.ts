@@ -177,6 +177,7 @@ function createClientFromConfig(
     credentialMarketplace: config.credentialMarketplace,
     logger: adaptLogger(logger),
     operationStore,
+    labelCreateGuardWindowMs: config.limits.labelCreateGuardHours * 3_600_000,
   };
   if (
     config.reportFtps !== true &&
@@ -532,7 +533,8 @@ export function createNeweggMcpServer(options: CreateNeweggMcpServerOptions): Ne
   const now = options.now ?? (() => new Date());
   const previewStore = options.previewStore ?? new InMemoryPreviewStore(now);
   const client =
-    options.client ?? createClientFromConfig(config, logger, operationStoreFor(previewStore));
+    options.client ??
+    createClientFromConfig(config, logger, operationStoreFor(previewStore, config, logger));
   const server = buildMcpServer({
     config,
     client,

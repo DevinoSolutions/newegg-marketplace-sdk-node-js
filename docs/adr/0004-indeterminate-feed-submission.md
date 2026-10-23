@@ -43,3 +43,18 @@ treated as a rejection (contracts §23.6 item 11), anything unfamiliar stays `su
 
 No silent double feeds; callers get a machine-usable recovery path; absolute-assignment
 retries stay automatic and safe.
+
+## Addendum (2026-10-22, T-6280): persistent label ledger
+
+The label-create ledger no longer has to die with the process. `OperationStore` gains an optional
+`compareAndPut(key, expected, op)`; the ledger re-reads the record right before its `submitting` write and,
+when the store offers it, writes only if the record is unchanged, so two processes sharing a store cannot both
+claim an order. The MCP server can keep its label-create records in a file
+(`NEWEGG_MCP_OPERATION_STORE_FILE`: atomic writes, lock file, fails closed on a corrupt or unreadable file);
+feed submission records stay in memory because they have no expiry. The block window is configurable
+(`labelCreateGuardWindowMs`, `NEWEGG_MCP_LABEL_CREATE_GUARD_HOURS`, 1 hour to 30 days). Clearing a record is a
+shell command for the operator (`--clear-label-guard`), never a tool, so an agent still cannot lift the guard.
+
+Review fix (same task): the file store never takes over a lock automatically (a takeover window let two
+processes both win); `--release-store-lock` is the operator's way to clear a crash leftover. The path must be
+absolute and a lost file is detected from leftovers beside it.

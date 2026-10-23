@@ -55,6 +55,8 @@ export interface NeweggClientConfig {
   fetch?: typeof globalThis.fetch;
   rateLimitStore?: RateLimitStore;
   operationStore?: OperationStore;
+  /** How long a timed-out or successful label create blocks a new one for the same order (ms). Whole number, 1 hour (3_600_000) to 30 days; default 24 hours. */
+  labelCreateGuardWindowMs?: number;
   strategy?: {
     /** updateMany "auto" switches to feeds at > this many post-dedup items. Default 8. SDK policy, not a Newegg rule. */
     autoFeedThreshold?: number;
@@ -2517,6 +2519,12 @@ export interface StoredOperation {
 export interface OperationStore {
   get(key: string): Promise<StoredOperation | undefined>;
   put(key: string, op: StoredOperation): Promise<void>;
+  /** Optional compare-and-set: writes op and resolves true only while the record is still expected (undefined = none). The label-create ledger uses it so two processes sharing a store cannot both claim an order. */
+  compareAndPut?(
+    key: string,
+    expected: StoredOperation | undefined,
+    op: StoredOperation,
+  ): Promise<boolean>;
 }
 export class InMemoryOperationStore implements OperationStore {
   /* provided */
@@ -2983,8 +2991,13 @@ export interface ShippingLabelsApi {
     code holding the id can pass it), which is why the MCP never offers it. Only a package that plainly says
     `Failed` (`ProcessResult`) with an error text counts as a refusal; `Pending` or an unfamiliar status keeps
     the record `submitting`. `assertCreateNotBlocked` checks the ledger alone, without any request. A
-    record that cannot be written stops the purchase. The store has no compare-and-set, so processes sharing
-    one store can race in the preview-to-claim window. The MCP exposes
+    record that cannot be written stops the purchase. Processes sharing one store (T-6280): `persist` re-reads the
+    record right before writing and, when the store implements `compareAndPut` (`InMemoryOperationStore` does;
+    the MCP's file store does), writes only if the record is still the one it read, so one claimant wins and the
+    other gets `LabelCreateGuardError`; a store without it keeps a small read-then-write race. A store that
+    cannot be read stops the operation with a `NeweggApiError`. The block window is `labelCreateGuardWindowMs`
+    (client config, 1 hour to 30 days, default 24 hours). An unshipped order that already lists a package is a
+    preview BLOCKER, no longer a warning. The MCP exposes
     `newegg_shipping_label_estimate` and the four preview / apply tools only with
     `NEWEGG_MCP_ALLOW_WRITES=true`; it returns label links only for `https://*.newegg.com`. The SDK has no
     cost ceiling; the MCP has `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100, marketplace currency): the

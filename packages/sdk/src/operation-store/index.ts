@@ -15,4 +15,24 @@ export class InMemoryOperationStore implements OperationStore {
     this.#operations.set(key, op);
     return Promise.resolve();
   }
+
+  compareAndPut(
+    key: string,
+    expected: StoredOperation | undefined,
+    op: StoredOperation,
+  ): Promise<boolean> {
+    if (!sameOperation(this.#operations.get(key), expected)) return Promise.resolve(false);
+    this.#operations.set(key, op);
+    return Promise.resolve(true);
+  }
+}
+
+function sameOperation(a: StoredOperation | undefined, b: StoredOperation | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return (
+    a.state === b.state &&
+    a.payloadHash === b.payloadHash &&
+    a.updatedAt === b.updatedAt &&
+    (a.requestIds ?? []).join("\n") === (b.requestIds ?? []).join("\n")
+  );
 }

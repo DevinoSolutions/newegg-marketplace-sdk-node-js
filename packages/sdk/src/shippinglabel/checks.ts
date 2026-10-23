@@ -48,8 +48,11 @@ export function checkCreateAgainstOrder(
     );
   }
   if (order.status === "unshipped" && order.packages.length > 0) {
-    findings.warnings.push(
-      `The order already lists ${order.packages.length} package(s); check a label was not already bought.`,
+    // A listed package means a label may already be bought (the ledger only knows creates made
+    // through this client), so a second purchase is refused rather than merely flagged.
+    findings.blockers.push(
+      `The order already lists ${order.packages.length} package(s), so a label may already be bought; ` +
+        "verify the order in the Seller Portal before buying another.",
     );
   }
 

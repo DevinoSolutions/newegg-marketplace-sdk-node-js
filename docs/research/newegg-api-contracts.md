@@ -3746,12 +3746,28 @@ when the outcome is unknown (timeout, reset, 5xx, caller abort after dispatch, a
 `submitted` on a package-level success, `failed` only when nothing was bought (never dispatched, an HTTP 4xx
 other than 408, or every package plainly `ProcessResult: Failed` with an error text; a `Pending` or unfamiliar
 status stays `submitting`). A `submitting` or `submitted` record younger
-than 24 h refuses a new create (`LabelCreateGuardError`, nothing sent; preview blocker plus `priorAttempt`)
+than the guard window (24 h by default) refuses a new create (`LabelCreateGuardError`, nothing sent; preview blocker plus `priorAttempt`)
 even when the order still reads unshipped. SDK callers may pass the attempt id back as
 `acknowledgePriorAttemptId` (refused while the order lists a package; not a human gate, §23.6 item 10). The
-MCP never offers it: the ledger is per server process (in memory), the tools surface it as
-`label_create_already_attempted` before making any request, and the operator clears it by verifying the order
-in the Seller Portal and restarting the server.
+MCP never offers it: the ledger is per server process (in memory) unless `NEWEGG_MCP_OPERATION_STORE_FILE`
+keeps it in a file (T-6280), the tools surface a block as `label_create_already_attempted` before making any
+request, and the operator clears it by verifying the order in the Seller Portal and restarting the server (with
+the file ledger: first `newegg-marketplace-mcp --clear-label-guard <marketplace> <order number>` on the host, a
+shell command no tool can reach).
+
+**Persistent ledger (T-6280).** The file holds `{ "version": 1, "operations": { "label-create:<marketplace>:<orderNumber>": <StoredOperation> } }`
+(no credential; feed dedup records are not stored there). Writes are atomic (temp file `0600`, `fsync`, rename);
+a corrupt, unreadable or other-user-writable file stops the server instead of starting empty. The store offers
+`compareAndPut` under a lock file, and the ledger re-reads the record just before writing, so of two processes
+on one host sharing the file only one claims an order. The lock file (hostname, pid, start time) is never taken
+over automatically: a lock that cannot be created in time fails the operation closed, and the operator removes a
+crash leftover with `newegg-marketplace-mcp --release-store-lock` (this host and a dead pid, else `--force`; only with every server of that store stopped, one run at a time; not
+across containers that share a volume). A lock that cannot be removed after a write reports that the write may
+have succeeded (the order is blocked by its own record).
+The path must be absolute; a missing file with a leftover lock or temp file beside it refuses to start (it was
+lost); on POSIX the file must be owned by the running user and the directory not other-writable unless sticky. The window is `NEWEGG_MCP_LABEL_CREATE_GUARD_HOURS`
+(1 to 720, default 24; SDK `labelCreateGuardWindowMs`). An order that already lists a package is a preview
+blocker (it was a warning), because a label bought outside this client leaves only that trace.
 
 **Cost ceiling (MCP only, on by default).** `NEWEGG_MCP_MAX_LABEL_AMOUNT` (default 100; a plain decimal above 0 and at
 most 99,999.99, in the marketplace currency: USD on us/b2b, CAD on ca, and the number is compared as-is, with

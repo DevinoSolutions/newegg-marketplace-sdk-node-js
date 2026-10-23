@@ -23,7 +23,9 @@
  * apply, nothing sent). The guard is checked FIRST at apply, before any quote or order read, so a
  * blocked order makes no request. No tool argument clears it: the SDK's acknowledgement option is
  * deliberately not exposed, because an agent could simply pass it back. The operator verifies the
- * order in the Seller Portal and restarts the server (the record is in memory).
+ * order in the Seller Portal and restarts the server; the record is in memory unless
+ * NEWEGG_MCP_OPERATION_STORE_FILE keeps it in a file (T-6280), in which case the operator also clears
+ * it from the shell with `--clear-label-guard`, a command no tool can reach.
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -154,10 +156,24 @@ const CREATE_BLOCK_GUIDANCE =
   "clears this block: only after that check, the operator restarts this MCP server (the record " +
   "is kept in memory) and then creates the preview again.";
 
+/** The same remedy when the ledger lives in a file: a restart alone no longer forgets it. */
+const PERSISTENT_CREATE_BLOCK_GUIDANCE =
+  "Verify in the Seller Portal whether a label already exists for this order (the order status " +
+  "can lag, so newegg_orders_get_status alone cannot prove there is none). No tool argument " +
+  "clears this block, and a restart does not either (the record is kept in a file): only after " +
+  "that check, the operator runs `newegg-marketplace-mcp --clear-label-guard <marketplace> " +
+  "<order number>` on the server host and restarts this MCP server, and then the preview can be " +
+  "created again.";
+
 /** Passed to the SDK so its blockers and errors carry the MCP remedy instead of the SDK option. */
-const createGuardOptions: ShippingLabelCreateOptions = {
-  priorAttemptGuidance: CREATE_BLOCK_GUIDANCE,
-};
+function createGuardOptions(ctx: ToolContext): ShippingLabelCreateOptions {
+  return {
+    priorAttemptGuidance:
+      ctx.config.operationStoreFile === undefined
+        ? CREATE_BLOCK_GUIDANCE
+        : PERSISTENT_CREATE_BLOCK_GUIDANCE,
+  };
+}
 
 /** The cost of a label, or the reason it could not be determined. */
 type LabelCost =
@@ -507,7 +523,10 @@ async function createPreflight(
   input: ShippingLabelInputs["shippingLabelCreate"],
 ): Promise<ToolResult | undefined> {
   try {
-    await ctx.client.shippingLabels.assertCreateNotBlocked(input.orderNumber, createGuardOptions);
+    await ctx.client.shippingLabels.assertCreateNotBlocked(
+      input.orderNumber,
+      createGuardOptions(ctx),
+    );
     return undefined;
   } catch (error) {
     if (error instanceof LabelCreateGuardError) return createBlockedResult(error);
@@ -529,8 +548,8 @@ export const shippingLabelPreviewCreateTool: ToolDefinition<
     "code, UPS size and weight limits, ZIP/postal code) and reads the order to report BLOCKERS " +
     "(unknown order, Newegg-fulfilled, not unshipped, seller part number not on the order, " +
     "quantity not the whole line, non-US destination) and WARNINGS (existing packages, uncovered " +
-    "lines, signature surcharge) and BLOCKS an order whose earlier label create (this server process, " +
-    "last 24 h) timed out, failed with an unknown outcome or succeeded, because the order status can lag " +
+    "lines, signature surcharge) and BLOCKS an order whose earlier label create (last 24 h by default; " +
+    "remembered across restarts only when the operator configured a persistent ledger) timed out, failed with an unknown outcome or succeeded, because the order status can lag " +
     "and a second create would buy a second label (priorAttempt reports it). No tool argument clears " +
     "that block: the operator verifies the order in the Seller Portal and restarts the server. " +
     "Unless NEWEGG_MCP_MAX_LABEL_AMOUNT=unlimited it also quotes the label " +
@@ -545,7 +564,7 @@ export const shippingLabelPreviewCreateTool: ToolDefinition<
     runLabelPreview(
       ctx,
       "shippingLabelCreate",
-      () => ctx.client.shippingLabels.previewCreate(input, createGuardOptions),
+      () => ctx.client.shippingLabels.previewCreate(input, createGuardOptions(ctx)),
       (normalized) => quoteCreateCost(ctx, normalized),
     ),
 };
@@ -584,7 +603,7 @@ export const shippingLabelApplyCreateTool: ToolDefinition<
       input.previewId,
       (stored) => quoteCreateCost(ctx, stored),
       async (stored) => {
-        const result = await ctx.client.shippingLabels.create(stored, createGuardOptions);
+        const result = await ctx.client.shippingLabels.create(stored, createGuardOptions(ctx));
         return {
           correlationId: result.correlationId,
           marketplace: result.marketplace,

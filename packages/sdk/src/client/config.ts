@@ -37,6 +37,7 @@ export interface ResolvedConfig {
   fetch: typeof globalThis.fetch;
   rateLimitStore: RateLimitStore;
   operationStore: OperationStore;
+  labelCreateGuardWindowMs: number;
   autoFeedThreshold: number;
   maxQuantity?: number;
   reportFileDownloader?: ReportFileDownloader;
@@ -151,6 +152,27 @@ function resolveBaseUrl(raw: string | undefined, allowCustom: boolean, logger: N
   return url;
 }
 
+const HOUR_MS = 3_600_000;
+const DEFAULT_LABEL_CREATE_GUARD_WINDOW_MS = 24 * HOUR_MS;
+const MIN_LABEL_CREATE_GUARD_WINDOW_MS = HOUR_MS;
+const MAX_LABEL_CREATE_GUARD_WINDOW_MS = 30 * 24 * HOUR_MS;
+
+function resolveLabelCreateGuardWindow(value: unknown): number {
+  if (value === undefined) return DEFAULT_LABEL_CREATE_GUARD_WINDOW_MS;
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < MIN_LABEL_CREATE_GUARD_WINDOW_MS ||
+    value > MAX_LABEL_CREATE_GUARD_WINDOW_MS
+  ) {
+    fail(
+      'Configuration field "labelCreateGuardWindowMs" must be a whole number of milliseconds ' +
+        "between 1 hour (3600000) and 30 days (2592000000).",
+    );
+  }
+  return value;
+}
+
 function resolveRetry(retry: RetryOptions | undefined): Required<RetryOptions> {
   const maxAttempts = retry?.maxAttempts ?? 3;
   const baseDelayMs = retry?.baseDelayMs ?? 250;
@@ -244,6 +266,7 @@ export function resolveConfig(config: NeweggClientConfig): ResolvedConfig {
     fetch: fetchImpl,
     rateLimitStore: config.rateLimitStore ?? new InMemoryRateLimitStore(),
     operationStore: config.operationStore ?? new InMemoryOperationStore(),
+    labelCreateGuardWindowMs: resolveLabelCreateGuardWindow(config.labelCreateGuardWindowMs),
     autoFeedThreshold,
     maxQuantity,
     reportFileDownloader: config.reportFileDownloader,

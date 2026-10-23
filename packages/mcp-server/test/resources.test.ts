@@ -116,6 +116,13 @@ describe("resources", () => {
     for (const limits of await reported(makeEnv({ NEWEGG_MCP_MAX_LABEL_AMOUNT: "49.99" }))) {
       expect(limits.maxLabelAmount).toBe(49.99);
     }
+    // T-6280: the guard window is reported (never the operation store file path).
+    for (const limits of await reported(makeEnv())) {
+      expect(limits.labelCreateGuardHours).toBe(24);
+    }
+    for (const limits of await reported(makeEnv({ NEWEGG_MCP_LABEL_CREATE_GUARD_HOURS: "72" }))) {
+      expect(limits.labelCreateGuardHours).toBe(72);
+    }
   });
 
   it("resolves the feeds template resource to a status payload", async () => {
