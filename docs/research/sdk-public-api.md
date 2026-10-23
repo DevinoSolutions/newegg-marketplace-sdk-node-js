@@ -2576,8 +2576,11 @@ export class NeweggError extends Error {
   // masked as well. A bare `name: value` (colon only) counts for multi-word names (SellerID, SecretKey, Access-Token,
   // client_secret, X-Api-Key, ...) and Authorization; for the single generic words (token, password, passwd, secret) a
   // colon is prose and is left alone (`Unexpected token: }`, and also `Password: hunter2`, a documented limit), while
-  // `=`, a quoted name, a quoted value (`{ token: 'x' }`) and an object-literal key with a number / boolean value
-  // (`{ password: 12345 }`) are masked.
+  // `=`, a quoted name, a quoted value (`{ token: 'x' }`, escaped quotes inside it included) and an object-literal
+  // key with a number / boolean value that ends at `,`, `}` or the end (`{ a: 1, password: 12345 }`; not
+  // `Failed, token: 3 attempts left`) are masked. A number or bigint kept under a credential key is masked too.
+  // Inside `details`, an Error, a Map and any other class instance are cleaned like a cause (message, stack, cause,
+  // entries, own properties; an object whose copy could not work becomes a redacted text summary), not passed through.
   // `cause` (standard Error.cause) is sanitized too: URL credentials are removed from the cause's message, stack,
   // string properties and nested causes, so util.inspect / console.log of the error cannot print them. The value of
   // a credential name (sellerid, token, secret, password, api-key, Authorization incl. "Bearer ...", SecretKey, ...,
@@ -2610,6 +2613,8 @@ export class NeweggMarketplaceMismatchError extends NeweggConfigurationError {
   readonly actualMarketplace?: NeweggMarketplace;
 }
 export class NeweggValidationError extends NeweggError {
+  // Copies of the issues passed in: credential values (sellerid=, Authorization: Bearer ..., ...) are redacted from
+  // `path` and `message` like `NeweggError.message`; `inputIndex` and any other field are kept.
   readonly issues: Array<{ path: string; message: string; inputIndex?: number }>;
 }
 export class NeweggAuthenticationError extends NeweggError {}

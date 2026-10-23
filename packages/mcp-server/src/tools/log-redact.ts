@@ -94,25 +94,37 @@ const GENERIC_PATTERN = namePattern(CREDENTIAL_WORDS.filter((words) => !isHeader
 const ANY_NAME_PATTERN = namePattern(CREDENTIAL_WORDS);
 
 /**
+ * A quoted value: `"..."`, `'...'` or a backtick (`\x60`) string in which a backslash escapes the
+ * character after it, so `"a\"b"` is one value. It ends at its closing quote or, when there is none,
+ * at the end of the line. Only the quote that opened it closes it.
+ */
+const QUOTED_VALUE = String.raw`"(?:[^"\\\r\n]|\\.)*"?|'(?:[^'\\\r\n]|\\.)*'?|\x60(?:[^\x60\\\r\n]|\\.)*\x60?`;
+
+/** An unquoted value: up to the next delimiter, a backslash escaping the character after it. */
+const UNQUOTED_VALUE = String.raw`(?:(?:bearer|basic|digest)\s+)?(?:[^&\s#"'\x60<>,;\\]|\\.?)+`;
+
+/**
  * `name=value`, `"name":"value"` and `{ name: 'value' }` for any credential name, and `name: value`
- * for a header-like one; the value runs up to the next delimiter. A `Bearer` / `Basic` / `Digest`
- * scheme word is part of the value. No nested quantifiers: linear. Groups 1 and 2 are a header-like
- * name and its separator, 3 and 4 a generic name and its separator. A value may be quoted with
- * `'`, `"` or a backtick (`\x60`).
+ * for a header-like one; a value is {@link QUOTED_VALUE} or {@link UNQUOTED_VALUE}. A `Bearer` /
+ * `Basic` / `Digest` scheme word is part of an unquoted value. Every quantifier is over a character
+ * class or an escape pair and nothing follows the value, so the scan is linear. Groups 1 to 3 are a
+ * header-like name, its separator and its value; 4 is a generic name, then 5 and 6 a `=` (or
+ * quoted-name colon) separator and value, 7 and 8 a bare colon and a value that must be quoted.
  */
 const CREDENTIAL_TEXT = new RegExp(
-  String.raw`(?<![\w.-])(?:(${HEADER_LIKE_PATTERN})(["']?\s*[:=]\s*["'\x60]?)|(${GENERIC_PATTERN})(["']?\s*=\s*["'\x60]?|["']\s*:\s*["'\x60]?|\s*:\s*["'\x60]))((?:(?:bearer|basic|digest)\s+)?[^&\s#"'\x60<>,;]+)`,
+  String.raw`(?<![\w.-])(?:(${HEADER_LIKE_PATTERN})(["']?\s*[:=]\s*)(${QUOTED_VALUE}|${UNQUOTED_VALUE})|(${GENERIC_PATTERN})(?:(["']?\s*=\s*|["']\s*:\s*)(${QUOTED_VALUE}|${UNQUOTED_VALUE})|(\s*:\s*)(${QUOTED_VALUE})))`,
   "gi",
 );
 
 /**
  * An object-literal entry (`util.inspect` output, JSON): after `{` or `,` a credential key whose
- * value is a number, `true`, `false`, `null` or `undefined` (the quoted forms are in
- * {@link CREDENTIAL_TEXT}). Prose has no `{` / `,` in front of the name and carries no such value.
- * The prefix is consumed rather than looked behind, so the scan stays linear.
+ * value is a number, `true`, `false`, `null` or `undefined` and is followed by `,`, `}`, `]` or the
+ * end of the text (the quoted forms are in {@link CREDENTIAL_TEXT}). Prose such as `Failed, token: 3
+ * attempts left` has no such ending and is left alone; `{ a: 1, password: 12345 }` is masked. The
+ * prefix is consumed rather than looked behind, so the scan stays linear.
  */
 const OBJECT_LITERAL_TEXT = new RegExp(
-  String.raw`([{,]\s*["']?)(${ANY_NAME_PATTERN})(["']?\s*:\s*)(-?\d[^\s,;&#"'\x60<>}\])]*|true|false|null|undefined)(?![\w.-])`,
+  String.raw`([{,]\s*["']?)(${ANY_NAME_PATTERN})(["']?\s*:\s*)(-?\d[^\s,;&#"'\x60<>}\])]*|true|false|null|undefined)(?=\s*(?:[,}\]]|$))`,
   "gi",
 );
 
@@ -151,9 +163,9 @@ function decodePercent(text: string): string {
 
 const REDACTED = "[redacted]";
 
-/** Masks a cookie value, keeping its quotes (`"cookie":"a=b"` -> `"cookie":"[redacted]"`). */
-function maskCookieValue(value: string): string {
-  const quote = value.startsWith('"') || value.startsWith("'") ? value.charAt(0) : "";
+/** Masks a value, keeping its quotes (`"cookie":"a=b"` -> `"cookie":"[redacted]"`). */
+function maskValue(value: string): string {
+  const quote = /^["'`]/.test(value) ? value.charAt(0) : "";
   return quote !== "" && value.length > 1 && value.endsWith(quote)
     ? `${quote}${REDACTED}${quote}`
     : `${quote}${REDACTED}`;
@@ -170,7 +182,7 @@ const maskCredentials = (text: string): string =>
         colonValue: string | undefined,
         equals: string | undefined,
         equalsValue: string | undefined,
-      ) => `${name}${colon ?? equals ?? ""}${maskCookieValue(colonValue ?? equalsValue ?? "")}`,
+      ) => `${name}${colon ?? equals ?? ""}${maskValue(colonValue ?? equalsValue ?? "")}`,
     )
     .replace(
       CREDENTIAL_TEXT,
@@ -178,9 +190,14 @@ const maskCredentials = (text: string): string =>
         _match,
         headerName: string | undefined,
         headerSeparator: string | undefined,
+        headerValue: string | undefined,
         name: string | undefined,
-        separator: string | undefined,
-      ) => `${headerName ?? name ?? ""}${headerSeparator ?? separator ?? ""}${REDACTED}`,
+        equalsSeparator: string | undefined,
+        equalsValue: string | undefined,
+        colonSeparator: string | undefined,
+        colonValue: string | undefined,
+      ) =>
+        `${headerName ?? name ?? ""}${headerSeparator ?? equalsSeparator ?? colonSeparator ?? ""}${maskValue(headerValue ?? equalsValue ?? colonValue ?? "")}`,
     )
     .replace(
       OBJECT_LITERAL_TEXT,

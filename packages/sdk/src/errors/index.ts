@@ -151,11 +151,16 @@ export interface NeweggValidationIssue {
 }
 
 export class NeweggValidationError extends NeweggError {
+  /** Copies of the issues passed in, with credential values redacted from `path` and `message`. */
   readonly issues: NeweggValidationIssue[];
   constructor(message: string, issues: NeweggValidationIssue[], init: NeweggErrorInit = {}) {
     super("validation", message, init);
     this.name = "NeweggValidationError";
-    this.issues = issues;
+    this.issues = issues.map((issue) => ({
+      ...issue,
+      path: redactCredentialText(issue.path),
+      message: redactCredentialText(issue.message),
+    }));
   }
   override toJSON(): Record<string, unknown> {
     return { ...super.toJSON(), issues: this.issues };
