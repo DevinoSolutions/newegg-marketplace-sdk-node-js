@@ -78,4 +78,11 @@ describe("the config never reveals secrets when printed (T-6215)", () => {
     expect(text).toContain("marketplace");
     expect(text).toContain("127.0.0.1");
   });
+
+  // T-6468: `{ ...config.http }` is plain data and cannot carry the redacting toJSON, so it holds the
+  // raw token. Hiding the token from spreads (non-enumerable) would silently DROP it from such a copy
+  // and turn an embedder's HTTP auth off, so the copy keeps it on purpose; treat it as a secret holder.
+  it("a spread copy of config.http keeps the bearer token, so auth is never silently dropped", () => {
+    expect({ ...config.http }.bearerToken).toBe(BEARER);
+  });
 });

@@ -72,3 +72,18 @@ describe("generated secrets are never refused (T-6215)", () => {
     expect(rejected).toEqual([]);
   });
 });
+
+// T-6468: patterns the first T-6215 estimator still let through. Each is 32+ characters, so only the
+// predictability estimate can refuse it.
+const MISSED_PATTERNS: Array<[label: string, token: string]> = [
+  ["two interleaved ascending runs", "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"],
+  ["three interleaved ascending runs", "a1xb2yc3zd4we5vf6ug7th8si9rj0qk1"],
+  ["step-2 alphabets", "acegikmoqsuwybdfhjlnprtvxz02468a"],
+  ["descending step-2 alphabets", "ywusqomkigecazxvtrpnljhfdb864209"],
+];
+
+describe("interleaved and step-2 patterns are refused (T-6468)", () => {
+  it.each(MISSED_PATTERNS)("%s", (_label, token) => {
+    expect(weakBearerTokenReason(token)).toMatch(/too predictable/);
+  });
+});

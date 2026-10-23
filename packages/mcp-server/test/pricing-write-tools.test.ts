@@ -489,3 +489,72 @@ describe("NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT config", () => {
     expect(loadMcpConfigFromEnv(makeEnv()).limits.maxPriceChangePercent).toBe(50);
   });
 });
+
+// T-6468: a live price Newegg does not report leaves the percent cap with nothing to compare
+// against; that must block, not silently skip the guard (ADR 0005: fail closed).
+describe("price write tools - unreadable current price (T-6468)", () => {
+  /** A price book whose read reply carries no SellingPrice, or none after the first `readsWithPrice` reads. */
+  function nullPriceBook(readsWithPrice: number) {
+    let reads = 0;
+    const routes: MockRoute[] = [
+      {
+        method: "PUT",
+        pathPattern: /contentmgmt\/item\/inventoryandprice/,
+        reply: (req) => {
+          const body = req.bodyJson as { SellingPrice: string };
+          return { status: 200, body: { Result: "1", SellingPrice: body.SellingPrice } };
+        },
+      },
+      {
+        method: "POST",
+        pathPattern: /contentmgmt\/item\/price\?/,
+        reply: () => {
+          reads += 1;
+          return {
+            status: 200,
+            body: {
+              Active: "1",
+              SellerPartNumber: "SKU-1",
+              ...(reads <= readsWithPrice ? { SellingPrice: 20 } : {}),
+            },
+          };
+        },
+      },
+    ];
+    return routes;
+  }
+
+  it("blocks the preview and issues no previewId when the current price is not reported", async () => {
+    const harness = await startHarness({ env: writesEnv(), routes: nullPriceBook(0) });
+    try {
+      const preview = await callTool(harness.mcp, PREVIEW, { updates: [update("SKU-1", 18)] });
+      expect(preview.isError).toBe(false);
+      expect(preview.json.previewId).toBeUndefined();
+      expect(preview.json.blockedItemCount).toBe(1);
+      const item = (preview.json.items as Array<Record<string, unknown>>)[0];
+      expect(item?.status).toBe("blocked");
+      expect((item?.blockers as string[]).join(" ")).toContain(
+        "NEWEGG_MCP_MAX_PRICE_CHANGE_PERCENT",
+      );
+      expect(harness.calls.some((c) => c.method === "PUT")).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("refuses the apply (nothing sent) when the live price stops being reported after the preview", async () => {
+    const harness = await startHarness({ env: writesEnv(), routes: nullPriceBook(1) });
+    try {
+      const preview = await callTool(harness.mcp, PREVIEW, { updates: [update("SKU-1", 18)] });
+      expect(typeof preview.json.previewId).toBe("string");
+      const applied = await callTool(harness.mcp, APPLY, {
+        previewId: preview.json.previewId as string,
+      });
+      expect(applied.isError).toBe(true);
+      expect(applied.json.errorCode).toBe("preview_stale");
+      expect(harness.calls.some((c) => c.method === "PUT")).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+});

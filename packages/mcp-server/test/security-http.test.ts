@@ -65,7 +65,7 @@ function rawRequest(opts: {
   port: number;
   method: string;
   path: string;
-  headers: Record<string, string>;
+  headers: Record<string, string | string[]>;
   body?: string;
 }): Promise<RawResponse> {
   const started = Date.now();
@@ -612,6 +612,77 @@ describe("allowed origins for embedders and fetch metadata (T-6215)", () => {
       method: "OPTIONS",
       path: "/mcp",
       headers: { origin: "https://evil.example", "sec-fetch-site": "cross-site" },
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
+// T-6468 (review leftover from #70): a header sent twice must fail closed. Node joins duplicate
+// Origin / Sec-Fetch-Site values with ", " (and an array form must never be read as its first
+// element), so neither a good-then-bad nor a bad-then-good pair may slip past the guards.
+describe("duplicate Origin and Sec-Fetch-Site headers fail closed (T-6468)", () => {
+  const good = "https://ok.example";
+  const dupOrigins: string[][] = [
+    [good, "https://evil.example"],
+    ["https://evil.example", good],
+    [good, good],
+  ];
+
+  it.each(dupOrigins)("refuses POST /mcp with Origin sent twice (%s, %s)", async (first, second) => {
+    const { handle: h } = await start(httpConfigWith({ allowedOrigins: [good] }));
+    const res = await rawRequest({
+      port: h.port,
+      method: "POST",
+      path: "/mcp",
+      headers: { ...MCP_HEADERS, origin: [first as string, second as string] },
+      body: INIT_BODY,
+    });
+    expect(res.status).toBe(403);
+    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+    expect(res.body).not.toContain("evil.example");
+  });
+
+  it("refuses an OPTIONS preflight with Origin sent twice and sets no CORS headers", async () => {
+    const { handle: h } = await start(httpConfigWith({ allowedOrigins: [good] }));
+    const res = await rawRequest({
+      port: h.port,
+      method: "OPTIONS",
+      path: "/mcp",
+      headers: { origin: [good, "https://evil.example"] },
+    });
+    expect(res.status).toBe(403);
+    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  const dupSites: string[][] = [
+    ["same-origin", "cross-site"],
+    ["cross-site", "same-origin"],
+    ["none", "cross-site"],
+    ["same-origin", "same-origin"],
+  ];
+
+  it.each(dupSites)(
+    "refuses POST /mcp with no Origin and Sec-Fetch-Site sent twice (%s, %s)",
+    async (first, second) => {
+      const { handle: h } = await start(httpConfigWith());
+      const res = await rawRequest({
+        port: h.port,
+        method: "POST",
+        path: "/mcp",
+        headers: { ...MCP_HEADERS, "sec-fetch-site": [first as string, second as string] },
+        body: INIT_BODY,
+      });
+      expect(res.status).toBe(403);
+    },
+  );
+
+  it("refuses /healthz with no Origin and Sec-Fetch-Site sent twice", async () => {
+    const { handle: h } = await start(httpConfigWith());
+    const res = await rawRequest({
+      port: h.port,
+      method: "GET",
+      path: "/healthz",
+      headers: { "sec-fetch-site": ["same-origin", "cross-site"] },
     });
     expect(res.status).toBe(403);
   });
