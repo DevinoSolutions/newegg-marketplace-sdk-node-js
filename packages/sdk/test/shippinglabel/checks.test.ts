@@ -92,15 +92,17 @@ describe("checkCreateAgainstOrder", () => {
     },
   );
 
-  it("warns, without blocking, when an unshipped order already lists packages", () => {
+  it("blocks when an unshipped order already lists packages (a label may already be bought)", () => {
     const f = create(order({ packages: [{}, {}] as Order["packages"] }));
-    expect(f.blockers).toEqual([]);
-    expect(joined(f.warnings)).toContain("already lists 2 package(s)");
+    expect(joined(f.blockers)).toContain("already lists 2 package(s)");
+    expect(joined(f.blockers)).toContain("Seller Portal");
+    expect(joined(f.warnings)).not.toContain("already lists");
   });
 
-  it("does not warn about listed packages on an order that is not unshipped", () => {
+  it("does not report listed packages twice on an order that is not unshipped", () => {
     const f = create(order({ status: "shipped", packages: [{}] as Order["packages"] }));
     expect(joined(f.warnings)).not.toContain("already lists");
+    expect(joined(f.blockers)).not.toContain("already lists");
   });
 
   it("blocks a part number that is not on the order (SL010)", () => {
