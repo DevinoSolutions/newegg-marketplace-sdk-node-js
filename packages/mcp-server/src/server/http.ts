@@ -111,9 +111,14 @@ type BodyOutcome =
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly reason: "too_large" | "bad_json" };
 
+/**
+ * The header as one string. A repeated header is joined, never reduced to its first value, so a
+ * duplicate Origin / Sec-Fetch-Site / Authorization cannot hide a second value from the guards (the
+ * joined text then fails to match an allowlist or a token, which is the closed outcome).
+ */
 function firstHeader(req: IncomingMessage, name: string): string | undefined {
   const value = req.headers[name];
-  return Array.isArray(value) ? value[0] : value;
+  return Array.isArray(value) ? value.join(", ") : value;
 }
 
 function jsonRpcError(id: string | number | null, code: number, message: string): unknown {

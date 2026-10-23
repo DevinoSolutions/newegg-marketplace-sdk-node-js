@@ -199,6 +199,9 @@ export function makeLiveClient(): NeweggClient {
     marketplace: marketplace(),
     // Bind the keys to the marketplace they were issued for; a mismatch throws before any request.
     credentialMarketplace: credentialMarketplace() as NeweggMarketplace,
+    // Deliberately NO allowCustomBaseUrl: the live suite hits the real account, so a base URL outside
+    // newegg.com (where the keys would be sent) fails with the SDK's allowlist error instead of
+    // being trusted. Real overrides such as api.newegg.com variants pass the allowlist as is.
     ...(env.NEWEGG_API_BASE_URL ? { baseUrl: env.NEWEGG_API_BASE_URL } : {}),
   });
 }

@@ -628,19 +628,22 @@ describe("duplicate Origin and Sec-Fetch-Site headers fail closed (T-6468)", () 
     [good, good],
   ];
 
-  it.each(dupOrigins)("refuses POST /mcp with Origin sent twice (%s, %s)", async (first, second) => {
-    const { handle: h } = await start(httpConfigWith({ allowedOrigins: [good] }));
-    const res = await rawRequest({
-      port: h.port,
-      method: "POST",
-      path: "/mcp",
-      headers: { ...MCP_HEADERS, origin: [first as string, second as string] },
-      body: INIT_BODY,
-    });
-    expect(res.status).toBe(403);
-    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
-    expect(res.body).not.toContain("evil.example");
-  });
+  it.each(dupOrigins)(
+    "refuses POST /mcp with Origin sent twice (%s, %s)",
+    async (first, second) => {
+      const { handle: h } = await start(httpConfigWith({ allowedOrigins: [good] }));
+      const res = await rawRequest({
+        port: h.port,
+        method: "POST",
+        path: "/mcp",
+        headers: { ...MCP_HEADERS, origin: [first as string, second as string] },
+        body: INIT_BODY,
+      });
+      expect(res.status).toBe(403);
+      expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+      expect(res.body).not.toContain("evil.example");
+    },
+  );
 
   it("refuses an OPTIONS preflight with Origin sent twice and sets no CORS headers", async () => {
     const { handle: h } = await start(httpConfigWith({ allowedOrigins: [good] }));

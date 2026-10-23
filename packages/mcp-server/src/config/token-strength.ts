@@ -6,12 +6,16 @@
  * A length floor plus a count of different characters let patterned secrets through
  * (`"abcdefghijkl".repeat(3)`, keyboard rows, ascending runs). The rule therefore also estimates how
  * many bits of the token are unpredictable. The token is parsed greedily: a stretch of 4+ characters
- * that repeats earlier text, steps up or down by one character code (`abcd`, `4321`) or follows a
- * keyboard row (`asdf`) costs a flat {@link PIECE_BITS}, every other character costs
- * `log2(distinct characters in the token)` bits. Random hex, base64 and base64url output keep almost
+ * that repeats earlier text, steps up or down by one or two character codes (`abcd`, `4321`,
+ * `acegik`) or follows a keyboard row (`asdf`) costs {@link PIECE_BITS} (never more than the same
+ * characters would cost one by one), every other character costs `log2(distinct characters in the
+ * token)` bits. The token is also read as 2-4 interleaved lanes (`a1b2c3` is the two runs `abc` and
+ * `123`) and the cheapest reading wins. Random hex, base64 and base64url output keep almost
  * all of their bits (a 32-character hex token estimates at ~128, a 64-character one at ~256) while the
  * patterned examples above fall far under {@link MIN_ENTROPY_BITS}. No heuristic can recognise a
- * non-repeating dictionary phrase; generate secrets instead of choosing them.
+ * non-repeating dictionary phrase, and patterns built from short chunks of different kinds
+ * (`abcd1234efgh5678...`, a keyboard column) can still pass; generate secrets instead of choosing
+ * them.
  *
  * Reasons never contain the secret.
  */
@@ -45,11 +49,11 @@ function repeatLength(token: string, index: number): number {
   return best;
 }
 
-/** Length of the stretch at `index` whose character codes move by a constant +1 or -1. */
+/** Length of the stretch at `index` whose character codes move by a constant +-1 or +-2. */
 function sequenceLength(lower: string, index: number): number {
   if (index + 1 >= lower.length) return 0;
   const step = lower.charCodeAt(index + 1) - lower.charCodeAt(index);
-  if (step !== 1 && step !== -1) return 0;
+  if (Math.abs(step) !== 1 && Math.abs(step) !== 2) return 0;
   let length = 2;
   while (
     index + length < lower.length &&
@@ -83,10 +87,9 @@ function keyboardLength(lower: string, index: number): number {
   return best;
 }
 
-/** Estimated unpredictable bits in `token` (see the module comment). */
-function estimateEntropyBits(token: string): number {
+/** Bits for `token` read as one stream, with `literalBits` for every character outside a piece. */
+function streamBits(token: string, literalBits: number): number {
   const lower = token.toLowerCase();
-  const literalBits = Math.log2(Math.max(2, new Set(token).size));
   let bits = 0;
   let index = 0;
   while (index < token.length) {
@@ -96,7 +99,7 @@ function estimateEntropyBits(token: string): number {
       keyboardLength(lower, index),
     );
     if (piece >= MIN_PIECE_LENGTH) {
-      bits += PIECE_BITS;
+      bits += Math.min(PIECE_BITS, piece * literalBits);
       index += piece;
     } else {
       bits += literalBits;
@@ -104,6 +107,26 @@ function estimateEntropyBits(token: string): number {
     }
   }
   return bits;
+}
+
+/** Longest interleave tried: `a1b2` is 2 lanes, `a1xb2y` is 3. */
+const MAX_LANES = 4;
+
+/** Estimated unpredictable bits in `token` (see the module comment). */
+function estimateEntropyBits(token: string): number {
+  // Every reading prices a literal character from the whole token's alphabet, so a lane that
+  // happens to use few characters cannot look cheaper than it is.
+  const literalBits = Math.log2(Math.max(2, new Set(token).size));
+  let best = streamBits(token, literalBits);
+  for (let lanes = 2; lanes <= MAX_LANES; lanes += 1) {
+    let total = 0;
+    for (let lane = 0; lane < lanes; lane += 1) {
+      const chars = [...token].filter((_char, position) => position % lanes === lane);
+      total += streamBits(chars.join(""), literalBits);
+    }
+    best = Math.min(best, total);
+  }
+  return best;
 }
 
 /**
