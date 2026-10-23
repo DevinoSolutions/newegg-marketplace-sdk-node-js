@@ -33,7 +33,7 @@ describe("labelCreateGuardWindowMs", () => {
     ).toBe(30 * 24 * HOUR);
   });
 
-  it.each([0, HOUR - 1, 30 * 24 * HOUR + 1, 1.5 * HOUR, Number.NaN, Infinity, -HOUR, "24"])(
+  it.each([0, HOUR - 1, 30 * 24 * HOUR + 1, HOUR + 0.5, Number.NaN, Infinity, -HOUR, "24"])(
     "rejects %s",
     (value) => {
       const config = base({ labelCreateGuardWindowMs: value as unknown as number });
