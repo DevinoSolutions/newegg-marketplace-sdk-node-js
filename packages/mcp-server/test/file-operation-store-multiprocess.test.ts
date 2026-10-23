@@ -16,25 +16,34 @@ const STORE_MODULE = new URL("../dist/server/file-operation-store.js", import.me
 const KEY = "label-create:ca:900000001";
 const PROCESSES = 4;
 const ITERATIONS = 50;
-/** Rounds raced at once; every child of a batch waits for the same wall-clock instant. */
-const BATCH = 25;
-const BARRIER_MS = 3_000;
+/**
+ * Rounds raced at once. Kept small: this file shares the CI runner with every other test file, and a
+ * crowd of children would starve them (the other files' 5 s timeouts, T-6280 round 2).
+ */
+const CONCURRENT_ROUNDS = 3;
 
+/**
+ * A child loads the store, says "ready", and then WAITS ON STDIN (no busy loop) for the parent's
+ * "go", which the parent sends to all children of a round together, so the claims overlap.
+ */
 const CHILD = `
-const [file, startAt, id, moduleUrl, lockTimeoutMs] = process.argv.slice(1);
+const [file, id, moduleUrl, lockTimeoutMs] = process.argv.slice(1);
 (async () => {
   const { FileOperationStore } = await import(moduleUrl);
   const store = new FileOperationStore(file, { lockTimeoutMs: Number(lockTimeoutMs) });
   const op = { state: "submitting", payloadHash: "h" + id, requestIds: [id], updatedAt: new Date().toISOString() };
-  while (Date.now() < Number(startAt)) { /* spin until the shared start instant */ }
+  process.stdout.write("ready\\n");
+  await new Promise((resolve) => process.stdin.once("data", resolve));
   try {
     const ok = await store.compareAndPut(${JSON.stringify(KEY)}, undefined, op);
-    process.stdout.write(JSON.stringify({ id, ok }));
+    process.stdout.write("R" + JSON.stringify({ id, ok }));
   } catch (error) {
-    process.stdout.write(JSON.stringify({ id, err: String(error && error.code) }));
+    process.stdout.write("R" + JSON.stringify({ id, err: String(error && error.code) }));
   }
+  process.exit(0);
 })().catch((error) => {
-  process.stdout.write(JSON.stringify({ id, crash: String(error && error.message).slice(0, 200) }));
+  process.stdout.write("R" + JSON.stringify({ id, crash: String(error && error.message).slice(0, 200) }));
+  process.exit(0);
 });
 `;
 
@@ -51,72 +60,72 @@ afterAll(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
 
-function runChild(file: string, startAt: number, id: string, lockTimeoutMs: number) {
-  return new Promise<Outcome>((resolve) => {
-    const child = spawn(
-      process.execPath,
-      [
-        "-e",
-        CHILD,
-        file,
-        String(startAt),
-        id,
-        pathToFileURL(STORE_MODULE.pathname.replace(/^\/([A-Za-z]:)/, "$1")).href,
-        String(lockTimeoutMs),
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-    let out = "";
-    let err = "";
-    child.stdout.on("data", (chunk: Buffer) => (out += chunk.toString()));
-    child.stderr.on("data", (chunk: Buffer) => (err += chunk.toString()));
+interface Child {
+  ready: Promise<void>;
+  go: () => void;
+  outcome: Promise<Outcome>;
+}
+
+function startChild(file: string, id: string, lockTimeoutMs: number): Child {
+  const moduleUrl = pathToFileURL(STORE_MODULE.pathname.replace(/^\/([A-Za-z]:)/, "$1")).href;
+  const child = spawn(process.execPath, ["-e", CHILD, file, id, moduleUrl, String(lockTimeoutMs)], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let out = "";
+  let err = "";
+  let markReady: () => void = () => undefined;
+  const ready = new Promise<void>((resolve) => {
+    markReady = resolve;
+  });
+  child.stdout.on("data", (chunk: Buffer) => {
+    out += chunk.toString();
+    if (out.includes("ready" + String.fromCharCode(10))) markReady();
+  });
+  child.stderr.on("data", (chunk: Buffer) => (err += chunk.toString()));
+  const outcome = new Promise<Outcome>((resolve) => {
     child.on("close", (code) => {
+      markReady();
+      const at = out.indexOf("R{");
       try {
-        resolve(JSON.parse(out) as Outcome);
+        resolve(JSON.parse(out.slice(at + 1)) as Outcome);
       } catch {
         resolve({ id, crash: `exit ${code}: ${out.slice(0, 100)} ${err.slice(0, 200)}` });
       }
     });
   });
+  return { ready, go: () => child.stdin.write("go" + String.fromCharCode(10)), outcome };
 }
 
-/** Races `PROCESSES` children over a fresh store file in each of `rounds` directories at once. */
-async function race(rounds: number, stale: boolean) {
-  const startAt = Date.now() + BARRIER_MS;
-  const roundDirs = Array.from({ length: rounds }, () => {
-    const dir = mkdtempSync(join(tmpdir(), "newegg-mp-"));
-    dirs.push(dir);
-    const file = join(dir, "operations.json");
-    if (stale) {
-      // A lock a process left behind (its pid is not alive), beside an existing ledger file.
-      writeFileSync(file, JSON.stringify({ version: 1, operations: {} }), { mode: 0o600 });
-      writeFileSync(
-        `${file}.lock`,
-        JSON.stringify({
-          hostname: hostname(),
-          pid: 2 ** 22 + 4242,
-          startedAt: new Date(Date.now() - 3_600_000).toISOString(),
-        }),
-      );
-    }
-    return { dir, file };
-  });
-  const results = await Promise.all(
-    roundDirs.map(async ({ file }) =>
-      Promise.all(
-        Array.from({ length: PROCESSES }, (_, k) =>
-          runChild(file, startAt, `p${k}`, stale ? 300 : 20_000),
-        ),
-      ),
-    ),
+/** One round: a fresh store file (optionally with a stale lock beside it) and PROCESSES contenders. */
+async function round(stale: boolean) {
+  const dir = mkdtempSync(join(tmpdir(), "newegg-mp-"));
+  dirs.push(dir);
+  const file = join(dir, "operations.json");
+  if (stale) {
+    // A lock a process left behind (its pid is not alive), beside an existing ledger file.
+    writeFileSync(file, JSON.stringify({ version: 1, operations: {} }), { mode: 0o600 });
+    writeFileSync(
+      `${file}.lock`,
+      JSON.stringify({
+        hostname: hostname(),
+        pid: 2 ** 22 + 4242,
+        startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      }),
+    );
+  }
+  const children = Array.from({ length: PROCESSES }, (_, k) =>
+    startChild(file, `p${k}`, stale ? 100 : 20_000),
   );
-  return roundDirs.map(({ dir, file }, index) => ({ dir, file, outcomes: results[index] ?? [] }));
+  await Promise.all(children.map((child) => child.ready));
+  for (const child of children) child.go();
+  return { file, outcomes: await Promise.all(children.map((child) => child.outcome)) };
 }
 
 async function raceAll(iterations: number, stale: boolean) {
-  const all: Array<Awaited<ReturnType<typeof race>>[number]> = [];
-  for (let done = 0; done < iterations; done += BATCH) {
-    all.push(...(await race(Math.min(BATCH, iterations - done), stale)));
+  const all: Array<Awaited<ReturnType<typeof round>>> = [];
+  for (let done = 0; done < iterations; done += CONCURRENT_ROUNDS) {
+    const size = Math.min(CONCURRENT_ROUNDS, iterations - done);
+    all.push(...(await Promise.all(Array.from({ length: size }, () => round(stale)))));
   }
   return all;
 }
@@ -142,7 +151,7 @@ describe("FileOperationStore across real processes", () => {
       expect(stored.operations[KEY]?.requestIds).toEqual([winners[0]?.id]);
       expect(existsSync(`${file}.lock`)).toBe(false);
     }
-  }, 90_000);
+  }, 60_000);
 
   it(`with a lock already present nobody wins and everybody fails closed, in each of ${ITERATIONS} rounds`, async () => {
     const rounds = await raceAll(ITERATIONS, true);
@@ -156,5 +165,5 @@ describe("FileOperationStore across real processes", () => {
       expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ version: 1, operations: {} });
       expect(existsSync(`${file}.lock`)).toBe(true);
     }
-  }, 90_000);
+  }, 60_000);
 });

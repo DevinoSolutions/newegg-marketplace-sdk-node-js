@@ -337,6 +337,24 @@ describe("FileOperationStore lock", () => {
   );
 });
 
+describe("a lock that cannot be removed after the work", () => {
+  it("reports that the write may have succeeded instead of masking it", async () => {
+    writeFileSync(file, JSON.stringify({ version: 1, operations: {} }), { mode: 0o600 });
+    const store = new FileOperationStore(file, {
+      removeLockFile: async () => {
+        throw Object.assign(new Error("stuck"), { code: "EPERM" });
+      },
+    });
+    const attempt = store.compareAndPut(KEY, undefined, op("a1"));
+    await expect(attempt).rejects.toMatchObject({ code: "lock" });
+    await expect(attempt).rejects.toThrow(/may have (succeeded|been written)/);
+    await expect(attempt).rejects.toThrow(/Seller Portal/);
+    // The claim really was written, and the lock is still there for the operator.
+    expect(JSON.parse(readFileSync(file, "utf8")).operations[KEY]).toBeDefined();
+    expect(existsSync(`${file}.lock`)).toBe(true);
+  });
+});
+
 describe("releaseStoreLock (operator)", () => {
   const writeLock = (overrides: Record<string, unknown> = {}) =>
     writeFileSync(
@@ -424,6 +442,30 @@ describe("FileOperationStore path and lost-file checks", () => {
     const old = new Date(Date.now() - 5 * 60_000);
     utimesSync(tmp, old, old);
     expect(() => new FileOperationStore(file)).toThrow(/lost|moved|deleted/i);
+  });
+
+  it("does not treat a lock dated in the future as fresh (clock skew beyond 5 s)", () => {
+    writeFileSync(
+      `${file}.lock`,
+      JSON.stringify({
+        hostname: hostname(),
+        pid: 1,
+        startedAt: new Date(Date.now() + 3_600_000).toISOString(),
+      }),
+    );
+    expect(() => new FileOperationStore(file)).toThrow(/lost|moved|deleted/i);
+  });
+
+  it("still treats a lock dated a couple of seconds ahead as fresh (small skew)", () => {
+    writeFileSync(
+      `${file}.lock`,
+      JSON.stringify({
+        hostname: hostname(),
+        pid: 1,
+        startedAt: new Date(Date.now() + 2_000).toISOString(),
+      }),
+    );
+    expect(() => new FileOperationStore(file)).not.toThrow();
   });
 
   it("accepts a fresh temp file beside a missing file (a first run writing right now)", () => {
