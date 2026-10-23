@@ -16,13 +16,18 @@
  * A synchronous in-process cache sits in front of the store so that two creates racing inside one
  * process cannot both pass: the check and the `submitting` write happen with nothing awaited
  * between them. The cache is kept per STORE (not per client), so every client built on one store
- * shares the same synchronous claim. The store itself has no compare-and-set, so two processes
- * sharing one store can still race; the store is read at preview time and just before the claim.
+ * shares the same synchronous claim. Two processes sharing one store (T-6280) are kept apart by the
+ * store: `persist` re-reads the record right before writing and, when the store offers a
+ * compare-and-set (`OperationStore.compareAndPut`), writes only if the record is still the one it
+ * read, so only one claimant wins. A store without it keeps a small read-then-write race.
  */
 import type { LabelCreateAttempt, OperationStore, StoredOperation } from "../types.js";
 
 /** How long an attempt blocks a new create. Past it the record is ignored (24 h). */
 const LABEL_CREATE_GUARD_TTL_MS = 24 * 3_600_000;
+
+/** Reads of the store (each followed by a compare-and-set) before `persist` gives up. */
+const MAX_PERSIST_ATTEMPTS = 8;
 
 /** Attempt ids kept per order (the newest is the one an acknowledgement must name). */
 const MAX_ATTEMPT_IDS = 20;
@@ -113,9 +118,34 @@ export class LabelCreateLedger {
     return { op, previous };
   }
 
-  /** Writes the `submitting` record BEFORE the request is dispatched. Rejects if the store does. */
-  async persist(key: string, op: StoredOperation): Promise<void> {
-    await this.#store.put(key, op);
+  /**
+   * Writes the `submitting` record BEFORE the request is dispatched. Rejects if the store does.
+   * The store is read right before the write: a record another process left that still blocks
+   * (and is not the `acknowledged` attempt) is returned instead of being overwritten, and the
+   * claim is dropped from the shared cache in favour of that record. Resolves `undefined` when
+   * the record was written.
+   */
+  async persist(
+    key: string,
+    op: StoredOperation,
+    acknowledged?: string,
+  ): Promise<LabelCreateAttempt | undefined> {
+    for (let attempt = 0; attempt < MAX_PERSIST_ATTEMPTS; attempt++) {
+      const stored = await this.#store.get(key);
+      const blocking = this.#active(stored);
+      if (stored !== undefined && blocking !== undefined && blocking.attemptId !== acknowledged) {
+        if (this.#cache.get(key) === op) this.#cache.set(key, stored);
+        return blocking;
+      }
+      if (this.#store.compareAndPut === undefined) {
+        await this.#store.put(key, op);
+        return undefined;
+      }
+      if (await this.#store.compareAndPut(key, stored, op)) return undefined;
+    }
+    throw new Error(
+      "The operation store kept changing the label record (compare-and-set contention); nothing was sent.",
+    );
   }
 
   /** Undoes a claim whose record could not be persisted (nothing was sent). */

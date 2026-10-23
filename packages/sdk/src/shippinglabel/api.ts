@@ -102,7 +102,10 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
   constructor(http: NeweggHttpClient, orders: OrdersApi) {
     this.#http = http;
     this.#orders = orders;
-    this.#ledger = new LabelCreateLedger(http.config.operationStore);
+    this.#ledger = new LabelCreateLedger(
+      http.config.operationStore,
+      http.config.labelCreateGuardWindowMs,
+    );
   }
 
   async estimate(
@@ -201,13 +204,26 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
         claim.refused,
       );
     }
+    let conflict: LabelCreateAttempt | undefined;
     try {
-      await this.#ledger.persist(ledgerKey, claim.op);
+      conflict = await this.#ledger.persist(
+        ledgerKey,
+        claim.op,
+        acknowledged ? attempt?.attemptId : undefined,
+      );
     } catch (cause) {
       this.#ledger.rollback(ledgerKey, claim);
       throw new NeweggApiError(
         "The label attempt could not be recorded in the operation store, so nothing was sent.",
         { correlationId, retryable: false, cause },
+      );
+    }
+    if (conflict !== undefined) {
+      // Another process recorded an attempt between the preview read and this claim.
+      throw new LabelCreateGuardError(
+        priorAttemptMessage(orderNumber, conflict, undefined, options.priorAttemptGuidance),
+        orderNumber,
+        conflict,
       );
     }
     try {
@@ -219,6 +235,18 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
       // indeterminate or unrecognised failure leaves the record at `submitting`.
       if (isDefinitelyNotBought(error)) await this.#ledger.settle(ledgerKey, attemptId, "failed");
       throw error;
+    }
+  }
+
+  /** Reads the ledger; an unreadable store stops the operation (nothing is sent without its trace). */
+  async #readLedger(key: string): Promise<LabelCreateAttempt | undefined> {
+    try {
+      return await this.#ledger.read(key);
+    } catch (cause) {
+      throw new NeweggApiError(
+        "The label create ledger could not be read from the operation store, so the order was not checked and nothing was sent.",
+        { retryable: false, cause },
+      );
     }
   }
 
@@ -297,7 +325,7 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
   ): Promise<void> {
     const { marketplace } = this.#http.config;
     const number = normalizeReprintInput(orderNumber).orderNumber;
-    const attempt = await this.#ledger.read(LabelCreateLedger.key(marketplace, number));
+    const attempt = await this.#readLedger(LabelCreateLedger.key(marketplace, number));
     if (attempt !== undefined) {
       throw new LabelCreateGuardError(
         priorAttemptMessage(number, attempt, undefined, options.priorAttemptGuidance),
@@ -431,7 +459,7 @@ export class ShippingLabelsApiImpl implements ShippingLabelsApi {
     const order = await this.#readOrder(orderNumber, { ...options, correlationId }, findings);
     checkCreateAgainstOrder(order, normalized, platform, findings);
 
-    const attempt = await this.#ledger.read(LabelCreateLedger.key(marketplace, orderNumber));
+    const attempt = await this.#readLedger(LabelCreateLedger.key(marketplace, orderNumber));
     let acknowledged = false;
     let guardMessage: string | undefined;
     if (attempt !== undefined) {

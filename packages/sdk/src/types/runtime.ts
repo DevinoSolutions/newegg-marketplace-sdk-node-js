@@ -42,6 +42,18 @@ export interface StoredOperation {
 export interface OperationStore {
   get(key: string): Promise<StoredOperation | undefined>;
   put(key: string, op: StoredOperation): Promise<void>;
+  /**
+   * Optional compare-and-set. Writes `op` and resolves `true` only while the stored record for `key`
+   * is still `expected` (`undefined` = no record); resolves `false` without writing when another
+   * writer changed it. A store shared by several processes should implement it: the label-create
+   * ledger (contracts §23.5) uses it so two processes cannot both claim the same order. Without it
+   * the ledger reads the record just before writing, which narrows the race but cannot close it.
+   */
+  compareAndPut?(
+    key: string,
+    expected: StoredOperation | undefined,
+    op: StoredOperation,
+  ): Promise<boolean>;
 }
 
 // ----------------------------------------------------------------------------
