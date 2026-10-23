@@ -249,6 +249,11 @@ describe("FileOperationStore.compareAndPut", () => {
 });
 
 describe("FileOperationStore lock", () => {
+  beforeEach(() => {
+    // An existing ledger, so a lock beside it is not read as "the file was lost".
+    writeFileSync(file, JSON.stringify({ version: 1, operations: {} }), { mode: 0o600 });
+  });
+
   const lockText = (overrides: Record<string, unknown> = {}) =>
     JSON.stringify({
       hostname: hostname(),
@@ -266,7 +271,7 @@ describe("FileOperationStore lock", () => {
       code: "lock",
     });
     // Nothing was written and the lock is untouched.
-    expect(readdirSync(dir).sort()).toEqual(["operations.json.lock"]);
+    expect(readdirSync(dir).sort()).toEqual(["operations.json", "operations.json.lock"]);
   });
 
   it("names the lock path and tells the operator to check no server is running", async () => {
@@ -414,8 +419,16 @@ describe("FileOperationStore path and lost-file checks", () => {
   });
 
   it("refuses to start empty when the file is gone but a temp file is left beside it", () => {
-    writeFileSync(`${file}.4242.abcdef.tmp`, "{}");
+    const tmp = `${file}.4242.abcdef.tmp`;
+    writeFileSync(tmp, "{}");
+    const old = new Date(Date.now() - 5 * 60_000);
+    utimesSync(tmp, old, old);
     expect(() => new FileOperationStore(file)).toThrow(/lost|moved|deleted/i);
+  });
+
+  it("accepts a fresh temp file beside a missing file (a first run writing right now)", () => {
+    writeFileSync(`${file}.4242.abcdef.tmp`, "{}");
+    expect(() => new FileOperationStore(file)).not.toThrow();
   });
 
   it("accepts a fresh lock beside a missing file (a first run in progress)", () => {

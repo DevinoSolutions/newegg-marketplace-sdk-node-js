@@ -10,8 +10,8 @@
  * `main` is guarded so importing this module (e.g. to unit-test `parseCliArgs`) has no side
  * effects.
  */
+import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
-import { resolve } from "node:path";
 import {
   loadMcpConfigFromEnv,
   normalizeMarketplace,
@@ -19,6 +19,7 @@ import {
 } from "./config/index.js";
 import { generateSecretToken } from "./config/token-strength.js";
 import { InMemoryPreviewStore } from "./preview-store/index.js";
+import { releaseStoreLock } from "./server/file-operation-store.js";
 import { assertOperationStoreFileUsable, clearLabelCreateGuard } from "./server/operation-store.js";
 import { createNeweggMcpServer, defaultLogger } from "./server/build.js";
 import { connectStdioTransport } from "./server/stdio.js";
@@ -35,6 +36,8 @@ export interface CliArgs {
   readonly generateToken: boolean;
   /** Remove one order's label-create guard record from the operation store file, then exit. */
   readonly clearLabelGuard?: { readonly marketplace: string; readonly orderNumber: string };
+  /** Remove the operation store lock file a crashed server left behind, then exit. */
+  readonly releaseStoreLock?: { readonly force: boolean };
 }
 
 const USAGE = `newegg-marketplace-mcp — Newegg Marketplace MCP server
@@ -43,6 +46,7 @@ Usage:
   newegg-marketplace-mcp [--transport stdio|http]
   newegg-marketplace-mcp --generate-token
   newegg-marketplace-mcp --clear-label-guard <us|b2b|ca> <order number>
+  newegg-marketplace-mcp --release-store-lock [--force]
 
 Options:
   --transport <stdio|http>   Transport to serve (default: stdio)
@@ -53,6 +57,12 @@ Options:
                              record from NEWEGG_MCP_OPERATION_STORE_FILE and exit. Verify in the
                              Seller Portal that no label exists first, then restart the server. Not
                              available through any MCP tool.
+  --release-store-lock [--force]
+                             Operator only: remove the lock file a crashed server left beside
+                             NEWEGG_MCP_OPERATION_STORE_FILE. Refuses unless the lock was taken on this
+                             host by a process that is gone; --force overrides, only after you have
+                             made sure no server or command is using the store. Not available through
+                             any MCP tool.
   -h, --help                 Show this help
 
 Configuration is read from environment variables (see .env.example). All logging goes to
@@ -64,6 +74,8 @@ export function parseCliArgs(argv: string[]): CliArgs {
   let help = false;
   let generateToken = false;
   let clearLabelGuard: CliArgs["clearLabelGuard"];
+  let release = false;
+  let force = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -77,6 +89,10 @@ export function parseCliArgs(argv: string[]): CliArgs {
     } else if (arg === "--clear-label-guard") {
       clearLabelGuard = parseClearLabelGuard(argv[index + 1], argv[index + 2]);
       index += 2;
+    } else if (arg === "--release-store-lock") {
+      release = true;
+    } else if (arg === "--force") {
+      force = true;
     } else if (arg === "--transport") {
       const value = argv[index + 1];
       index += 1;
@@ -88,7 +104,16 @@ export function parseCliArgs(argv: string[]): CliArgs {
     }
   }
 
-  return { transport, help, generateToken, clearLabelGuard };
+  if (force && !release) {
+    throw new Error("--force only applies to --release-store-lock.");
+  }
+  return {
+    transport,
+    help,
+    generateToken,
+    clearLabelGuard,
+    ...(release ? { releaseStoreLock: { force } } : {}),
+  };
 }
 
 function parseClearLabelGuard(
@@ -106,26 +131,55 @@ function parseClearLabelGuard(
   return { marketplace, orderNumber: orderArg };
 }
 
+/** The operator commands' store path: NEWEGG_MCP_OPERATION_STORE_FILE, which must be absolute. */
+function operatorStorePath(logger: Logger): string | undefined {
+  const raw = process.env["NEWEGG_MCP_OPERATION_STORE_FILE"]?.trim() ?? "";
+  if (raw === "") {
+    logger("error", "config_error", {
+      message: "NEWEGG_MCP_OPERATION_STORE_FILE is not set, so there is no persistent ledger.",
+    });
+  } else if (!isAbsolute(raw)) {
+    logger("error", "config_error", {
+      message: "NEWEGG_MCP_OPERATION_STORE_FILE must be an absolute path.",
+    });
+  } else {
+    return raw;
+  }
+  process.exitCode = 1;
+  return undefined;
+}
+
+/** Runs `--release-store-lock`: reads only NEWEGG_MCP_OPERATION_STORE_FILE, never credentials. */
+async function runReleaseStoreLock(
+  options: NonNullable<CliArgs["releaseStoreLock"]>,
+  logger: Logger,
+): Promise<void> {
+  const path = operatorStorePath(logger);
+  if (path === undefined) return;
+  try {
+    const result = await releaseStoreLock(path, { force: options.force });
+    logger("info", result === "released" ? "store_lock_released" : "store_lock_absent", {
+      ...(result === "released"
+        ? { next: "Check the ledger is intact, then start the server." }
+        : { message: "There is no lock file beside the operation store." }),
+    });
+  } catch (error) {
+    logger("error", "operation_store_error", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    process.exitCode = 1;
+  }
+}
+
 /** Runs `--clear-label-guard`: reads only NEWEGG_MCP_OPERATION_STORE_FILE, never credentials. */
 async function runClearLabelGuard(
   target: NonNullable<CliArgs["clearLabelGuard"]>,
   logger: Logger,
 ): Promise<void> {
-  const raw = process.env["NEWEGG_MCP_OPERATION_STORE_FILE"]?.trim() ?? "";
-  if (raw === "") {
-    logger("error", "config_error", {
-      message:
-        "NEWEGG_MCP_OPERATION_STORE_FILE is not set, so there is no persistent ledger to clear.",
-    });
-    process.exitCode = 1;
-    return;
-  }
+  const raw = operatorStorePath(logger);
+  if (raw === undefined) return;
   try {
-    const cleared = await clearLabelCreateGuard(
-      resolve(raw),
-      target.marketplace,
-      target.orderNumber,
-    );
+    const cleared = await clearLabelCreateGuard(raw, target.marketplace, target.orderNumber);
     logger(cleared ? "info" : "error", cleared ? "label_guard_cleared" : "label_guard_not_found", {
       marketplace: target.marketplace,
       orderNumber: target.orderNumber,
@@ -245,6 +299,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   if (args.generateToken) {
     // The only stdout write in this file: no transport is running, and the caller captures it.
     process.stdout.write(`${generateSecretToken()}\n`);
+    return;
+  }
+
+  if (args.releaseStoreLock !== undefined) {
+    await runReleaseStoreLock(args.releaseStoreLock, logger);
     return;
   }
 

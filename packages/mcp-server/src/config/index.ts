@@ -5,7 +5,7 @@
  * never leak secrets. This module never imports the MCP SDK (ADR 0001).
  */
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type { NeweggMarketplace } from "@devino/newegg-marketplace-sdk";
 import { weakBearerTokenReason } from "./token-strength.js";
@@ -140,7 +140,7 @@ export interface McpServerConfig {
   readonly allowCustomBaseUrl?: boolean;
   readonly allowWrites: boolean;
   /**
-   * `NEWEGG_MCP_OPERATION_STORE_FILE` (T-6280), resolved to an absolute path: keeps the label-create
+   * `NEWEGG_MCP_OPERATION_STORE_FILE` (T-6280), an absolute path: keeps the label-create
    * duplicate-purchase ledger in this file so it survives a restart. Unset = in memory (a restart
    * forgets it). Never exposed through MCP tools or resources.
    */
@@ -466,7 +466,11 @@ function strongSecretEnv(name: string) {
     });
 }
 
-/** Optional file path, resolved to an absolute one. Blank = unset; a NUL byte is never a path. */
+/**
+ * Optional ABSOLUTE file path. Blank = unset; a NUL byte is never a path. A relative path is refused
+ * (without echoing it): it would resolve against the working directory, so a restart from another
+ * directory would silently start with an empty ledger.
+ */
 function pathEnv(name: string) {
   return z
     .string()
@@ -478,7 +482,14 @@ function pathEnv(name: string) {
         ctx.addIssue({ code: "custom", message: `${name} must be a valid file path.` });
         return z.NEVER;
       }
-      return resolve(trimmed);
+      if (!isAbsolute(trimmed)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `${name} must be an absolute path (a relative one would resolve against the working directory).`,
+        });
+        return z.NEVER;
+      }
+      return trimmed;
     });
 }
 

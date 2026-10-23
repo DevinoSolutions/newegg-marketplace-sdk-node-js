@@ -247,9 +247,23 @@ so a restart (or a crash) cannot make the server forget a label that may have be
   replaced by an empty ledger. A missing file is the one empty case (first run).
 - **Two processes, one file.** Writers take `<file>.lock` (`O_EXCL`) and write only if the record is still the
   one they read (compare-and-set), so of two servers on one host exactly one can claim an order; the other
-  gets `label_create_already_attempted`. A lock left by a process that is gone is taken over; a lock a live
-  process holds past 5 seconds fails the operation (nothing sent) and names the lock file. Use a local
-  filesystem on one host: network and synced folders (NFS, SMB, OneDrive) do not give trustworthy locking.
+  gets `label_create_already_attempted`. The lock records hostname, pid and start time. A lock is **never taken
+  over automatically** (every takeover scheme has a window in which two processes both win): if it cannot be
+  created within 5 seconds (including a transient `EPERM`/`EBUSY`/`EACCES` on Windows, which is retried) the
+  operation fails closed with a "store is busy" error naming the lock file, and nothing is written. A crash
+  can leave the lock behind; after making sure no server or command is running, the operator removes it with
+  `newegg-marketplace-mcp --release-store-lock`, which refuses unless the lock was taken on this host by a
+  process that is gone (`--force` overrides). It is argv only, reads only `NEWEGG_MCP_OPERATION_STORE_FILE`, and
+  is not reachable from any tool, resource or prompt. Use a local filesystem on one host: network and synced
+  folders (NFS, SMB, OneDrive) do not give trustworthy locking.
+- **Absolute path, and a lost file is not a new ledger.** `NEWEGG_MCP_OPERATION_STORE_FILE` must be absolute
+  (a relative one resolves against the working directory, so a restart from elsewhere would start empty; the
+  error does not echo the value). If the file is missing but a leftover lock or temp file of it (older than 30
+  seconds) is beside it, the server refuses to start: the file was lost or moved. **Deleting the file forgets
+  every claim**; do it only after verifying every order in the Seller Portal.
+- **Ownership.** On POSIX the file must belong to the running user and not be group- or other-writable, and its
+  directory must not be other-writable unless sticky; otherwise the server refuses to start. Temp files of a
+  crashed write older than an hour are removed when the store opens.
 - **Operator-only clear.** `newegg-marketplace-mcp --clear-label-guard <us|b2b|ca> <order number>` removes that
   order's record. It reads only `NEWEGG_MCP_OPERATION_STORE_FILE` (no credentials), exits 1 when there is no such
   record, and is not an MCP tool, resource or argument: an agent cannot reach it. Run it only after verifying in

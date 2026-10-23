@@ -3759,7 +3759,11 @@ shell command no tool can reach).
 (no credential; feed dedup records are not stored there). Writes are atomic (temp file `0600`, `fsync`, rename);
 a corrupt, unreadable or other-user-writable file stops the server instead of starting empty. The store offers
 `compareAndPut` under a lock file, and the ledger re-reads the record just before writing, so of two processes
-on one host sharing the file only one claims an order. The window is `NEWEGG_MCP_LABEL_CREATE_GUARD_HOURS`
+on one host sharing the file only one claims an order. The lock file (hostname, pid, start time) is never taken
+over automatically: a lock that cannot be created in time fails the operation closed, and the operator removes a
+crash leftover with `newegg-marketplace-mcp --release-store-lock` (this host and a dead pid, else `--force`).
+The path must be absolute; a missing file with a leftover lock or temp file beside it refuses to start (it was
+lost); on POSIX the file must be owned by the running user and the directory not other-writable unless sticky. The window is `NEWEGG_MCP_LABEL_CREATE_GUARD_HOURS`
 (1 to 720, default 24; SDK `labelCreateGuardWindowMs`). An order that already lists a package is a preview
 blocker (it was a warning), because a label bought outside this client leaves only that trace.
 

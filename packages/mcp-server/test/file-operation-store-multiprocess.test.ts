@@ -55,7 +55,15 @@ function runChild(file: string, startAt: number, id: string, lockTimeoutMs: numb
   return new Promise<Outcome>((resolve) => {
     const child = spawn(
       process.execPath,
-      ["-e", CHILD, file, String(startAt), id, pathToFileURL(STORE_MODULE.pathname.replace(/^\/([A-Za-z]:)/, "$1")).href, String(lockTimeoutMs)],
+      [
+        "-e",
+        CHILD,
+        file,
+        String(startAt),
+        id,
+        pathToFileURL(STORE_MODULE.pathname.replace(/^\/([A-Za-z]:)/, "$1")).href,
+        String(lockTimeoutMs),
+      ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
     let out = "";
@@ -118,43 +126,35 @@ describe("FileOperationStore across real processes", () => {
     expect(existsSync(STORE_MODULE)).toBe(true);
   });
 
-  it(
-    `exactly one of ${PROCESSES} processes wins the claim, in each of ${ITERATIONS} rounds`,
-    async () => {
-      const rounds = await raceAll(ITERATIONS, false);
-      expect(rounds).toHaveLength(ITERATIONS);
-      for (const { file, outcomes } of rounds) {
-        expect(outcomes.filter((o) => o.crash !== undefined)).toEqual([]);
-        expect(outcomes.filter((o) => o.err !== undefined)).toEqual([]);
-        const winners = outcomes.filter((o) => o.ok === true);
-        expect(winners).toHaveLength(1);
-        expect(outcomes.filter((o) => o.ok === false)).toHaveLength(PROCESSES - 1);
-        // The recorded claim is the winner's, and no lock or temp file is left behind.
-        const stored = JSON.parse(readFileSync(file, "utf8")) as {
-          operations: Record<string, { requestIds: string[] }>;
-        };
-        expect(stored.operations[KEY]?.requestIds).toEqual([winners[0]?.id]);
-        expect(existsSync(`${file}.lock`)).toBe(false);
-      }
-    },
-    90_000,
-  );
+  it(`exactly one of ${PROCESSES} processes wins the claim, in each of ${ITERATIONS} rounds`, async () => {
+    const rounds = await raceAll(ITERATIONS, false);
+    expect(rounds).toHaveLength(ITERATIONS);
+    for (const { file, outcomes } of rounds) {
+      expect(outcomes.filter((o) => o.crash !== undefined)).toEqual([]);
+      expect(outcomes.filter((o) => o.err !== undefined)).toEqual([]);
+      const winners = outcomes.filter((o) => o.ok === true);
+      expect(winners).toHaveLength(1);
+      expect(outcomes.filter((o) => o.ok === false)).toHaveLength(PROCESSES - 1);
+      // The recorded claim is the winner's, and no lock or temp file is left behind.
+      const stored = JSON.parse(readFileSync(file, "utf8")) as {
+        operations: Record<string, { requestIds: string[] }>;
+      };
+      expect(stored.operations[KEY]?.requestIds).toEqual([winners[0]?.id]);
+      expect(existsSync(`${file}.lock`)).toBe(false);
+    }
+  }, 90_000);
 
-  it(
-    `with a lock already present nobody wins and everybody fails closed, in each of ${ITERATIONS} rounds`,
-    async () => {
-      const rounds = await raceAll(ITERATIONS, true);
-      expect(rounds).toHaveLength(ITERATIONS);
-      for (const { file, outcomes } of rounds) {
-        expect(outcomes).toHaveLength(PROCESSES);
-        expect(outcomes.filter((o) => o.crash !== undefined)).toEqual([]);
-        expect(outcomes.filter((o) => o.ok !== undefined)).toEqual([]);
-        expect(outcomes.every((o) => o.err === "lock")).toBe(true);
-        // Nothing was claimed and the lock was left for the operator.
-        expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ version: 1, operations: {} });
-        expect(existsSync(`${file}.lock`)).toBe(true);
-      }
-    },
-    90_000,
-  );
+  it(`with a lock already present nobody wins and everybody fails closed, in each of ${ITERATIONS} rounds`, async () => {
+    const rounds = await raceAll(ITERATIONS, true);
+    expect(rounds).toHaveLength(ITERATIONS);
+    for (const { file, outcomes } of rounds) {
+      expect(outcomes).toHaveLength(PROCESSES);
+      expect(outcomes.filter((o) => o.crash !== undefined)).toEqual([]);
+      expect(outcomes.filter((o) => o.ok !== undefined)).toEqual([]);
+      expect(outcomes.every((o) => o.err === "lock")).toBe(true);
+      // Nothing was claimed and the lock was left for the operator.
+      expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ version: 1, operations: {} });
+      expect(existsSync(`${file}.lock`)).toBe(true);
+    }
+  }, 90_000);
 });

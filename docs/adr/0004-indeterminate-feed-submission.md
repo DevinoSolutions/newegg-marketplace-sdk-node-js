@@ -54,3 +54,7 @@ claim an order. The MCP server can keep its label-create records in a file
 feed submission records stay in memory because they have no expiry. The block window is configurable
 (`labelCreateGuardWindowMs`, `NEWEGG_MCP_LABEL_CREATE_GUARD_HOURS`, 1 hour to 30 days). Clearing a record is a
 shell command for the operator (`--clear-label-guard`), never a tool, so an agent still cannot lift the guard.
+
+Review fix (same task): the file store never takes over a lock automatically (a takeover window let two
+processes both win); `--release-store-lock` is the operator's way to clear a crash leftover. The path must be
+absolute and a lost file is detected from leftovers beside it.
