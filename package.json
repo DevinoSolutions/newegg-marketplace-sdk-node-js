@@ -35,12 +35,12 @@
     "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^10.13.0",
     "eslint-config-prettier": "^10.1.8",
-    "knip": "6.42.0",
+    "knip": "6.43.0",
     "prettier": "^3.9.5",
     "tsx": "^4.23.0",
     "typedoc": "^0.28.20",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.63.0",
+    "typescript-eslint": "^8.72.0",
     "vitest": "^4.1.11"
   }
 }
