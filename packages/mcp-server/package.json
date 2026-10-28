@@ -38,7 +38,7 @@
   },
   "dependencies": {
     "@devino/newegg-marketplace-sdk": "^0.1.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "zod": "^4.4.3"
   },
   "publishConfig": {
