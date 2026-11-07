@@ -193,7 +193,7 @@ export const MUST_FLAG: ReadonlyArray<string> = [
   "import { createNeweggClient } from '../../src/client/index.js';",
   "import * as sdk from '../../src/index.js'; sdk[k];",
   "import { x } from '../../../packages/mcp-server/src/index.js';",
-  "import { x } from '@devino/newegg-marketplace-sdk';",
+  "import { x } from '@joinmarka/newegg';",
   "import '../../src/rma/api.js';",
   "export * from '../../src/rma/api.js';",
   "export { RmaApiImpl } from '../../src/rma/api.js';",

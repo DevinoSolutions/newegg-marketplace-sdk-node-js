@@ -59,13 +59,13 @@ const MAX_DEPTH = 12;
 
 /**
  * Builds one in-memory TypeScript program that declares a `Probe<n>` alias per type expression
- * (resolved through the real package `@devino/newegg-marketplace-sdk`, i.e. its built `.d.ts`).
+ * (resolved through the real package `@joinmarka/newegg`, i.e. its built `.d.ts`).
  */
 export function createSdkTypeProbe(typeExpressions: readonly string[]): SdkTypeProbe {
   const unique = [...new Set(typeExpressions)];
   const aliasOf = new Map(unique.map((expression, index) => [expression, `Probe${index}`]));
   const source = [
-    `import type * as Sdk from "@devino/newegg-marketplace-sdk";`,
+    `import type * as Sdk from "@joinmarka/newegg";`,
     `type NeweggClient = Sdk.NeweggClient;`,
     ...unique.map((expression) => `export type ${aliasOf.get(expression)} = ${expression};`),
   ].join("\n");

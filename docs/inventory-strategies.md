@@ -1,6 +1,6 @@
 # Inventory update strategies
 
-How `@devino/newegg-marketplace-sdk` turns a list of desired inventory levels into the
+How `@joinmarka/newegg` turns a list of desired inventory levels into the
 smallest correct set of Newegg calls: when it updates items one at a time (**direct**),
 when it batches them into asynchronous **feed** files, how it deduplicates conflicting
 updates, and how it reports exactly what happened per item.

@@ -10,13 +10,13 @@ import {
   createNeweggClient,
   NeweggBaseUrlNotAllowedError,
   NeweggConfigurationError,
-} from "@devino/newegg-marketplace-sdk";
+} from "@joinmarka/newegg";
 import type {
   NeweggClient,
   NeweggClientConfig,
   NeweggLogger,
   OperationStore,
-} from "@devino/newegg-marketplace-sdk";
+} from "@joinmarka/newegg";
 import { McpConfigError, weakBearerTokenReason, type McpServerConfig } from "../config/index.js";
 import {
   bindPreviewStoreToSession,

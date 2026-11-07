@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createNeweggClient } from "@devino/newegg-marketplace-sdk";
-import type { NeweggClient, NeweggMarketplace } from "@devino/newegg-marketplace-sdk";
-import { createMockFetch, type MockRoute } from "@devino/newegg-marketplace-sdk/testing";
+import { createNeweggClient } from "@joinmarka/newegg";
+import type { NeweggClient, NeweggMarketplace } from "@joinmarka/newegg";
+import { createMockFetch, type MockRoute } from "@joinmarka/newegg/testing";
 import { SENTINELS, callTool, makeEnv, startHarness } from "./helpers.js";
 
 // Wire routes: shapes from the SDK's own reports tests / contracts §17. The FTP URL below is a

@@ -11,7 +11,7 @@
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { PriceChange, PriceUpdate } from "@devino/newegg-marketplace-sdk";
+import type { PriceChange, PriceUpdate } from "@joinmarka/newegg";
 import type { McpServerConfig } from "../config/index.js";
 import type { PricePreviewRecord } from "../preview-store/index.js";
 import {

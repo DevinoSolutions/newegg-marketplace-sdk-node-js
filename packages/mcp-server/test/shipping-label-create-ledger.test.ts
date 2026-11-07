@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MockRoute } from "@devino/newegg-marketplace-sdk/testing";
+import type { MockRoute } from "@joinmarka/newegg/testing";
 import { callTool, makeEnv, SENTINELS, startHarness, type Harness } from "./helpers.js";
 
 /**

@@ -7,8 +7,8 @@
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { IndeterminateServiceWriteError } from "@devino/newegg-marketplace-sdk";
-import type { ServiceWritePreview } from "@devino/newegg-marketplace-sdk";
+import { IndeterminateServiceWriteError } from "@joinmarka/newegg";
+import type { ServiceWritePreview } from "@joinmarka/newegg";
 import type {
   ServiceWriteInputs,
   ServiceWriteKind,

@@ -1,12 +1,12 @@
 /** Schemas and helpers shared by every Reports Management tool. */
 import { z } from "zod";
-import { ReportTimeoutError } from "@devino/newegg-marketplace-sdk";
+import { ReportTimeoutError } from "@joinmarka/newegg";
 import type {
   CollectedReport,
   DownloadedReport,
   NeweggClient,
   ReportWaitOptions,
-} from "@devino/newegg-marketplace-sdk";
+} from "@joinmarka/newegg";
 import {
   errorResult,
   mapErrorToPayload,

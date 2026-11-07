@@ -1,7 +1,7 @@
 # SDK Public API Contract (binding for implementation)
 
-This file is the binding contract between `@devino/newegg-marketplace-sdk` (implements it
-exactly) and `@devino/newegg-marketplace-mcp` (consumes only this surface). Wire shapes
+This file is the binding contract between `@joinmarka/newegg` (implements it
+exactly) and `@joinmarka/newegg-mcp` (consumes only this surface). Wire shapes
 live in `newegg-api-contracts.md`. All declarations below are exported from the SDK root
 entry point unless noted.
 
@@ -2653,7 +2653,7 @@ export class NeweggTimeoutError extends NeweggError {}
 export class UnsupportedMarketplaceOperationError extends NeweggError {}
 
 // ----------------------------------------------------------------------------
-// testing utilities (exported from "@devino/newegg-marketplace-sdk/testing")
+// testing utilities (exported from "@joinmarka/newegg/testing")
 // ----------------------------------------------------------------------------
 export function createMockFetch(routes: MockRoute[]): {
   fetch: typeof globalThis.fetch;

@@ -191,10 +191,7 @@ class IndeterminateFeedSubmissionError extends NeweggError {
 Recover deliberately:
 
 ```ts
-import {
-  IndeterminateFeedSubmissionError,
-  type FeedRequestStatus,
-} from "@devino/newegg-marketplace-sdk";
+import { IndeterminateFeedSubmissionError, type FeedRequestStatus } from "@joinmarka/newegg";
 
 try {
   await client.inventory.updateMany(updates, { strategy: "feed" });

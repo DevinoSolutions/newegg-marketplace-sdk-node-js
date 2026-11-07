@@ -2,7 +2,7 @@
  * `newegg_service_status` — report Newegg service availability for a documented domain.
  */
 import { z } from "zod";
-import type { NeweggServiceDomain } from "@devino/newegg-marketplace-sdk";
+import type { NeweggServiceDomain } from "@joinmarka/newegg";
 import {
   errorResult,
   mapErrorToPayload,

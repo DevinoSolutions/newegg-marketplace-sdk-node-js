@@ -1,6 +1,6 @@
 # example-sdk-basic
 
-Minimal, read-only use of `@devino/newegg-marketplace-sdk`: check service status, read one
+Minimal, read-only use of `@joinmarka/newegg`: check service status, read one
 item's inventory, and preview an inventory update. No write happens unless you opt in.
 
 ## What it shows

@@ -1,5 +1,5 @@
 /**
- * Example — read-only orders and reports with `@devino/newegg-marketplace-sdk`.
+ * Example — read-only orders and reports with `@joinmarka/newegg`.
  *
  * What it does:
  *   1. Reads Newegg credentials from the environment (fails fast; never prints their values).
@@ -17,11 +17,7 @@
  *
  * Optional: EXAMPLE_SETTLEMENT_FROM / EXAMPLE_SETTLEMENT_TO (YYYY-MM-DD, default: last 30 days).
  */
-import {
-  createNeweggClient,
-  NeweggError,
-  type NeweggMarketplace,
-} from "@devino/newegg-marketplace-sdk";
+import { createNeweggClient, NeweggError, type NeweggMarketplace } from "@joinmarka/newegg";
 
 /** Accept us | b2b | ca (case-insensitive); the Newegg `can` prefix maps to `ca`. */
 function parseMarketplace(raw: string): NeweggMarketplace {

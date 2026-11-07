@@ -2,7 +2,7 @@
  * Deterministic mock `fetch` for testing SDK integrations without network access. Matches
  * routes by method + path pattern, records each call (with parsed JSON body), and returns
  * `Response` objects built from the route's reply. Exported from
- * `@devino/newegg-marketplace-sdk/testing`.
+ * `@joinmarka/newegg/testing`.
  */
 
 /** A single recorded request as observed by the mock. */

@@ -4,7 +4,7 @@
  * returns the SDK `raw` payload and never mutates anything.
  */
 import { z } from "zod";
-import type { GetVolumeDiscountInput } from "@devino/newegg-marketplace-sdk";
+import type { GetVolumeDiscountInput } from "@joinmarka/newegg";
 import {
   errorResult,
   mapErrorToPayload,

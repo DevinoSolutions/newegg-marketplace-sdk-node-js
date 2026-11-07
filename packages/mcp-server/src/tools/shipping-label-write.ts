@@ -29,17 +29,14 @@
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
-import {
-  IndeterminateOrderWriteError,
-  LabelCreateGuardError,
-} from "@devino/newegg-marketplace-sdk";
-import type { ShippingLabelCreateOptions } from "@devino/newegg-marketplace-sdk";
+import { IndeterminateOrderWriteError, LabelCreateGuardError } from "@joinmarka/newegg";
+import type { ShippingLabelCreateOptions } from "@joinmarka/newegg";
 import type {
   ShippingLabelEstimate,
   ShippingLabelInput,
   ShippingLabelPackageResult,
   ShippingLabelPreview,
-} from "@devino/newegg-marketplace-sdk";
+} from "@joinmarka/newegg";
 import type {
   ShippingLabelInputs,
   ShippingLabelKind,

@@ -1,8 +1,17 @@
 {
-  "name": "@devino/newegg-marketplace-mcp",
+  "name": "@joinmarka/newegg-mcp",
   "version": "0.1.0",
   "description": "Model Context Protocol server exposing safe, narrowly-scoped Newegg Marketplace inventory tools (stdio + Streamable HTTP).",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js.git",
+    "directory": "packages/mcp-server"
+  },
+  "homepage": "https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/tree/main/packages/mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
@@ -12,7 +21,8 @@
     "marketplace",
     "mcp",
     "model-context-protocol",
-    "inventory"
+    "inventory",
+    "marka"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -28,7 +38,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -37,11 +48,12 @@
     "start": "node dist/cli.js"
   },
   "dependencies": {
-    "@devino/newegg-marketplace-sdk": "^0.1.0",
+    "@joinmarka/newegg": "^0.1.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   }
 }

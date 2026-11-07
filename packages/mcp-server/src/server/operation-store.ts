@@ -9,8 +9,8 @@
  * and survive a restart; every other record (feed submission dedup, which has no expiry) stays in
  * memory, because a feed payload recorded on disk would block an identical resubmission forever.
  */
-import { InMemoryOperationStore } from "@devino/newegg-marketplace-sdk";
-import type { OperationStore, StoredOperation } from "@devino/newegg-marketplace-sdk";
+import { InMemoryOperationStore } from "@joinmarka/newegg";
+import type { OperationStore, StoredOperation } from "@joinmarka/newegg";
 import { underlyingPreviewStore, type PreviewStore } from "../preview-store/index.js";
 import type { Logger } from "../tools/index.js";
 import { FileOperationStore } from "./file-operation-store.js";

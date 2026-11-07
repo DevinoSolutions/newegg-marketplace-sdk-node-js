@@ -7,7 +7,7 @@ import {
   GET_BATCH_INVENTORY_MAX_VALUES,
   INVENTORY_FEED_MAX_RECORDS,
   SDK_VERSION,
-} from "@devino/newegg-marketplace-sdk";
+} from "@joinmarka/newegg";
 import type { McpServerConfig } from "../config/index.js";
 import { SERVER_NAME, SERVER_VERSION } from "../version.js";
 

@@ -3,7 +3,7 @@
  * `newegg_pricing_apply_update` (which re-checks just before sending). The checks depend on the
  * live price, so they must run again at apply: the preview's answer can be stale by then.
  */
-import type { PriceChange } from "@devino/newegg-marketplace-sdk";
+import type { PriceChange } from "@joinmarka/newegg";
 
 /**
  * The fat-finger guard: blocks a change larger than `maxPriceChangePercent` (either direction).

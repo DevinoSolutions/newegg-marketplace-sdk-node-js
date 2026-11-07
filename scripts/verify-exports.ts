@@ -21,7 +21,7 @@ interface PackageSpec {
 const packages: PackageSpec[] = [
   {
     dir: "packages/sdk",
-    name: "@devino/newegg-marketplace-sdk",
+    name: "@joinmarka/newegg",
     entries: {
       ".": [
         "createNeweggClient",
@@ -41,7 +41,7 @@ const packages: PackageSpec[] = [
   },
   {
     dir: "packages/mcp-server",
-    name: "@devino/newegg-marketplace-mcp",
+    name: "@joinmarka/newegg-mcp",
     entries: {
       ".": ["createNeweggMcpServer", "loadMcpConfigFromEnv", "InMemoryPreviewStore"],
     },

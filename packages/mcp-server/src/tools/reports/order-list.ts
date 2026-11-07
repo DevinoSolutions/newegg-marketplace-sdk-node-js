@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Order } from "@devino/newegg-marketplace-sdk";
+import type { Order } from "@joinmarka/newegg";
 import { type ToolDefinition } from "../shared.js";
 import { TOOL_NAMES } from "../names.js";
 import {

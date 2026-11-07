@@ -11,7 +11,7 @@ import type {
   ListOrdersInput,
   Order,
   OrderStatusSnapshot,
-} from "@devino/newegg-marketplace-sdk";
+} from "@joinmarka/newegg";
 import {
   errorResult,
   marketplaceSchema,

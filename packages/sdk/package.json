@@ -1,8 +1,17 @@
 {
-  "name": "@devino/newegg-marketplace-sdk",
+  "name": "@joinmarka/newegg",
   "version": "0.1.0",
   "description": "Transport-independent TypeScript SDK for the Newegg Marketplace API with first-class inventory management (US, B2B, Canada).",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/tree/main/packages/sdk#readme",
+  "bugs": {
+    "url": "https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
@@ -14,7 +23,8 @@
     "sdk",
     "ecommerce",
     "seller",
-    "datafeed"
+    "datafeed",
+    "marka"
   ],
   "sideEffects": false,
   "main": "./dist/index.js",
@@ -32,7 +42,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -43,6 +54,7 @@
     "zod": "^4.4.3"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   }
 }

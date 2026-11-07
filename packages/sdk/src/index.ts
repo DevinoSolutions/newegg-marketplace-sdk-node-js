@@ -1,9 +1,9 @@
 /**
- * `@devino/newegg-marketplace-sdk` — transport-independent TypeScript SDK for the Newegg
+ * `@joinmarka/newegg` — transport-independent TypeScript SDK for the Newegg
  * Marketplace API with first-class inventory management (US, B2B, Canada).
  *
  * The public surface is defined by `docs/research/sdk-public-api.md`. Testing helpers are
- * exported separately from `@devino/newegg-marketplace-sdk/testing`.
+ * exported separately from `@joinmarka/newegg/testing`.
  */
 
 // Public types (interfaces, unions) — all type-only.

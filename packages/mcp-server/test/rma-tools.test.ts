@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MockRoute } from "@devino/newegg-marketplace-sdk/testing";
+import type { MockRoute } from "@joinmarka/newegg/testing";
 import { callTool, makeEnv, startHarness } from "./helpers.js";
 
 // Sentinels: every one of these is PII (or PII-adjacent free text) that must NEVER reach tool output.

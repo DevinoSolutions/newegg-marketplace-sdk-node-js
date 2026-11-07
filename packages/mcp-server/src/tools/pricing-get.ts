@@ -5,7 +5,7 @@
  * explicitly) and never mutates anything.
  */
 import { z } from "zod";
-import type { GetPriceManyInput } from "@devino/newegg-marketplace-sdk";
+import type { GetPriceManyInput } from "@joinmarka/newegg";
 import {
   conditionOf,
   errorResult,

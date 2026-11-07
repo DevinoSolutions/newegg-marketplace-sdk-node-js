@@ -28,7 +28,7 @@ import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
 import { basename, dirname, isAbsolute } from "node:path";
 import { z } from "zod";
-import type { OperationStore, StoredOperation } from "@devino/newegg-marketplace-sdk";
+import type { OperationStore, StoredOperation } from "@joinmarka/newegg";
 
 const FILE_VERSION = 1;
 

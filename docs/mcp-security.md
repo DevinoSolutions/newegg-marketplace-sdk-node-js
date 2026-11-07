@@ -1,6 +1,6 @@
 # MCP server security model
 
-`@devino/newegg-marketplace-mcp` exposes Newegg inventory operations to language-model
+`@joinmarka/newegg-mcp` exposes Newegg inventory operations to language-model
 clients. Those clients act on a **real seller account**, so the server is built on the
 premise that tool descriptions and annotations are _hints, not security_ — every constraint
 is enforced in handler code and transport configuration. This document states the threat

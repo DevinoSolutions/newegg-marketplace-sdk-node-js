@@ -15,10 +15,7 @@
  * re-filed under another id or session, or have its lifetime extended.
  */
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type {
-  NormalizedInventoryUpdate,
-  InventoryUpdateStrategy,
-} from "@devino/newegg-marketplace-sdk";
+import type { NormalizedInventoryUpdate, InventoryUpdateStrategy } from "@joinmarka/newegg";
 import type { McpServerConfig } from "../config/index.js";
 import type {
   ListingPreviewRecord,
