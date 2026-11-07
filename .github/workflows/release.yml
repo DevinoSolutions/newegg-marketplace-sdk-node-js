@@ -1,0 +1,144 @@
+name: Release
+
+# Publishes @joinmarka/newegg and then @joinmarka/newegg-mcp to npm when a version tag is pushed
+# (vX.Y.Z). Each package is guarded independently: a version already on npm is skipped.
+#
+# Authentication: npm trusted publishing (OIDC). Configure the package on npmjs.com under
+# Settings -> Trusted Publisher -> GitHub Actions (repository DevinoSolutions/newegg-marketplace-sdk-node-js,
+# workflow release.yml) for BOTH packages. If the repository secret NPM_TOKEN is set, it is used instead.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  id-token: write # OIDC token for npm trusted publishing and provenance
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Gate and publish
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - name: Use a trusted-publishing capable npm
+        run: |
+          set -o pipefail
+          npm install -g npm@latest
+          npm --version
+      - name: Check the tag matches the package version
+        run: |
+          set -o pipefail
+          PKG_VERSION="$(node -p "require('./packages/sdk/package.json').version")"
+          if [ "v${PKG_VERSION}" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match packages/sdk/package.json version v${PKG_VERSION}"
+            exit 1
+          fi
+      - name: Install
+        run: |
+          set -o pipefail
+          npm ci
+      - name: Lint
+        run: |
+          set -o pipefail
+          npm run lint
+      - name: Format check
+        run: |
+          set -o pipefail
+          npm run format:check
+      - name: Typecheck
+        run: |
+          set -o pipefail
+          npm run typecheck
+      - name: Test
+        run: |
+          set -o pipefail
+          npm test
+        env:
+          NEWEGG_LIVE_TESTS: "false"
+      - name: Build
+        run: |
+          set -o pipefail
+          npm run build
+      - name: Verify exports
+        run: |
+          set -o pipefail
+          npm run verify:exports
+      - name: Secret scan
+        run: |
+          set -o pipefail
+          npm run check:secrets
+      - name: Live-suite read-only guard
+        run: |
+          set -o pipefail
+          npm run check:live-readonly
+      - name: Dead code
+        run: |
+          set -o pipefail
+          npm run check:deadcode
+      - name: API docs
+        run: |
+          set -o pipefail
+          npm run docs:api
+      - name: npm pack (dry run)
+        run: |
+          set -o pipefail
+          npm pack --dry-run -w @joinmarka/newegg -w @joinmarka/newegg-mcp
+      - name: Check which versions are already on npm
+        id: published
+        run: |
+          set -o pipefail
+          SDK_VERSION="$(node -p "require('./packages/sdk/package.json').version")"
+          MCP_VERSION="$(node -p "require('./packages/mcp-server/package.json').version")"
+          if npm view "@joinmarka/newegg@${SDK_VERSION}" version >/dev/null 2>&1; then
+            echo "@joinmarka/newegg@${SDK_VERSION} is already on npm; skipping."
+            echo "sdk_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sdk_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          if npm view "@joinmarka/newegg-mcp@${MCP_VERSION}" version >/dev/null 2>&1; then
+            echo "@joinmarka/newegg-mcp@${MCP_VERSION} is already on npm; skipping."
+            echo "mcp_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "mcp_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      # The SDK is published first: the MCP server depends on it by semver range.
+      - name: Publish @joinmarka/newegg with a token (only if NPM_TOKEN is set)
+        if: ${{ env.NPM_TOKEN != '' && steps.published.outputs.sdk_exists != 'true' }}
+        run: |
+          set -o pipefail
+          npm publish --provenance --access public -w @joinmarka/newegg
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+      - name: Publish @joinmarka/newegg with npm trusted publishing (OIDC)
+        if: ${{ env.NPM_TOKEN == '' && steps.published.outputs.sdk_exists != 'true' }}
+        run: |
+          set -o pipefail
+          # No token configured: npm exchanges the GitHub OIDC identity for a short-lived publish credential.
+          npm publish --provenance --access public -w @joinmarka/newegg
+      - name: Publish @joinmarka/newegg-mcp with a token (only if NPM_TOKEN is set)
+        if: ${{ env.NPM_TOKEN != '' && steps.published.outputs.mcp_exists != 'true' }}
+        run: |
+          set -o pipefail
+          npm publish --provenance --access public -w @joinmarka/newegg-mcp
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+      - name: Publish @joinmarka/newegg-mcp with npm trusted publishing (OIDC)
+        if: ${{ env.NPM_TOKEN == '' && steps.published.outputs.mcp_exists != 'true' }}
+        run: |
+          set -o pipefail
+          npm publish --provenance --access public -w @joinmarka/newegg-mcp
