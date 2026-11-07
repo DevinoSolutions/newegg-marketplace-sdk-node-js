@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MockRoute } from "@devino/newegg-marketplace-sdk/testing";
+import type { MockRoute } from "@joinmarka/newegg/testing";
 import { loadMcpConfigFromEnv } from "../src/index.js";
 import { hashPricePreview, previewKeyFor } from "../src/tools/preview-hash.js";
 import { callTool, makeEnv, SENTINELS, startHarness } from "./helpers.js";

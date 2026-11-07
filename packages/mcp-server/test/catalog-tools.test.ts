@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { MockRoute } from "@devino/newegg-marketplace-sdk/testing";
-import { CatalogLookupTimeoutError } from "@devino/newegg-marketplace-sdk";
-import type { NeweggClient } from "@devino/newegg-marketplace-sdk";
+import type { MockRoute } from "@joinmarka/newegg/testing";
+import { CatalogLookupTimeoutError } from "@joinmarka/newegg";
+import type { NeweggClient } from "@joinmarka/newegg";
 import { loadMcpConfigFromEnv, InMemoryPreviewStore } from "../src/index.js";
 import { catalogResolveTool } from "../src/tools/catalog.js";
 import type { ToolContext } from "../src/tools/shared.js";

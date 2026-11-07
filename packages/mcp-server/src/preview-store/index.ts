@@ -21,7 +21,7 @@ import type {
   ShippingLabelInput,
   ShippingLabelReprintInput,
   SubmitRmaInput,
-} from "@devino/newegg-marketplace-sdk";
+} from "@joinmarka/newegg";
 
 /** Fields common to every stored, ready-to-apply operation. */
 export interface PreviewRecordBase {

@@ -1,5 +1,5 @@
 /**
- * Public type surface for `@devino/newegg-marketplace-sdk`.
+ * Public type surface for `@joinmarka/newegg`.
  *
  * This module is a barrel over the per-domain modules in `./types/`; together they hold every
  * exported interface/type alias from the binding public API contract (see

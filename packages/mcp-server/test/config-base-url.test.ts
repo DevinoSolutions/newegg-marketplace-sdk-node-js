@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NeweggConfigurationError } from "@devino/newegg-marketplace-sdk";
+import { NeweggConfigurationError } from "@joinmarka/newegg";
 import {
   createNeweggMcpServer,
   loadMcpConfigFromEnv,

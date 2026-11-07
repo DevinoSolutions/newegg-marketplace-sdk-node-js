@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { NeweggClient } from "@devino/newegg-marketplace-sdk";
+import type { NeweggClient } from "@joinmarka/newegg";
 import { serializeRma } from "../rma.js";
 import {
   errorResult,

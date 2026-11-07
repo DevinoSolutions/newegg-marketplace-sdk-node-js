@@ -10,7 +10,7 @@
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { InventoryUpdate, InventoryUpdateStrategy } from "@devino/newegg-marketplace-sdk";
+import type { InventoryUpdate, InventoryUpdateStrategy } from "@joinmarka/newegg";
 import type { McpServerConfig } from "../config/index.js";
 import type { PreviewRecord } from "../preview-store/index.js";
 import {

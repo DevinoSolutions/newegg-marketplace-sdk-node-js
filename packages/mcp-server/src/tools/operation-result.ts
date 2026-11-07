@@ -5,7 +5,7 @@
  * are byte-identical after JSON serialization.
  */
 import { z } from "zod";
-import type { FeedJobSummary, ItemOutcome } from "@devino/newegg-marketplace-sdk";
+import type { FeedJobSummary, ItemOutcome } from "@joinmarka/newegg";
 import { marketplaceSchema, rateLimitOutputSchema } from "./shared.js";
 
 const itemOutcomeStatusSchema = z.enum([

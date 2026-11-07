@@ -4,14 +4,13 @@ A TypeScript monorepo providing a transport-independent **Newegg Marketplace SDK
 narrowly-scoped **Model Context Protocol (MCP) server** on top of it, with first-class,
 safety-first inventory management across Newegg's US, B2B, and Canada marketplaces.
 
-- **`@devino/newegg-marketplace-sdk`** — the SDK. One runtime dependency (`zod`), no MCP
+- **`@joinmarka/newegg`** — the SDK. One runtime dependency (`zod`), no MCP
   baggage, no I/O at import time. Usable from queues, cron jobs, HTTP services, or the CLI.
-- **`@devino/newegg-marketplace-mcp`** — an MCP server exposing Newegg read tools (inventory,
+- **`@joinmarka/newegg-mcp`** — an MCP server exposing Newegg read tools (inventory,
   prices, orders, reports, RMAs, catalog, reference data) over stdio and Streamable HTTP. Write
   tools exist only with `NEWEGG_MCP_ALLOW_WRITES=true` and always go through preview → apply.
 
-> The `@devino` scope is a placeholder chosen to be easy to find-and-replace. See
-> [`docs/publishing.md`](docs/publishing.md#rename-the-devino-scope) to rename it.
+> Part of [Marka](https://joinmarka.com). This is an unofficial community SDK and is not affiliated with, endorsed by, or sponsored by Newegg.
 
 ## Contents
 
@@ -45,8 +44,8 @@ safety-first inventory management across Newegg's US, B2B, and Canada marketplac
 ```
 newegg-marketplace-sdk-node-js/
 ├─ packages/
-│  ├─ sdk/          @devino/newegg-marketplace-sdk — transport-independent TS SDK
-│  └─ mcp-server/   @devino/newegg-marketplace-mcp — MCP server (stdio + Streamable HTTP)
+│  ├─ sdk/          @joinmarka/newegg — transport-independent TS SDK
+│  └─ mcp-server/   @joinmarka/newegg-mcp — MCP server (stdio + Streamable HTTP)
 ├─ examples/        runnable examples (npm workspaces):
 │  ├─ sdk-basic/              read + preview with the SDK
 │  ├─ sdk-batch-inventory/    batch updates, dedup, feed chunking
@@ -93,13 +92,13 @@ Install whichever package you need:
 
 ```bash
 # the SDK, for your own services
-npm install @devino/newegg-marketplace-sdk
+npm install @joinmarka/newegg
 
 # the MCP server, for LLM clients
-npm install @devino/newegg-marketplace-mcp
+npm install @joinmarka/newegg-mcp
 ```
 
-The MCP server can also be run without installing via `npx -y @devino/newegg-marketplace-mcp`
+The MCP server can also be run without installing via `npx -y @joinmarka/newegg-mcp`
 (see [MCP server — stdio](#mcp-server--stdio)).
 
 ---
@@ -110,7 +109,7 @@ Preview an inventory update, review the plan, then apply it — letting the SDK 
 vs feed automatically and waiting for any feed to finish:
 
 ```ts
-import { createNeweggClient } from "@devino/newegg-marketplace-sdk";
+import { createNeweggClient } from "@joinmarka/newegg";
 
 const client = createNeweggClient({
   sellerId: process.env.NEWEGG_SELLER_ID!,
@@ -381,7 +380,7 @@ not by verb).
 
 Also exported: `createNeweggClient`, the typed `NeweggError` hierarchy, `InMemoryRateLimitStore`,
 `InMemoryOperationStore`, `SDK_VERSION`, and the chunk-size constants. Test helpers live at
-`@devino/newegg-marketplace-sdk/testing`.
+`@joinmarka/newegg/testing`.
 
 Runnable examples (read-only or preview-only unless stated in their README): `examples/` (each has its own README).
 
@@ -429,7 +428,7 @@ Generic MCP client (`mcpServers` config), run via `npx`:
   "mcpServers": {
     "newegg-marketplace": {
       "command": "npx",
-      "args": ["-y", "@devino/newegg-marketplace-mcp"],
+      "args": ["-y", "@joinmarka/newegg-mcp"],
       "env": {
         "NEWEGG_SELLER_ID": "${NEWEGG_SELLER_ID}",
         "NEWEGG_API_KEY": "${NEWEGG_API_KEY}",
@@ -795,8 +794,8 @@ npm run format:check && npm run typecheck && npm run lint && npm run build \
 ## Publishing
 
 Release the SDK before the MCP server, gated by `check:secrets`, `verify:exports`, and a
-`pack:dry` review; provenance is added when publishing from CI. Full procedure — including
-how to rename the `@devino` scope to your own — is in
+`pack:dry` review; provenance is added when publishing from CI (a `v*` tag triggers
+`.github/workflows/release.yml`). Full procedure is in
 [`docs/publishing.md`](docs/publishing.md).
 
 ---

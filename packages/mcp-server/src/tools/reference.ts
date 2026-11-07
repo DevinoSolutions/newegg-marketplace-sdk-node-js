@@ -9,10 +9,7 @@
  * `limit` and report the full `totalCount` plus a `truncated` flag.
  */
 import { z } from "zod";
-import type {
-  ListPropertyValuesInput,
-  ListSubcategoriesInput,
-} from "@devino/newegg-marketplace-sdk";
+import type { ListPropertyValuesInput, ListSubcategoriesInput } from "@joinmarka/newegg";
 import {
   errorResult,
   mapErrorToPayload,

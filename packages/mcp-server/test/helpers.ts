@@ -5,13 +5,9 @@
  *
  * Credentials are obvious sentinels so leak assertions are trivial.
  */
-import { createNeweggClient } from "@devino/newegg-marketplace-sdk";
-import type { NeweggClient, NeweggMarketplace } from "@devino/newegg-marketplace-sdk";
-import {
-  createMockFetch,
-  type MockRoute,
-  type RecordedCall,
-} from "@devino/newegg-marketplace-sdk/testing";
+import { createNeweggClient } from "@joinmarka/newegg";
+import type { NeweggClient, NeweggMarketplace } from "@joinmarka/newegg";
+import { createMockFetch, type MockRoute, type RecordedCall } from "@joinmarka/newegg/testing";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {

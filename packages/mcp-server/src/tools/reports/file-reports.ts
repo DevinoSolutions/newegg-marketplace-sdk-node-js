@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ItemBasicInfoRow } from "@devino/newegg-marketplace-sdk";
+import type { ItemBasicInfoRow } from "@joinmarka/newegg";
 import { type ToolDefinition } from "../shared.js";
 import { TOOL_NAMES } from "../names.js";
 import {

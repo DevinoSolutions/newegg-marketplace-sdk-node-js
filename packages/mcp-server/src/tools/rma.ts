@@ -21,7 +21,7 @@ import type {
   ListRmasInput,
   Rma,
   RmaItem,
-} from "@devino/newegg-marketplace-sdk";
+} from "@joinmarka/newegg";
 import {
   errorResult,
   mapErrorToPayload,

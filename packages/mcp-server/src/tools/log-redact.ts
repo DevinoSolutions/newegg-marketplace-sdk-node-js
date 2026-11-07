@@ -4,7 +4,7 @@
  * query string such as `?sellerid=...`. Both are removed before the text reaches a log sink that
  * may be shipped to a log service or pasted into a ticket.
  */
-import { redactUrlCredentials } from "@devino/newegg-marketplace-sdk";
+import { redactUrlCredentials } from "@joinmarka/newegg";
 
 /** Ends the part of a URL before its query: whitespace, another `?`, a fragment, a quote or a bracket. */
 const URL_PART_END = /[\s?#"'<>]/;

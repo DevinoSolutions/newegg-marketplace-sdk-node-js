@@ -1,4 +1,4 @@
-import type { MockRoute } from "@devino/newegg-marketplace-sdk/testing";
+import type { MockRoute } from "@joinmarka/newegg/testing";
 
 /**
  * Synthetic fixtures for the RMA / courtesy-refund write tool tests (contracts §20). Everything

@@ -1,9 +1,9 @@
-# @devino/newegg-marketplace-mcp
+# @joinmarka/newegg-mcp
 
 A Model Context Protocol (MCP) server exposing safe, narrowly-scoped Newegg Marketplace
 tools (inventory, prices, orders, reports, RMAs and refunds, catalog and reference lookups, listing
 creation) over **stdio** and **Streamable HTTP**. Built on
-[`@devino/newegg-marketplace-sdk`](../sdk/README.md), it is designed for language-model callers acting
+[`@joinmarka/newegg`](../sdk/README.md), it is designed for language-model callers acting
 on a real seller account: tool descriptions are treated as hints, not security, and every
 constraint is enforced in handler code.
 
@@ -15,7 +15,7 @@ constraint is enforced in handler code.
 - **No credentials via MCP.** Callers can never supply credentials, base URLs, hostnames, or
   `Overwrite` values; raw upstream Newegg bodies never cross the boundary.
 
-> The `@devino` scope is a placeholder chosen to be easy to find-and-replace before publishing.
+> Part of [Marka](https://joinmarka.com). This is an unofficial community SDK and is not affiliated with, endorsed by, or sponsored by Newegg.
 
 ## Requirements
 
@@ -26,9 +26,9 @@ constraint is enforced in handler code.
 ## Installation
 
 ```bash
-npm install @devino/newegg-marketplace-mcp
+npm install @joinmarka/newegg-mcp
 # or run without installing:
-npx -y @devino/newegg-marketplace-mcp
+npx -y @joinmarka/newegg-mcp
 ```
 
 ## Running
@@ -42,7 +42,7 @@ The MCP client launches the server as a subprocess. Example client configuration
   "mcpServers": {
     "newegg-marketplace": {
       "command": "npx",
-      "args": ["-y", "@devino/newegg-marketplace-mcp"],
+      "args": ["-y", "@joinmarka/newegg-mcp"],
       "env": {
         "NEWEGG_SELLER_ID": "${NEWEGG_SELLER_ID}",
         "NEWEGG_API_KEY": "${NEWEGG_API_KEY}",

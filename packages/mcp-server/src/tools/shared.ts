@@ -8,13 +8,8 @@
  */
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { NeweggError } from "@devino/newegg-marketplace-sdk";
-import type {
-  ItemCondition,
-  ItemIdentifier,
-  NeweggClient,
-  RateLimitInfo,
-} from "@devino/newegg-marketplace-sdk";
+import { NeweggError } from "@joinmarka/newegg";
+import type { ItemCondition, ItemIdentifier, NeweggClient, RateLimitInfo } from "@joinmarka/newegg";
 import type { McpServerConfig } from "../config/index.js";
 import type { PreviewStore } from "../preview-store/index.js";
 import { redactLogText } from "./log-redact.js";

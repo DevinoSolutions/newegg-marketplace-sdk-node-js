@@ -8,7 +8,7 @@
  * phone, RMA note, tracking numbers) is never returned.
  */
 import { z } from "zod";
-import type { RmaWriteResult } from "@devino/newegg-marketplace-sdk";
+import type { RmaWriteResult } from "@joinmarka/newegg";
 import type { McpServerConfig } from "../config/index.js";
 import type { ToolContext, ToolDefinition, ToolResult } from "./shared.js";
 import {

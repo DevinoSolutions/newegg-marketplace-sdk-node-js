@@ -1,7 +1,7 @@
 # CLAUDE.md — agent instructions for this repo
 
-TypeScript monorepo: `packages/sdk` (`@devino/newegg-marketplace-sdk`) + `packages/mcp-server`
-(`@devino/newegg-marketplace-mcp`), npm workspaces, ESM/NodeNext, Node >= 22.12.
+TypeScript monorepo: `packages/sdk` (`@joinmarka/newegg`) + `packages/mcp-server`
+(`@joinmarka/newegg-mcp`), npm workspaces, ESM/NodeNext, Node >= 22.12.
 
 ## Hard rules (safety — never break these)
 

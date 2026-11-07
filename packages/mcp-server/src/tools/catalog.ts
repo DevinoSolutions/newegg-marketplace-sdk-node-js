@@ -7,8 +7,8 @@
  * is the CALLER's job: the tools take identifiers only, per the descriptions.
  */
 import { z } from "zod";
-import { CatalogLookupTimeoutError } from "@devino/newegg-marketplace-sdk";
-import type { CatalogLookupInput, CatalogMatch } from "@devino/newegg-marketplace-sdk";
+import { CatalogLookupTimeoutError } from "@joinmarka/newegg";
+import type { CatalogLookupInput, CatalogMatch } from "@joinmarka/newegg";
 import {
   conditionSchema,
   errorResult,

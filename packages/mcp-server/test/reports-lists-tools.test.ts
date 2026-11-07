@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createNeweggClient } from "@devino/newegg-marketplace-sdk";
-import type { NeweggClient } from "@devino/newegg-marketplace-sdk";
-import { createMockFetch, type MockRoute } from "@devino/newegg-marketplace-sdk/testing";
+import { createNeweggClient } from "@joinmarka/newegg";
+import type { NeweggClient } from "@joinmarka/newegg";
+import { createMockFetch, type MockRoute } from "@joinmarka/newegg/testing";
 import { SENTINELS, callTool, startHarness } from "./helpers.js";
 
 /**

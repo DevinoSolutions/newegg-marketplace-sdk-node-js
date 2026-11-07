@@ -1,6 +1,6 @@
 # example-sdk-batch-inventory
 
-Batch inventory updates with `@devino/newegg-marketplace-sdk`: build ~25 updates
+Batch inventory updates with `@joinmarka/newegg`: build ~25 updates
 programmatically (including deliberate duplicates and a zero-quantity entry), preview the
 resulting plan, and read several items back. No write happens unless you opt in.
 

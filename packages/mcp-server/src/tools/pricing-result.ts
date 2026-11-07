@@ -4,7 +4,7 @@
  * byte-identical after JSON serialization.
  */
 import { z } from "zod";
-import type { ItemIdentifier } from "@devino/newegg-marketplace-sdk";
+import type { ItemIdentifier } from "@joinmarka/newegg";
 import {
   conditionOf,
   identifierOutputSchema,

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { MockRoute, RecordedCall } from "@devino/newegg-marketplace-sdk/testing";
+import type { MockRoute, RecordedCall } from "@joinmarka/newegg/testing";
 import {
   createNeweggMcpServer,
   InMemoryPreviewStore,

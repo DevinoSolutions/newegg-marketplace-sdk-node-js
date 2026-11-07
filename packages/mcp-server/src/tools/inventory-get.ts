@@ -3,7 +3,7 @@
  * returns SDK `raw` payloads (fields are mapped explicitly).
  */
 import { z } from "zod";
-import type { GetManyInput } from "@devino/newegg-marketplace-sdk";
+import type { GetManyInput } from "@joinmarka/newegg";
 import {
   conditionOf,
   conditionSchema,

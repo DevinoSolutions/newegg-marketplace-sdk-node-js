@@ -10,10 +10,7 @@
  * returns label types, hosts and file names only: the label download URLs are never surfaced.
  */
 import { z } from "zod";
-import type {
-  GetSbnRequestStatusInput,
-  ListSbnShipmentsInput,
-} from "@devino/newegg-marketplace-sdk";
+import type { GetSbnRequestStatusInput, ListSbnShipmentsInput } from "@joinmarka/newegg";
 import {
   errorResult,
   mapErrorToPayload,

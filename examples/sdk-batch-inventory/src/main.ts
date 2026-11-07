@@ -1,5 +1,5 @@
 /**
- * Example — batch inventory updates with `@devino/newegg-marketplace-sdk`.
+ * Example — batch inventory updates with `@joinmarka/newegg`.
  *
  * Builds ~25 inventory updates programmatically (including deliberate duplicates and a
  * zero-quantity entry), previews the resulting plan (deduplication, strategy, feed count),
@@ -19,7 +19,7 @@ import {
   NeweggError,
   type InventoryUpdate,
   type NeweggMarketplace,
-} from "@devino/newegg-marketplace-sdk";
+} from "@joinmarka/newegg";
 
 /** Accept us | b2b | ca (case-insensitive); the Newegg `can` prefix maps to `ca`. */
 function parseMarketplace(raw: string): NeweggMarketplace {

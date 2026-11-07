@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import type { NeweggMarketplace } from "@devino/newegg-marketplace-sdk";
+import type { NeweggMarketplace } from "@joinmarka/newegg";
 import { weakBearerTokenReason } from "./token-strength.js";
 
 export { weakBearerTokenReason };

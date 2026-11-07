@@ -23,7 +23,7 @@ import {
   enabledToolNames,
   loadMcpConfigFromEnv,
   type McpServerConfig,
-} from "@devino/newegg-marketplace-mcp";
+} from "@joinmarka/newegg-mcp";
 
 async function main(): Promise<void> {
   const logger = defaultLogger;

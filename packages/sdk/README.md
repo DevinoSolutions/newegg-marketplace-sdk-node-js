@@ -1,4 +1,4 @@
-# @devino/newegg-marketplace-sdk
+# @joinmarka/newegg
 
 Transport-independent TypeScript SDK for the Newegg Marketplace API (US, B2B and Canada
 marketplaces): inventory, prices, orders, reports, RMAs and refunds, catalog and reference
@@ -10,8 +10,7 @@ lookups, and existing-item listing creation.
 - **Safety-first writes**: preview → apply, last-write-wins deduplication, direct-vs-feed
   strategy selection, and an indeterminate-feed-submission recovery path.
 
-> The `@devino` scope is a placeholder chosen to be easy to find-and-replace before you
-> publish under your own npm organization.
+> Part of [Marka](https://joinmarka.com). This is an unofficial community SDK and is not affiliated with, endorsed by, or sponsored by Newegg.
 
 ## Requirements
 
@@ -21,13 +20,13 @@ lookups, and existing-item listing creation.
 ## Installation
 
 ```bash
-npm install @devino/newegg-marketplace-sdk
+npm install @joinmarka/newegg
 ```
 
 ## Quick start
 
 ```ts
-import { createNeweggClient } from "@devino/newegg-marketplace-sdk";
+import { createNeweggClient } from "@joinmarka/newegg";
 
 const client = createNeweggClient({
   sellerId: process.env.NEWEGG_SELLER_ID!,
@@ -193,7 +192,7 @@ Runnable, typechecked examples live in the repository's
 A separate subpath provides a mock-fetch harness for unit tests, with no network:
 
 ```ts
-import { createMockFetch } from "@devino/newegg-marketplace-sdk/testing";
+import { createMockFetch } from "@joinmarka/newegg/testing";
 ```
 
 ## Documentation

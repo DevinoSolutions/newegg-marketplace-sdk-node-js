@@ -20,7 +20,7 @@ import type {
   ListAdsCampaignsInput,
   ListAdsGroupsInput,
   ListAdsKeywordsInput,
-} from "@devino/newegg-marketplace-sdk";
+} from "@joinmarka/newegg";
 import {
   errorResult,
   mapErrorToPayload,

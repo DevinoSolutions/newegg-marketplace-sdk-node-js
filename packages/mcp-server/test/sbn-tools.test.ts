@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MockRoute } from "@devino/newegg-marketplace-sdk/testing";
+import type { MockRoute } from "@joinmarka/newegg/testing";
 import { callTool, makeEnv, startHarness } from "./helpers.js";
 
 /** Synthetic fixtures modeled on the official §21 samples; nothing here is real account data. */

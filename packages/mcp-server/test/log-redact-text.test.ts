@@ -1,4 +1,4 @@
-import { NeweggError } from "@devino/newegg-marketplace-sdk";
+import { NeweggError } from "@joinmarka/newegg";
 import { describe, expect, it } from "vitest";
 import { redactLogText } from "../src/tools/log-redact.js";
 

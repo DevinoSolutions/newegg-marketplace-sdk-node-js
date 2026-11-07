@@ -1,5 +1,5 @@
 /**
- * Public entry point for `@devino/newegg-marketplace-mcp`.
+ * Public entry point for `@joinmarka/newegg-mcp`.
  *
  * Embedders typically call `loadMcpConfigFromEnv()` then `createNeweggMcpServer({ config })`
  * and connect the returned server to a transport. Tests inject a `client` (wired to the SDK's

@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  NeweggConfigurationError,
-  NeweggMarketplaceMismatchError,
-} from "@devino/newegg-marketplace-sdk";
+import { NeweggConfigurationError, NeweggMarketplaceMismatchError } from "@joinmarka/newegg";
 import { createNeweggMcpServer, loadMcpConfigFromEnv, McpConfigError } from "../src/index.js";
 import type { EnvRecord, McpServerConfig } from "../src/index.js";
 import { SENTINELS } from "./helpers.js";

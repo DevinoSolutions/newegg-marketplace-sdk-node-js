@@ -1,5 +1,5 @@
 /**
- * Example — read a price and PREVIEW a price change with `@devino/newegg-marketplace-sdk`.
+ * Example — read a price and PREVIEW a price change with `@joinmarka/newegg`.
  *
  * What it does:
  *   1. Reads Newegg credentials from the environment (fails fast; never prints their values).
@@ -23,7 +23,7 @@ import {
   NeweggError,
   type NeweggMarketplace,
   type PriceUpdate,
-} from "@devino/newegg-marketplace-sdk";
+} from "@joinmarka/newegg";
 
 /** Accept us | b2b | ca (case-insensitive); the Newegg `can` prefix maps to `ca`. */
 function parseMarketplace(raw: string): NeweggMarketplace {

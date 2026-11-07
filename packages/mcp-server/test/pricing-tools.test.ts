@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MockRoute } from "@devino/newegg-marketplace-sdk/testing";
+import type { MockRoute } from "@joinmarka/newegg/testing";
 import { callTool, makeEnv, SENTINELS, startHarness } from "./helpers.js";
 
 // Wire shapes: contracts §15 (official samples; numbers/booleans as strings on the US read).
