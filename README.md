@@ -64,16 +64,16 @@ newegg-marketplace-sdk-node-js/
 
 Deep-dive docs:
 
-- [`docs/inventory-strategies.md`](docs/inventory-strategies.md) — direct vs feed vs auto,
+- [`docs/inventory-strategies.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/inventory-strategies.md) — direct vs feed vs auto,
   dedup, chunking, polling, result anatomy.
-- [`docs/platform-differences.md`](docs/platform-differences.md) — US vs B2B vs CA wire
+- [`docs/platform-differences.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/platform-differences.md) — US vs B2B vs CA wire
   differences.
-- [`docs/error-handling.md`](docs/error-handling.md) — error classes, retries, recovery.
-- [`docs/mcp-security.md`](docs/mcp-security.md) — MCP threat model and mitigations.
-- [`docs/publishing.md`](docs/publishing.md) — release and scope-rename procedure.
+- [`docs/error-handling.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/error-handling.md) — error classes, retries, recovery.
+- [`docs/mcp-security.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/mcp-security.md) — MCP threat model and mitigations.
+- [`docs/publishing.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/publishing.md) — release and scope-rename procedure.
 - `docs/research/` — the verified Newegg wire contracts
-  ([`newegg-api-contracts.md`](docs/research/newegg-api-contracts.md)) and the binding SDK
-  public-API contract ([`sdk-public-api.md`](docs/research/sdk-public-api.md)) these packages
+  ([`newegg-api-contracts.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/research/newegg-api-contracts.md)) and the binding SDK
+  public-API contract ([`sdk-public-api.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/research/sdk-public-api.md)) these packages
   implement.
 
 ---
@@ -353,7 +353,7 @@ console.log(listings.totalRows, listings.rows[0]?.sellerPartNumber); // SKU, no 
 ## SDK surface
 
 `createNeweggClient(config)` returns a `NeweggClient`. The binding contract is
-[`docs/research/sdk-public-api.md`](docs/research/sdk-public-api.md); `packages/sdk/src/types.ts`
+[`docs/research/sdk-public-api.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/research/sdk-public-api.md); `packages/sdk/src/types.ts`
 is the source of truth for signatures. **Write** methods change the real seller account; every
 other method only reads (several reads are HTTP `PUT`/`POST` upstream, so classify by this table,
 not by verb).
@@ -391,7 +391,7 @@ Runnable examples (read-only or preview-only unless stated in their README): `ex
 Read tools are always registered. Write tools (marked **W**) are registered only when
 `NEWEGG_MCP_ALLOW_WRITES=true`; each `…_apply_…` tool takes only a `previewId` from its
 `…_preview_…` twin (ADR 0005). Full inputs and notes:
-[`packages/mcp-server/README.md`](packages/mcp-server/README.md).
+[`packages/mcp-server/README.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/packages/mcp-server/README.md).
 
 | Area      | Read tools (always)                                                                                                                      | Write tools (gated)                                                                                                                                                                  |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -498,18 +498,18 @@ gets the same `Host` and cross-site checks (a disallowed `Host` is answered `403
 curl -s http://127.0.0.1:3919/healthz
 ```
 
-See [Security model](#security-model) and [`docs/mcp-security.md`](docs/mcp-security.md)
+See [Security model](#security-model) and [`docs/mcp-security.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/mcp-security.md)
 before exposing the server beyond loopback.
 
 ---
 
 ## Environment variables
 
-Canonical names and defaults from [`.env.example`](.env.example). Credentials belong to a
+Canonical names and defaults from [`.env.example`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/.env.example). Credentials belong to a
 **seller account, not to a URL prefix**: Newegg ignores the `/b2b/` and `/can/` prefix when
 authenticating, so a key pair always reaches the account it was issued under. For `401` errors (a wrong
 Seller ID or a key from another platform is the usual cause), see
-[`docs/platform-differences.md`](docs/platform-differences.md#credentials-belong-to-a-seller-account-not-to-a-url-prefix).
+[`docs/platform-differences.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/platform-differences.md#credentials-belong-to-a-seller-account-not-to-a-url-prefix).
 
 > **Breaking change in 0.1.0 (T-5911): credentials are now bound to a marketplace.** Newegg
 > authenticates on `sellerid` + API key + secret key only and ignores the URL prefix, so keys issued
@@ -627,7 +627,7 @@ constraint in code:
 - **Network-safe HTTP** — loopback default, bearer requirement for non-loopback, host/origin
   validation, secret-free `/healthz`.
 
-Full threat model and deployment checklists: [`docs/mcp-security.md`](docs/mcp-security.md).
+Full threat model and deployment checklists: [`docs/mcp-security.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/mcp-security.md).
 
 ---
 
@@ -664,7 +664,7 @@ approvals structurally impossible (ADR 0005).
   Part Number raise `NeweggValidationError` (nothing is silently dropped).
 
 Details, dedup worked example, chunking math, and polling curves:
-[`docs/inventory-strategies.md`](docs/inventory-strategies.md).
+[`docs/inventory-strategies.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/inventory-strategies.md).
 
 ---
 
@@ -674,7 +674,7 @@ One host, three marketplaces, many differences — including **the same US URL w
 reads and `POST` writes**, a `version=304` parameter on the B2B/CA single read, different
 feed document versions (US `2.0` / B2B-CA `1.0`), and US multi-warehouse ISO codes vs B2B/CA
 default-warehouse semantics. Full comparison table and per-platform wire snippets:
-[`docs/platform-differences.md`](docs/platform-differences.md).
+[`docs/platform-differences.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/platform-differences.md).
 
 ---
 
@@ -721,7 +721,7 @@ inconsistent error bodies — JSON object, JSON array, XML, and plain text — i
 and never leaks credentials into errors or logs. Direct operations retry safely on transient
 failures; feed submissions never blindly retry after an ambiguous send (they raise
 `IndeterminateFeedSubmissionError` with a recovery path). Full hierarchy and recipes:
-[`docs/error-handling.md`](docs/error-handling.md).
+[`docs/error-handling.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/error-handling.md).
 
 ---
 
@@ -796,7 +796,7 @@ npm run format:check && npm run typecheck && npm run lint && npm run build \
 Release the SDK before the MCP server, gated by `check:secrets`, `verify:exports`, and a
 `pack:dry` review; provenance is added when publishing from CI (a `v*` tag triggers
 `.github/workflows/release.yml`). Full procedure is in
-[`docs/publishing.md`](docs/publishing.md).
+[`docs/publishing.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/publishing.md).
 
 ---
 
@@ -812,7 +812,7 @@ Release the SDK before the MCP server, gated by `check:secrets`, `verify:exports
   Sponsored Ads writes (the Sponsored Ads reads are covered, contracts §25).
 - **Feed-status date filters are not implemented.** Feed status is queried by request ID
   only; Newegg's documented date-range filter field names did not render in extraction and
-  were intentionally left out (see [`docs/platform-differences.md`](docs/platform-differences.md)).
+  were intentionally left out (see [`docs/platform-differences.md`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/docs/platform-differences.md)).
 - **Documented assumptions.** The item condition-code mapping (`1`=New … `6`=Used-Acceptable),
   the batch-read chunk size of 100 identifiers/request, and the treatment of all Newegg
   datetimes as Pacific Time are documented assumptions, each isolated behind a named module
@@ -822,4 +822,4 @@ Release the SDK before the MCP server, gated by `check:secrets`, `verify:exports
 
 ## License
 
-[MIT](LICENSE).
+[MIT](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/tree/main/LICENSE).

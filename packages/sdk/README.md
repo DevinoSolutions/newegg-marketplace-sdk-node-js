@@ -206,4 +206,4 @@ The binding public-API contract and deep-dive guides live in the
 
 ## License
 
-[MIT](../../LICENSE)
+[MIT](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/tree/main/LICENSE)

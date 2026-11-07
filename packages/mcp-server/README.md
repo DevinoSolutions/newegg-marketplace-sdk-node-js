@@ -3,7 +3,7 @@
 A Model Context Protocol (MCP) server exposing safe, narrowly-scoped Newegg Marketplace
 tools (inventory, prices, orders, reports, RMAs and refunds, catalog and reference lookups, listing
 creation) over **stdio** and **Streamable HTTP**. Built on
-[`@joinmarka/newegg`](../sdk/README.md), it is designed for language-model callers acting
+[`@joinmarka/newegg`](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/packages/sdk/README.md), it is designed for language-model callers acting
 on a real seller account: tool descriptions are treated as hints, not security, and every
 constraint is enforced in handler code.
 
@@ -191,7 +191,7 @@ is not surfaced in the tool's output.
 > refuses to start; RMA
 > `imageUrls` must be `https` without `user:password@`; a preview can only be applied from the MCP session
 > that created it; the HTTP transport caps sessions and throttles failed bearer attempts. Details in the
-> [repository README](../../README.md) and `docs/mcp-security.md`.
+> [repository README](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/blob/main/README.md) and `docs/mcp-security.md`.
 
 > **Breaking (T-6211): HTTP writes need a token.** `--transport http` with `NEWEGG_MCP_ALLOW_WRITES=true` now refuses to
 > start unless `NEWEGG_MCP_HTTP_BEARER_TOKEN` is set, even on the default loopback bind (previously loopback ran with no
@@ -255,4 +255,4 @@ Full threat model, mitigations, and deployment checklists (including the multi-i
 
 ## License
 
-[MIT](../../LICENSE)
+[MIT](https://github.com/DevinoSolutions/newegg-marketplace-sdk-node-js/tree/main/LICENSE)
